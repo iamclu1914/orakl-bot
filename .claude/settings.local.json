@@ -11,7 +11,8 @@
       "Bash(git remote add:*)",
       "Bash(git branch:*)",
       "Bash(git push:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(TZ:*)"
     ],
     "deny": [],
     "ask": []

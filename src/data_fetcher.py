@@ -473,9 +473,49 @@ class DataFetcher:
         return {}
         
     async def is_market_open(self) -> bool:
-        """Check if US market is currently open"""
-        status = await self.get_market_hours()
-        return status.get('market', '') == 'open'
+        """Check if US market is currently open with time-based fallback"""
+        try:
+            status = await self.get_market_hours()
+            market_status = status.get('market', '')
+
+            # Log the API response for debugging
+            if market_status:
+                logger.debug(f"Polygon market status: {market_status}, server_time: {status.get('server_time', 'N/A')}")
+
+            # If API says open, trust it
+            if market_status == 'open':
+                return True
+
+            # Fallback: Use time-based check (US Eastern Time)
+            # Market hours: 9:30 AM - 4:00 PM ET, Monday-Friday
+            from datetime import datetime
+            import pytz
+
+            eastern = pytz.timezone('America/New_York')
+            now_et = datetime.now(eastern)
+
+            # Check if weekend
+            if now_et.weekday() >= 5:  # Saturday=5, Sunday=6
+                logger.debug(f"Market closed: Weekend ({now_et.strftime('%A')})")
+                return False
+
+            # Check if within trading hours (9:30 AM - 4:00 PM ET)
+            market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+            market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+
+            is_open = market_open <= now_et <= market_close
+
+            if is_open:
+                logger.info(f"✅ Market OPEN (time-based check): {now_et.strftime('%I:%M %p ET')}")
+            else:
+                logger.debug(f"Market closed (time-based check): {now_et.strftime('%I:%M %p ET')}")
+
+            return is_open
+
+        except Exception as e:
+            logger.error(f"Error checking market status: {e}")
+            # If error, assume market is open during business hours as fallback
+            return True
         
     async def get_aggregates(self, symbol: str, timespan: str = 'minute', 
                            multiplier: int = 5, from_date: str = None, to_date: str = None) -> pd.DataFrame:
