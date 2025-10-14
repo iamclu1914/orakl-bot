@@ -61,24 +61,26 @@ class EnhancedAnalyzer:
             Dict with alignment info or None if data unavailable
         """
         try:
-            from_date = (datetime.now() - timedelta(hours=2)).strftime('%Y-%m-%d')
+            now = datetime.now()
+            from_date = (now - timedelta(hours=2)).strftime('%Y-%m-%d %H:%M')
+            to_date = now.strftime('%Y-%m-%d %H:%M')
 
-            # Get 5-minute bars
+            # Get 5-minute bars (last 30 minutes = 6 bars)
             bars_5m = await self.fetcher.get_aggregates(
                 symbol,
                 timespan='minute',
                 multiplier=5,
                 from_date=from_date,
-                limit=6
+                to_date=to_date
             )
 
-            # Get 15-minute bars
+            # Get 15-minute bars (last 1 hour = 4 bars)
             bars_15m = await self.fetcher.get_aggregates(
                 symbol,
                 timespan='minute',
                 multiplier=15,
                 from_date=from_date,
-                limit=4
+                to_date=to_date
             )
 
             if bars_5m.empty or bars_15m.empty:

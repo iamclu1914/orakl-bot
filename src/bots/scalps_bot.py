@@ -146,15 +146,17 @@ class ScalpsBot(BaseAutoBot):
     async def _get_recent_candles(self, symbol: str) -> List[Dict]:
         """Get REAL 5-minute candles from Polygon API"""
         try:
-            # Get actual price bars from Polygon
-            from_date = (datetime.now() - timedelta(hours=2)).strftime('%Y-%m-%d')
+            # Get actual price bars from Polygon (last 1 hour = 12 bars)
+            now = datetime.now()
+            from_date = (now - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M')
+            to_date = now.strftime('%Y-%m-%d %H:%M')
 
             aggregates = await self.fetcher.get_aggregates(
                 symbol,
                 timespan='minute',
                 multiplier=5,
                 from_date=from_date,
-                limit=10
+                to_date=to_date
             )
 
             if aggregates.empty:
