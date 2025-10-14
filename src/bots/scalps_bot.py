@@ -148,8 +148,9 @@ class ScalpsBot(BaseAutoBot):
         try:
             # Get actual price bars from Polygon (last 1 hour = 12 bars)
             now = datetime.now()
-            from_date = (now - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M')
-            to_date = now.strftime('%Y-%m-%d %H:%M')
+            # Polygon API requires YYYY-MM-DD format only
+            from_date = (now - timedelta(hours=1)).strftime('%Y-%m-%d')
+            to_date = now.strftime('%Y-%m-%d')
 
             aggregates = await self.fetcher.get_aggregates(
                 symbol,

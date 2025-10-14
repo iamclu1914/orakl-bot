@@ -62,8 +62,9 @@ class EnhancedAnalyzer:
         """
         try:
             now = datetime.now()
-            from_date = (now - timedelta(hours=2)).strftime('%Y-%m-%d %H:%M')
-            to_date = now.strftime('%Y-%m-%d %H:%M')
+            # Polygon API requires YYYY-MM-DD format only
+            from_date = (now - timedelta(hours=2)).strftime('%Y-%m-%d')
+            to_date = now.strftime('%Y-%m-%d')
 
             # Get 5-minute bars (last 30 minutes = 6 bars)
             bars_5m = await self.fetcher.get_aggregates(
