@@ -53,12 +53,14 @@ class BullseyeBot(BaseAutoBot):
             if not current_price:
                 return signals
 
-            # Track price momentum
-            self._update_price_history(symbol, current_price)
-            momentum = self._calculate_momentum(symbol)
+            # Calculate real multi-timeframe momentum
+            momentum = await self._calculate_momentum(symbol)
 
-            if momentum is None or abs(momentum) < 0.5:  # Minimum 0.5% move
+            if momentum is None or momentum['strength'] < 0.3:  # Lower threshold, more signals
                 return signals
+
+            # Extract momentum value for backward compatibility
+            momentum_value = momentum['momentum_5m']
 
             # Get options trades (recent only)
             trades = await self.fetcher.get_options_trades(symbol)
@@ -93,10 +95,10 @@ class BullseyeBot(BaseAutoBot):
                 total_volume = group['volume'].sum()
                 avg_price = group['price'].mean()
 
-                # Check momentum alignment
+                # Check momentum alignment with direction
                 momentum_aligned = (
-                    (momentum > 0 and opt_type == 'CALL') or
-                    (momentum < 0 and opt_type == 'PUT')
+                    (momentum['direction'] == 'bullish' and opt_type == 'CALL') or
+                    (momentum['direction'] == 'bearish' and opt_type == 'PUT')
                 )
 
                 if not momentum_aligned:
@@ -117,10 +119,15 @@ class BullseyeBot(BaseAutoBot):
 
                 # AI scoring for intraday movement
                 ai_score = self._calculate_ai_score(
-                    momentum, total_volume, total_premium, strike_distance, days_to_expiry
+                    momentum['strength'], total_volume, total_premium, strike_distance, days_to_expiry
                 )
 
-                if ai_score >= 70:  # High confidence threshold
+                # Bonus for volume confirmation
+                if momentum['volume_confirmed']:
+                    ai_score += 15
+
+                # Lower threshold for faster signals
+                if ai_score >= 60:  # Reduced from 70
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
@@ -131,7 +138,10 @@ class BullseyeBot(BaseAutoBot):
                         'premium': total_premium,
                         'volume': total_volume,
                         'avg_price': avg_price,
-                        'momentum': momentum,
+                        'momentum': momentum_value,
+                        'momentum_5m': momentum['momentum_5m'],
+                        'momentum_15m': momentum['momentum_15m'],
+                        'volume_ratio': momentum['volume_ratio'],
                         'strike_distance': strike_distance,
                         'probability_itm': prob_itm,
                         'ai_score': ai_score
@@ -149,32 +159,72 @@ class BullseyeBot(BaseAutoBot):
         return signals
 
     def _update_price_history(self, symbol: str, price: float):
-        """Track recent price history for momentum"""
-        if symbol not in self.price_history:
-            self.price_history[symbol] = []
+        """Track recent price history for momentum - DEPRECATED"""
+        # This method is no longer used - momentum now calculated from real bars
+        pass
 
-        self.price_history[symbol].append({
-            'price': price,
-            'timestamp': datetime.now()
-        })
+    async def _calculate_momentum(self, symbol: str) -> Dict:
+        """Calculate REAL momentum with multiple timeframes and volume confirmation"""
+        try:
+            from_date = (datetime.now() - timedelta(hours=1)).strftime('%Y-%m-%d')
 
-        # Keep only last 30 minutes
-        cutoff = datetime.now() - timedelta(minutes=30)
-        self.price_history[symbol] = [
-            p for p in self.price_history[symbol] if p['timestamp'] > cutoff
-        ]
+            # Get 5-minute bars
+            bars_5m = await self.fetcher.get_aggregates(
+                symbol,
+                timespan='minute',
+                multiplier=5,
+                from_date=from_date,
+                limit=6
+            )
 
-    def _calculate_momentum(self, symbol: str) -> float:
-        """Calculate price momentum percentage"""
-        if symbol not in self.price_history or len(self.price_history[symbol]) < 2:
+            # Get 15-minute bars
+            bars_15m = await self.fetcher.get_aggregates(
+                symbol,
+                timespan='minute',
+                multiplier=15,
+                from_date=from_date,
+                limit=4
+            )
+
+            if bars_5m.empty or bars_15m.empty:
+                return None
+
+            # Calculate 5-minute momentum
+            momentum_5m = ((bars_5m.iloc[-1]['close'] - bars_5m.iloc[0]['close']) /
+                           bars_5m.iloc[0]['close']) * 100
+
+            # Calculate 15-minute momentum
+            momentum_15m = ((bars_15m.iloc[-1]['close'] - bars_15m.iloc[0]['close']) /
+                            bars_15m.iloc[0]['close']) * 100
+
+            # Volume confirmation
+            avg_volume_5m = bars_5m['volume'].mean()
+            current_volume = bars_5m.iloc[-1]['volume']
+            volume_ratio = current_volume / avg_volume_5m if avg_volume_5m > 0 else 1.0
+
+            # Determine direction and strength
+            if momentum_5m > 0 and momentum_15m > 0:
+                direction = 'bullish'
+                strength = (momentum_5m + momentum_15m) / 2
+            elif momentum_5m < 0 and momentum_15m < 0:
+                direction = 'bearish'
+                strength = abs((momentum_5m + momentum_15m) / 2)
+            else:
+                direction = 'mixed'
+                strength = 0
+
+            return {
+                'direction': direction,
+                'strength': strength,
+                'momentum_5m': momentum_5m,
+                'momentum_15m': momentum_15m,
+                'volume_ratio': volume_ratio,
+                'volume_confirmed': volume_ratio >= 1.5  # 50% above average
+            }
+
+        except Exception as e:
+            logger.error(f"Error calculating momentum for {symbol}: {e}")
             return None
-
-        history = self.price_history[symbol]
-        old_price = history[0]['price']
-        new_price = history[-1]['price']
-
-        momentum = ((new_price - old_price) / old_price) * 100
-        return momentum
 
     def _calculate_ai_score(self, momentum: float, volume: int, premium: float,
                            strike_distance: float, dte: int) -> int:

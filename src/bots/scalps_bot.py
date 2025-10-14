@@ -144,33 +144,40 @@ class ScalpsBot(BaseAutoBot):
         return signals
 
     async def _get_recent_candles(self, symbol: str) -> List[Dict]:
-        """Get recent 5-minute candles for pattern analysis"""
-        # Simplified - in production, fetch from polygon aggregates
-        # For now, use price history or mock data
-        if symbol not in self.candle_history:
-            self.candle_history[symbol] = []
-
-        # Get current price to build candle
+        """Get REAL 5-minute candles from Polygon API"""
         try:
-            price = await self.fetcher.get_stock_price(symbol)
-            if price:
-                now = datetime.now()
-                self.candle_history[symbol].append({
-                    'timestamp': now,
-                    'close': price,
-                    'high': price * 1.002,
-                    'low': price * 0.998,
-                    'open': price
+            # Get actual price bars from Polygon
+            from_date = (datetime.now() - timedelta(hours=2)).strftime('%Y-%m-%d')
+
+            aggregates = await self.fetcher.get_aggregates(
+                symbol,
+                timespan='minute',
+                multiplier=5,
+                from_date=from_date,
+                limit=10
+            )
+
+            if aggregates.empty:
+                logger.debug(f"No candle data for {symbol}")
+                return []
+
+            # Convert to candle format
+            candles = []
+            for _, row in aggregates.iterrows():
+                candles.append({
+                    'timestamp': row.get('timestamp', datetime.now()),
+                    'open': row['open'],
+                    'high': row['high'],
+                    'low': row['low'],
+                    'close': row['close'],
+                    'volume': row.get('volume', 0)
                 })
 
-                # Keep last 10 candles
-                cutoff = now - timedelta(minutes=50)
-                self.candle_history[symbol] = [
-                    c for c in self.candle_history[symbol] if c['timestamp'] > cutoff
-                ]
+            # Return last 5 candles for pattern analysis
+            return candles[-5:] if len(candles) >= 5 else candles
 
-                return self.candle_history[symbol][-5:]
-        except:
+        except Exception as e:
+            logger.error(f"Error fetching real candles for {symbol}: {e}")
             return []
 
     def _identify_strat_pattern(self, candles: List[Dict]) -> Dict:

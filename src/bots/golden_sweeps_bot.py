@@ -9,6 +9,7 @@ from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.utils.monitoring import signals_generated, timed
 from src.utils.exceptions import DataException, handle_exception
+from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,10 @@ class GoldenSweepsBot(BaseAutoBot):
         self.MIN_GOLDEN_PREMIUM = Config.GOLDEN_MIN_PREMIUM
         self.MIN_SCORE = Config.MIN_GOLDEN_SCORE
 
+        # Enhanced analysis tools
+        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
+        self.deduplicator = SmartDeduplicator()
+
     @timed()
     async def scan_and_post(self):
         """Scan for golden sweeps (1M+ premium) with enhanced analysis"""
@@ -44,32 +49,67 @@ class GoldenSweepsBot(BaseAutoBot):
             try:
                 sweeps = await self._scan_golden_sweeps(symbol)
                 
-                # Enhance signals with market context
+                # Enhance signals with NEW critical features
                 enhanced_sweeps = []
                 for sweep in sweeps:
                     try:
-                        # Get price data for context
-                        price_data = await self.fetcher.get_aggregates(
-                            symbol,
-                            timespan='day',
-                            multiplier=1,
-                            from_date=(datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+                        # CRITICAL FEATURE #1: Volume Ratio Analysis
+                        volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
+                            symbol, sweep['volume']
                         )
-                        
-                        # Enhance with advanced scoring
-                        enhanced = await self.analyzer.analyze_signal_with_context(
-                            sweep,
-                            price_data,
-                            base_score=sweep['golden_score']
+                        sweep['volume_ratio'] = volume_ratio
+
+                        # Boost score for unusual volume
+                        volume_boost = 0
+                        if volume_ratio >= 5.0:  # 5x average
+                            volume_boost = 25
+                        elif volume_ratio >= 3.0:  # 3x average
+                            volume_boost = 15
+                        elif volume_ratio >= 2.0:  # 2x average
+                            volume_boost = 10
+
+                        # CRITICAL FEATURE #2: Price Action Alignment
+                        alignment = await self.enhanced_analyzer.check_price_action_alignment(
+                            symbol, sweep['type']
                         )
-                        
+
+                        if alignment:
+                            sweep['price_aligned'] = alignment['aligned']
+                            sweep['momentum_strength'] = alignment['strength']
+                            sweep['alignment_confidence'] = alignment['confidence']
+
+                            # Boost score for alignment
+                            if alignment['aligned']:
+                                volume_boost += 20  # Flow matches stock movement
+                                if alignment['volume_confirmed']:
+                                    volume_boost += 10  # Volume confirms direction
+
+                        # CRITICAL FEATURE #3: Implied Move Calculator
+                        implied = self.enhanced_analyzer.calculate_implied_move(
+                            sweep['current_price'],
+                            sweep['strike'],
+                            sweep['avg_price'],
+                            sweep['days_to_expiry'],
+                            sweep['type']
+                        )
+                        sweep['breakeven'] = implied['breakeven']
+                        sweep['needed_move'] = implied['needed_move_pct']
+                        sweep['prob_profit'] = implied['prob_profit']
+                        sweep['risk_grade'] = implied['grade']
+
+                        # Apply volume and alignment boosts
+                        sweep['enhanced_score'] = sweep['golden_score'] + volume_boost
+
                         # Only include if meets enhanced criteria
-                        if enhanced.get('final_score', 0) >= self.MIN_SCORE:
-                            enhanced_sweeps.append(enhanced)
+                        if sweep['enhanced_score'] >= self.MIN_SCORE:
+                            enhanced_sweeps.append(sweep)
+                            logger.debug(f"Enhanced {symbol}: Score {sweep['golden_score']}→{sweep['enhanced_score']} (Vol:{volume_ratio}x, Aligned:{alignment.get('aligned') if alignment else 'N/A'})")
+
                     except Exception as e:
                         logger.warning(f"Error enhancing signal for {symbol}: {e}")
-                        # Fall back to original signal
-                        enhanced_sweeps.append(sweep)
+                        # Fall back to original signal if meets minimum
+                        if sweep['golden_score'] >= self.MIN_SCORE:
+                            enhanced_sweeps.append(sweep)
                 
                 # Post enhanced signals
                 for sweep in enhanced_sweeps:
@@ -177,11 +217,14 @@ class GoldenSweepsBot(BaseAutoBot):
                     'volume_ratio': total_volume / 100  # Approximate for scoring
                 }
 
-                # Check if already posted (unique per hour to avoid spam)
-                signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}_{datetime.now().strftime('%Y%m%d%H')}"
-                if signal_key not in self.signal_history:
+                # CRITICAL FEATURE #4: Smart Deduplication (catches accumulation)
+                signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
+                dedup_result = self.deduplicator.should_alert(signal_key, total_premium)
+
+                if dedup_result['should_alert']:
+                    sweep['alert_type'] = dedup_result['type']  # NEW, ACCUMULATION, REFRESH
+                    sweep['alert_reason'] = dedup_result['reason']
                     sweeps.append(sweep)
-                    self.signal_history[signal_key] = datetime.now()
 
         except Exception as e:
             logger.error(f"Error scanning golden sweeps for {symbol}: {e}")
@@ -236,6 +279,11 @@ class GoldenSweepsBot(BaseAutoBot):
         color = 0xFFD700  # Gold color
         emoji = "💎" if sweep['type'] == 'CALL' else "💎"
 
+        # Check if accumulation alert
+        if sweep.get('alert_type') == 'ACCUMULATION':
+            emoji = "🔥💎🔥"  # Special emoji for accumulation
+            color = 0xFF4500  # Orange-red for accumulation
+
         # Format premium in millions
         premium_millions = sweep['premium'] / 1000000
 
@@ -246,10 +294,19 @@ class GoldenSweepsBot(BaseAutoBot):
             sentiment = f"ATM {sweep['type']}"
         else:
             sentiment = f"OTM {sweep['type']}"
-        
-        # Get enhanced score if available
-        final_score = sweep.get('final_score', sweep['golden_score'])
-        confidence = sweep.get('confidence', 'N/A')
+
+        # Get enhanced score
+        final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep['golden_score']))
+
+        # Build confidence string
+        volume_ratio = sweep.get('volume_ratio', 0)
+        price_aligned = sweep.get('price_aligned', False)
+        confidence_parts = []
+        if volume_ratio >= 3.0:
+            confidence_parts.append(f"{volume_ratio:.1f}x Vol")
+        if price_aligned:
+            confidence_parts.append("Price Aligned")
+        confidence = " | ".join(confidence_parts) if confidence_parts else "N/A"
         
         # Get market context if available
         market_context = sweep.get('market_context', {})
@@ -262,12 +319,16 @@ class GoldenSweepsBot(BaseAutoBot):
         notes = suggestions.get('notes', [])
 
         # Build description with enhanced info
+        alert_type = sweep.get('alert_type', 'NEW')
         description_parts = [f"**${premium_millions:.2f}M {sentiment}**"]
-        if action != 'MONITOR':
-            description_parts.append(f"**Action: {action}**")
+
+        # Add accumulation notice
+        if alert_type == 'ACCUMULATION':
+            description_parts.append(f"🔥 **ACCUMULATION DETECTED** 🔥")
+
         description_parts.append(f"Score: {int(final_score)}/100")
         if confidence != 'N/A':
-            description_parts.append(f"Confidence: {int(confidence)}%")
+            description_parts.append(confidence)
         
         embed = self.create_embed(
             title=f"{emoji} GOLDEN SWEEP: {sweep['ticker']} 💰",
@@ -333,15 +394,49 @@ class GoldenSweepsBot(BaseAutoBot):
                     "name": "⏱️ Execution Time",
                     "value": f"{int(sweep['time_span'])}s",
                     "inline": True
-                },
-                {
-                    "name": "🚨 ALERT",
-                    "value": f"**MASSIVE CONVICTION: ${premium_millions:.2f}M position opened**",
-                    "inline": False
                 }
-            ],
-            footer="Golden Sweeps Bot | Million Dollar+ Sweeps"
+            ]
         )
+
+        # Add enhanced analysis fields
+        if volume_ratio >= 2.0:
+            embed['fields'].append({
+                "name": "📊 Volume Analysis",
+                "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)",
+                "inline": False
+            })
+
+        if price_aligned:
+            momentum_str = sweep.get('momentum_strength', 0)
+            embed['fields'].append({
+                "name": "✅ Price Action Confirmed",
+                "value": f"Options flow aligned with stock movement ({momentum_str:+.2f}%)",
+                "inline": False
+            })
+
+        # Add implied move analysis
+        if 'needed_move' in sweep:
+            embed['fields'].append({
+                "name": "🎯 Break-Even Analysis",
+                "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%",
+                "inline": False
+            })
+
+        # Add accumulation warning
+        if alert_type == 'ACCUMULATION':
+            embed['fields'].append({
+                "name": "🔥 ACCUMULATION ALERT 🔥",
+                "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}",
+                "inline": False
+            })
+        else:
+            embed['fields'].append({
+                "name": "🚨 ALERT",
+                "value": f"**MASSIVE CONVICTION: ${premium_millions:.2f}M position opened**",
+                "inline": False
+            })
+
+        embed['footer'] = "Golden Sweeps Bot | Enhanced with Volume & Price Analysis"
         
         # Add market context if available
         if regime != 'unknown' or trend != 'unknown':

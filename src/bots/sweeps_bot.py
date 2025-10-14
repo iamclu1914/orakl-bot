@@ -7,6 +7,9 @@ from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
+from src.utils.monitoring import signals_generated, timed
+from src.utils.exceptions import DataException, handle_exception
+from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +21,21 @@ class SweepsBot(BaseAutoBot):
     """
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
-        super().__init__(webhook_url, "Sweeps Bot", scan_interval=180)  # 3 minutes
+        super().__init__(webhook_url, "Sweeps Bot", scan_interval=Config.SWEEPS_INTERVAL)
         self.watchlist = watchlist
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SWEEP_PREMIUM = 50000  # $50k minimum
+        self.MIN_SWEEP_PREMIUM = Config.SWEEPS_MIN_PREMIUM
+        self.MIN_SCORE = Config.MIN_SWEEP_SCORE
 
+        # Enhanced analysis tools
+        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
+        self.deduplicator = SmartDeduplicator()
+
+    @timed()
     async def scan_and_post(self):
-        """Scan for large options sweeps"""
+        """Scan for large options sweeps with enhanced analysis"""
         logger.info(f"{self.name} scanning for large sweeps")
 
         is_open = await self.fetcher.is_market_open()
@@ -34,19 +43,84 @@ class SweepsBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed")
             return
 
-        signals_posted = 0
+        signals_found = 0
         for symbol in self.watchlist:
             try:
                 sweeps = await self._scan_sweeps(symbol)
+
+                # Enhance signals with critical features
+                enhanced_sweeps = []
                 for sweep in sweeps:
-                    success = await self._post_signal(sweep)
-                    if success:
-                        signals_posted += 1
+                    try:
+                        # CRITICAL FEATURE #1: Volume Ratio Analysis
+                        volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
+                            symbol, sweep['volume']
+                        )
+                        sweep['volume_ratio'] = volume_ratio
+
+                        # Boost score for unusual volume
+                        volume_boost = 0
+                        if volume_ratio >= 5.0:
+                            volume_boost = 25
+                        elif volume_ratio >= 3.0:
+                            volume_boost = 15
+                        elif volume_ratio >= 2.0:
+                            volume_boost = 10
+
+                        # CRITICAL FEATURE #2: Price Action Alignment
+                        alignment = await self.enhanced_analyzer.check_price_action_alignment(
+                            symbol, sweep['type']
+                        )
+
+                        if alignment:
+                            sweep['price_aligned'] = alignment['aligned']
+                            sweep['momentum_strength'] = alignment['strength']
+                            sweep['alignment_confidence'] = alignment['confidence']
+
+                            if alignment['aligned']:
+                                volume_boost += 20
+                                if alignment['volume_confirmed']:
+                                    volume_boost += 10
+
+                        # CRITICAL FEATURE #3: Implied Move Calculator
+                        avg_price = sweep['premium'] / (sweep['volume'] * 100)
+                        implied = self.enhanced_analyzer.calculate_implied_move(
+                            sweep['current_price'],
+                            sweep['strike'],
+                            avg_price,
+                            sweep['days_to_expiry'],
+                            sweep['type']
+                        )
+                        sweep['breakeven'] = implied['breakeven']
+                        sweep['needed_move'] = implied['needed_move_pct']
+                        sweep['prob_profit'] = implied['prob_profit']
+                        sweep['risk_grade'] = implied['grade']
+
+                        # Apply boosts
+                        sweep['enhanced_score'] = sweep['sweep_score'] + volume_boost
+
+                        if sweep['enhanced_score'] >= self.MIN_SCORE:
+                            enhanced_sweeps.append(sweep)
+
+                    except Exception as e:
+                        logger.warning(f"Error enhancing signal for {symbol}: {e}")
+                        if sweep['sweep_score'] >= self.MIN_SCORE:
+                            enhanced_sweeps.append(sweep)
+
+                # Post enhanced signals
+                for sweep in enhanced_sweeps:
+                    if await self._post_signal(sweep):
+                        signals_found += 1
+
             except Exception as e:
-                logger.error(f"{self.name} error scanning {symbol}: {e}")
-        
-        if signals_posted > 0:
-            logger.info(f"✓ {self.name} posted {signals_posted} signal(s) this scan")
+                error_info = handle_exception(e, logger)
+                logger.error(f"{self.name} error scanning {symbol}: {error_info['message']}")
+
+        if signals_found > 0:
+            signals_generated.inc(
+                value=signals_found,
+                labels={'bot': self.name, 'signal_type': 'sweep'}
+            )
 
     async def _scan_sweeps(self, symbol: str) -> List[Dict]:
         """Scan for sweep orders"""
@@ -127,6 +201,7 @@ class SweepsBot(BaseAutoBot):
 
                 sweep = {
                     'ticker': symbol,
+                    'symbol': symbol,
                     'type': opt_type,
                     'strike': strike,
                     'expiration': expiration,
@@ -142,11 +217,14 @@ class SweepsBot(BaseAutoBot):
                     'time_span': time_span
                 }
 
-                # Check if already posted
-                signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}_{datetime.now().strftime('%Y%m%d%H')}"
-                if signal_key not in self.signal_history:
+                # CRITICAL FEATURE #4: Smart Deduplication
+                signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
+                dedup_result = self.deduplicator.should_alert(signal_key, total_premium)
+
+                if dedup_result['should_alert']:
+                    sweep['alert_type'] = dedup_result['type']
+                    sweep['alert_reason'] = dedup_result['reason']
                     sweeps.append(sweep)
-                    self.signal_history[signal_key] = datetime.now()
 
         except Exception as e:
             logger.error(f"Error scanning sweeps for {symbol}: {e}")
@@ -197,9 +275,14 @@ class SweepsBot(BaseAutoBot):
         return score
 
     async def _post_signal(self, sweep: Dict):
-        """Post sweep signal to Discord"""
+        """Post enhanced sweep signal to Discord"""
         color = 0x00FF00 if sweep['type'] == 'CALL' else 0xFF0000
         emoji = "🔥" if sweep['type'] == 'CALL' else "🔥"
+
+        # Check if accumulation alert
+        if sweep.get('alert_type') == 'ACCUMULATION':
+            emoji = "🔥⚡🔥"
+            color = 0xFF4500  # Orange-red
 
         # Determine sentiment
         if sweep['moneyness'] == 'ITM':
@@ -209,9 +292,29 @@ class SweepsBot(BaseAutoBot):
         else:
             sentiment = "Bullish OTM Sweep" if sweep['type'] == 'CALL' else "Bearish OTM Sweep"
 
+        final_score = sweep.get('enhanced_score', sweep['sweep_score'])
+
+        # Build confidence string
+        volume_ratio = sweep.get('volume_ratio', 0)
+        price_aligned = sweep.get('price_aligned', False)
+        confidence_parts = []
+        if volume_ratio >= 3.0:
+            confidence_parts.append(f"{volume_ratio:.1f}x Vol")
+        if price_aligned:
+            confidence_parts.append("Price Aligned")
+        confidence = " | ".join(confidence_parts) if confidence_parts else "N/A"
+
+        alert_type = sweep.get('alert_type', 'NEW')
+        description_parts = [f"**{sentiment}**"]
+        if alert_type == 'ACCUMULATION':
+            description_parts.append("🔥 **ACCUMULATION** 🔥")
+        description_parts.append(f"Score: {int(final_score)}/100")
+        if confidence != 'N/A':
+            description_parts.append(confidence)
+
         embed = self.create_embed(
             title=f"{emoji} SWEEP: {sweep['ticker']}",
-            description=f"**{sentiment}** | Conviction: {sweep['sweep_score']}/100",
+            description=" | ".join(description_parts),
             color=color,
             fields=[
                 {
@@ -225,8 +328,8 @@ class SweepsBot(BaseAutoBot):
                     "inline": True
                 },
                 {
-                    "name": "🔥 Conviction",
-                    "value": f"{sweep['sweep_score']}/100",
+                    "name": "🔥 Sweep Score",
+                    "value": f"**{sweep['sweep_score']}/100**",
                     "inline": True
                 },
                 {
@@ -269,18 +372,51 @@ class SweepsBot(BaseAutoBot):
                     "value": f"{int(sweep['time_span'])}s sweep",
                     "inline": True
                 },
-                {
-                    "name": "💡 Insight",
-                    "value": f"Large sweep shows conviction - {sweep['num_fills']} fills in {int(sweep['time_span'])}s",
-                    "inline": False
-                }
-            ],
-            footer="Sweeps Bot | Large Conviction Orders"
+            ]
         )
+
+        # Add enhanced analysis fields
+        if volume_ratio >= 2.0:
+            embed['fields'].append({
+                "name": "📊 Volume Analysis",
+                "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)",
+                "inline": False
+            })
+
+        if price_aligned:
+            momentum_str = sweep.get('momentum_strength', 0)
+            embed['fields'].append({
+                "name": "✅ Price Action Confirmed",
+                "value": f"Options flow aligned with stock movement ({momentum_str:+.2f}%)",
+                "inline": False
+            })
+
+        # Add implied move analysis
+        if 'needed_move' in sweep:
+            embed['fields'].append({
+                "name": "🎯 Break-Even Analysis",
+                "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%",
+                "inline": False
+            })
+
+        # Add accumulation warning or insight
+        if alert_type == 'ACCUMULATION':
+            embed['fields'].append({
+                "name": "🔥 ACCUMULATION ALERT 🔥",
+                "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}",
+                "inline": False
+            })
+        else:
+            embed['fields'].append({
+                "name": "💡 Insight",
+                "value": f"Large sweep shows conviction - {sweep['num_fills']} fills in {int(sweep['time_span'])}s",
+                "inline": False
+            })
+
+        embed['footer'] = "Sweeps Bot | Enhanced with Volume & Price Analysis"
 
         success = await self.post_to_discord(embed)
         if success:
-            logger.info(f"✓ Posted Sweep: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${sweep['premium']:,.0f}")
-        else:
-            logger.error(f"✗ Failed to post Sweep: {sweep['ticker']} {sweep['type']} - Check webhook URL")
+            logger.info(f"🚨 SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${sweep['premium']:,.0f} Score:{int(final_score)}")
+
         return success
