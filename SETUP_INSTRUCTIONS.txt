@@ -1,0 +1,83 @@
+ORAKL OPTIONS FLOW BOT - QUICK SETUP GUIDE
+==========================================
+
+Your ORAKL Bot has been successfully created with your API keys!
+
+IMPORTANT FIRST STEPS:
+----------------------
+
+1. RENAME THE CONFIG FILE:
+   - Rename "config.env" to ".env" (note the dot at the beginning)
+   - This file already contains your Polygon API key and Discord webhook
+
+2. ADD YOUR DISCORD BOT TOKEN:
+   - Edit the .env file
+   - Replace "your_discord_bot_token_here" with your actual Discord bot token
+   - Get a token from: https://discord.com/developers/applications
+
+3. INSTALL DEPENDENCIES:
+   Run one of these commands in this directory:
+   
+   Windows (PowerShell):
+   python -m pip install -r requirements.txt
+   
+   Mac/Linux:
+   pip3 install -r requirements.txt
+
+4. RUN THE BOT:
+   
+   Option A - Quick Test:
+   python main.py
+   
+   Option B - Auto-Start Setup:
+   python setup.py
+   (This will configure the bot to start automatically when your computer boots)
+   
+   Option C - Use Start Scripts:
+   Windows: Double-click scripts\start.bat
+   Mac/Linux: Run ./scripts/start.sh
+
+DISCORD BOT SETUP:
+------------------
+1. Create a Discord Application at https://discord.com/developers
+2. Go to the "Bot" section and create a bot
+3. Copy the bot token and add it to your .env file
+4. Invite the bot to your server using the OAuth2 URL generator
+5. Make sure the bot has permissions to:
+   - Send Messages
+   - Embed Links
+   - Read Message History
+   - Add Reactions
+
+YOUR CONFIGURATION:
+-------------------
+✅ Polygon API Key: Already configured
+✅ Discord Webhook: Already configured  
+✅ Channel ID: Already configured (1427156934582079588)
+❌ Discord Bot Token: YOU NEED TO ADD THIS
+
+TESTING THE BOT:
+----------------
+1. Run: python main.py
+2. Check the console for any errors
+3. In Discord, type: ok-help
+4. Try: ok-all SPY (to get AI analysis for SPY)
+
+MONITORING:
+-----------
+- Logs are saved in the logs/ directory
+- The bot will scan every 5 minutes during market hours
+- Alerts will appear in your configured Discord channel
+
+TROUBLESHOOTING:
+----------------
+If you see "Configuration error: DISCORD_BOT_TOKEN is not set":
+- Make sure you renamed config.env to .env
+- Make sure you added your Discord bot token
+
+If no signals appear:
+- The market must be open (9:30 AM - 4:00 PM EST)
+- Check logs/ directory for errors
+- Try ok-scan command to force a scan
+
+Need help? Check the README.md for detailed documentation.

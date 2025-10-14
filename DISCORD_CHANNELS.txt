@@ -1,0 +1,138 @@
+========================================================================
+  ORAKL Bot v2.0 - Discord Channel Guide
+========================================================================
+
+YOUR DISCORD CHANNELS - Where Each Bot Posts Signals
+====================================================================
+
+1. SWEEPS BOT
+   Channel: "Sweeps" 
+   Webhook ID: 1427361658761777287
+   → Check Discord channel named "Sweeps" or similar
+   → Posts: $50k+ premium sweeps with conviction
+   
+2. GOLDEN SWEEPS BOT  
+   Channel: "Golden Sweeps"
+   Webhook ID: 1427361801443741788
+   → Check Discord channel named "Golden Sweeps" or similar
+   → Posts: $1M+ MASSIVE conviction trades
+
+3. SCALPS BOT
+   Channel: "Scalps"
+   Webhook ID: 1427361954850144419
+   → Check Discord channel named "Scalps" or similar
+   → Posts: Quick scalp setups using The Strat
+
+4. BULLS EYE BOT (Bullseye)
+   Channel: "Bulls Eye"
+   Webhook ID: 1427362052753850549
+   → Check Discord channel named "Bulls Eye" or similar
+   → Posts: AI intraday momentum signals
+
+5. BREAK OUT BOT (Breakouts)
+   Channel: "Break Out"
+   Webhook ID: 1427362209524355133
+   → Check Discord channel named "Break Out" or similar
+   → Posts: Stock breakouts with volume confirmation
+
+6. DARKPOOL BOT
+   Channel: Default channel
+   Webhook ID: 1427156966979010663
+   → Check your main ORAKL channel
+   → Posts: Large darkpool and block trades
+
+7. ORAKL FLOW BOT
+   Channel: Default channel
+   Webhook ID: 1427156966979010663
+   → Check your main ORAKL channel
+   → Posts: Repeat signals with high ITM probability
+
+====================================================================
+HOW TO FIND YOUR CHANNELS IN DISCORD
+====================================================================
+
+1. Open your Discord server
+2. Look for these channel names (or similar):
+   - sweeps
+   - golden-sweeps
+   - scalps
+   - bulls-eye or bullseye
+   - break-out or breakouts
+   - darkpool (might be in main channel)
+   - orakl-flow (might be in main channel)
+
+3. You should see GREEN TEST MESSAGES in each channel saying:
+   "Your [Bot Name] is now posting to THIS channel!"
+
+4. If you don't see the channels:
+   - Check if they're in a category/folder
+   - Check channel permissions
+   - Look in your server's channel list
+
+====================================================================
+SIGNAL DISTRIBUTION
+====================================================================
+
+Your bots will post to SEPARATE channels:
+
+SWEEPS CHANNEL:
+  - Regular sweep signals ($50k-$999k)
+  - Posted by: Sweeps Bot
+
+GOLDEN SWEEPS CHANNEL:
+  - Million dollar+ sweeps
+  - Posted by: Golden Sweeps Bot
+  
+SCALPS CHANNEL:
+  - Quick scalp setups
+  - Posted by: Scalps Bot
+
+BULLS EYE CHANNEL:
+  - Intraday AI momentum
+  - Posted by: Bullseye Bot
+
+BREAK OUT CHANNEL:
+  - Stock breakouts
+  - Posted by: Breakouts Bot
+
+MAIN CHANNEL (Default):
+  - Darkpool trades
+  - Orakl Flow signals
+
+====================================================================
+CONFIRMING IT'S WORKING
+====================================================================
+
+TO VERIFY RIGHT NOW:
+
+1. Check each Discord channel listed above
+2. Look for GREEN test messages
+3. Each should say: "[Bot Name] is now posting to THIS channel!"
+4. During market hours, you'll see actual signals in each channel
+
+THE PLTR SIGNAL:
+- Was a SWEEP signal (not Golden Sweep, it was ~$1.8M)
+- Should have posted to: SWEEPS CHANNEL
+- Look for channel with Webhook ID: 1427361658761777287
+
+====================================================================
+NEXT SIGNALS WILL APPEAR IN:
+====================================================================
+
+When the bot detects activity, signals will post to the CORRECT channel:
+
+$50k-$999k Sweeps     → Sweeps channel
+$1M+ Sweeps           → Golden Sweeps channel
+Scalp setups          → Scalps channel
+Intraday signals      → Bulls Eye channel
+Price breakouts       → Break Out channel
+Darkpool blocks       → Darkpool/Main channel
+Repeat signals        → Orakl Flow/Main channel
+
+====================================================================
+
+Your bot is NOW posting to the correct channels!
+Check Discord to see the test messages in each channel!
+
+====================================================================
+
