@@ -502,6 +502,262 @@ class FlowChartGenerator:
             return None
     
     @staticmethod
+    def create_darkpool_table(trades_df: pd.DataFrame, symbol: str, current_price: float) -> BytesIO:
+        """
+        Darkpool Table - Shows recent darkpool and block trades
+        Displays: Time, Symbol, Price, Side (Buy/Sell), Type (Block/Dark), Shares, Total Premium
+        """
+        try:
+            if trades_df.empty:
+                return None
+
+            # Filter for large trades (potential darkpool/block trades)
+            # Block trades typically have size > 10,000 shares
+            if 'size' not in trades_df.columns or 'price' not in trades_df.columns:
+                return None
+
+            # Filter significant trades
+            trades_df = trades_df[trades_df['size'] >= 1000].copy()
+
+            if trades_df.empty:
+                return None
+
+            # Sort by size and get top 15
+            top_trades = trades_df.nlargest(15, 'size').copy()
+
+            # Calculate premium (size * price)
+            top_trades['premium'] = top_trades['size'] * top_trades['price']
+
+            # Professional dark theme
+            fig = plt.figure(figsize=(16, 9), facecolor='#2b2d31')
+            ax = fig.add_subplot(111)
+            ax.axis('off')
+
+            # Extract data for table
+            table_data = []
+            for _, trade in top_trades.iterrows():
+                # Time
+                if 'participant_timestamp' in trade and pd.notnull(trade['participant_timestamp']):
+                    # Convert nanoseconds to datetime
+                    time_str = datetime.fromtimestamp(trade['participant_timestamp'] / 1e9).strftime('%H:%M:%S')
+                elif 'sip_timestamp' in trade and pd.notnull(trade['sip_timestamp']):
+                    time_str = datetime.fromtimestamp(trade['sip_timestamp'] / 1e9).strftime('%H:%M:%S')
+                else:
+                    time_str = '--:--:--'
+
+                # Determine trade type (Block vs Dark)
+                size = trade['size']
+                if size >= 10000:
+                    trade_type = 'BLOCK'
+                else:
+                    trade_type = 'DARK'
+
+                # Determine side - use conditions array if available
+                side = 'B'  # Default to Buy
+                if 'conditions' in trade and isinstance(trade['conditions'], list):
+                    # Check for sell conditions (codes like 14, 15, etc.)
+                    if any(c in [14, 15, 16] for c in trade['conditions']):
+                        side = 'S'
+
+                # Format premium
+                prem = trade['premium']
+                if prem >= 1_000_000:
+                    prem_str = f"${prem/1_000_000:.2f}M"
+                elif prem >= 1_000:
+                    prem_str = f"${prem/1_000:.0f}K"
+                else:
+                    prem_str = f"${prem:.0f}"
+
+                # Format shares
+                shares = trade['size']
+                if shares >= 1_000_000:
+                    shares_str = f"{shares/1_000_000:.2f}M"
+                elif shares >= 1_000:
+                    shares_str = f"{shares/1_000:.1f}K"
+                else:
+                    shares_str = f"{shares:.0f}"
+
+                table_data.append([
+                    time_str,
+                    symbol,
+                    f"${trade['price']:.2f}",
+                    side,
+                    trade_type,
+                    shares_str,
+                    prem_str
+                ])
+
+            # Column headers
+            columns = ['Time', 'Symbol', 'Price', 'Side', 'Type', 'Shares', 'Premium']
+
+            # Create professional table
+            table = ax.table(cellText=table_data, colLabels=columns,
+                           cellLoc='center', loc='upper center',
+                           colWidths=[0.12, 0.12, 0.12, 0.10, 0.12, 0.14, 0.14])
+
+            table.auto_set_font_size(False)
+            table.set_fontsize(11)
+            table.scale(1, 2.8)
+
+            # Professional header styling
+            for i, col in enumerate(columns):
+                cell = table[(0, i)]
+                cell.set_facecolor('#1e1f22')
+                cell.set_text_props(weight='700', color='#ffffff', size=12, family='Arial')
+                cell.set_edgecolor('#000000')
+                cell.set_linewidth(1)
+
+            # Data cell styling
+            for i in range(len(table_data)):
+                for j in range(len(columns)):
+                    cell = table[(i + 1, j)]
+
+                    # Default background
+                    bg_color = '#2b2d31'
+                    text_color = '#dcddde'
+                    text_weight = 'normal'
+
+                    # Side column - color code
+                    if j == 3:
+                        if table_data[i][j] == 'B':
+                            bg_color = '#43b581'  # Green for Buy
+                            text_color = '#ffffff'
+                            text_weight = 'bold'
+                        else:
+                            bg_color = '#f04747'  # Red for Sell
+                            text_color = '#ffffff'
+                            text_weight = 'bold'
+
+                    # Type column - highlight BLOCK trades
+                    elif j == 4:
+                        if table_data[i][j] == 'BLOCK':
+                            bg_color = '#faa61a'  # Orange
+                            text_color = '#000000'
+                            text_weight = 'bold'
+
+                    cell.set_facecolor(bg_color)
+                    cell.set_text_props(color=text_color, weight=text_weight,
+                                       size=11, family='Arial')
+                    cell.set_edgecolor('#000000')
+                    cell.set_linewidth(0.5)
+
+            # Title
+            fig.text(0.5, 0.95, f'{symbol} Darkpool & Block Trades',
+                    ha='center', va='top',
+                    fontsize=20, fontweight='700',
+                    color='#ffffff', family='Arial')
+
+            plt.subplots_adjust(top=0.88, bottom=0.05)
+
+            buf = BytesIO()
+            plt.savefig(buf, format='png', facecolor='#2b2d31',
+                       dpi=140, bbox_inches='tight', pad_inches=0.2)
+            buf.seek(0)
+            plt.close('all')
+            return buf
+
+        except Exception as e:
+            logger.error(f"Error creating darkpool table: {e}")
+            plt.close('all')
+            return None
+
+    @staticmethod
+    def create_darkpool_premium_levels(trades_df: pd.DataFrame, symbol: str, current_price: float) -> BytesIO:
+        """
+        Darkpool Premium Levels - Horizontal bar chart showing PREMIUM by price level
+        Y-axis: Price levels, X-axis: Total premium amount
+        """
+        try:
+            if trades_df.empty or 'size' not in trades_df.columns:
+                return None
+
+            # Ensure price column exists
+            if 'price' not in trades_df.columns:
+                return None
+
+            # Calculate premium for each trade
+            trades_df['premium'] = trades_df['price'] * trades_df['size']
+
+            # Group by price level (rounded to nearest $0.50)
+            trades_df['price_level'] = (trades_df['price'] / 0.5).round() * 0.5
+
+            # Aggregate PREMIUM by price level
+            price_premium = trades_df.groupby('price_level')['premium'].sum().sort_index(ascending=False)
+
+            # Get top 12 levels by premium
+            top_levels = price_premium.nlargest(12)
+
+            if top_levels.empty:
+                return None
+
+            fig, ax = plt.subplots(figsize=(14, 9),
+                                  facecolor=FlowChartGenerator.COLORS['background'])
+            ax.set_facecolor(FlowChartGenerator.COLORS['panel'])
+
+            # Create bars
+            y_pos = np.arange(len(top_levels))
+            bars = ax.barh(y_pos, top_levels.values,
+                          color=FlowChartGenerator.COLORS['purple'],
+                          height=0.7, edgecolor='none')
+
+            # Price labels (Y-axis)
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels([f"${price:.2f}" for price in top_levels.index],
+                              color=FlowChartGenerator.COLORS['white'],
+                              fontsize=13, fontweight='bold')
+
+            ax.set_ylabel('Price Level', color=FlowChartGenerator.COLORS['gray'],
+                         fontsize=14, labelpad=10, fontweight='bold')
+            ax.set_title(f'{symbol} Darkpool Premium by Price Level',
+                        color=FlowChartGenerator.COLORS['white'],
+                        fontsize=22, fontweight='bold', pad=20)
+
+            # Premium labels on bars
+            max_prem = max(top_levels.values)
+            for bar, premium in zip(bars, top_levels.values):
+                if premium >= 1_000_000_000:
+                    label = f"${premium/1_000_000_000:.2f}B"
+                elif premium >= 1_000_000:
+                    label = f"${premium/1_000_000:.2f}M"
+                elif premium >= 1_000:
+                    label = f"${premium/1_000:.1f}K"
+                else:
+                    label = f"${premium:.0f}"
+
+                ax.text(bar.get_width() + max_prem*0.02,
+                       bar.get_y() + bar.get_height()/2,
+                       label, va='center', ha='left',
+                       color=FlowChartGenerator.COLORS['white'],
+                       fontsize=13, fontweight='bold')
+
+            # Add current price indicator
+            if current_price:
+                ax.axhline(y=len(top_levels)/2, color=FlowChartGenerator.COLORS['cyan'],
+                          linestyle='--', linewidth=2, alpha=0.7)
+                ax.text(max_prem*0.5, len(top_levels)/2 + 0.3,
+                       f'Current: ${current_price:.2f}',
+                       color=FlowChartGenerator.COLORS['cyan'],
+                       fontsize=12, fontweight='bold')
+
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color(FlowChartGenerator.COLORS['border'])
+            ax.spines['bottom'].set_color(FlowChartGenerator.COLORS['border'])
+            ax.set_xticks([])
+
+            plt.tight_layout()
+            buf = BytesIO()
+            plt.savefig(buf, format='png', facecolor=FlowChartGenerator.COLORS['background'],
+                       dpi=120, bbox_inches='tight')
+            buf.seek(0)
+            plt.close()
+            return buf
+
+        except Exception as e:
+            logger.error(f"Error creating darkpool premium levels: {e}")
+            return None
+
+    @staticmethod
     def create_darkpool_levels(trades_df: pd.DataFrame, symbol: str, current_price: float) -> BytesIO:
         """
         Darkpool Levels - Volume by price level
@@ -584,6 +840,151 @@ class FlowChartGenerator:
             logger.error(f"Error creating darkpool levels: {e}")
             return None
     
+    @staticmethod
+    def create_sr_levels_tradingview(
+        symbol: str,
+        data_1h: pd.DataFrame,
+        data_4h: pd.DataFrame,
+        data_daily: pd.DataFrame,
+        current_price: float
+    ) -> BytesIO:
+        """
+        TradingView-style S/R Levels - 3 subplots (1H, 4H, Daily) with key S/R levels
+        """
+        try:
+            # Create figure with 3 subplots
+            fig = plt.figure(figsize=(18, 12), facecolor=FlowChartGenerator.COLORS['background'])
+            gs = fig.add_gridspec(3, 1, hspace=0.3, left=0.08, right=0.94, top=0.94, bottom=0.06)
+
+            timeframes = [
+                (data_1h, '1 Hour', 0),
+                (data_4h, '4 Hour', 1),
+                (data_daily, 'Daily', 2)
+            ]
+
+            for data, tf_name, idx in timeframes:
+                if data.empty:
+                    continue
+
+                ax = fig.add_subplot(gs[idx, 0])
+                ax.set_facecolor(FlowChartGenerator.COLORS['panel'])
+
+                # Plot candlestick-style with line
+                x = np.arange(len(data))
+
+                # Price line
+                ax.plot(x, data['close'].values,
+                       color=FlowChartGenerator.COLORS['cyan'],
+                       linewidth=2.5, label='Price', zorder=5, alpha=0.9)
+
+                # Fill between high and low for volume representation
+                ax.fill_between(x, data['low'].values, data['high'].values,
+                               color=FlowChartGenerator.COLORS['cyan'],
+                               alpha=0.15, zorder=2)
+
+                # Calculate S/R levels for this timeframe
+                sr_levels = FlowChartGenerator._calculate_sr_levels(data, current_price, num_levels=6)
+
+                # Add S/R levels
+                for level in sr_levels:
+                    price_level = level['price']
+                    level_type = level['type']
+                    strength = level.get('strength', 0.5)
+
+                    color = FlowChartGenerator.COLORS['red'] if level_type == 'resistance' \
+                           else FlowChartGenerator.COLORS['green']
+                    alpha = 0.5 + (strength * 0.4)
+
+                    ax.axhline(y=price_level, color=color, linestyle='--',
+                              linewidth=2.2, alpha=alpha, zorder=3)
+
+                    # Price label
+                    ax.text(len(data)*1.01, price_level, f'${price_level:.2f}',
+                           va='center', ha='left',
+                           color=color,
+                           fontsize=11, fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor=FlowChartGenerator.COLORS['panel'],
+                                   edgecolor=color, linewidth=1.5, alpha=0.8))
+
+                # Current price line
+                if current_price:
+                    ax.axhline(y=current_price, color=FlowChartGenerator.COLORS['yellow'],
+                              linestyle='-', linewidth=2.5, alpha=0.9, zorder=4)
+                    ax.text(len(data)*1.01, current_price, f'${current_price:.2f}',
+                           va='center', ha='left',
+                           color=FlowChartGenerator.COLORS['yellow'],
+                           fontsize=12, fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor=FlowChartGenerator.COLORS['background'],
+                                   edgecolor=FlowChartGenerator.COLORS['yellow'], linewidth=2, alpha=1.0))
+
+                # Styling
+                ax.set_title(f'{tf_name} Timeframe',
+                            color=FlowChartGenerator.COLORS['white'],
+                            fontsize=16, fontweight='bold', loc='left', pad=12)
+
+                ax.set_ylabel('Price', color=FlowChartGenerator.COLORS['gray'],
+                             fontsize=12, labelpad=8)
+
+                ax.tick_params(axis='y', colors=FlowChartGenerator.COLORS['gray'], labelsize=10)
+                ax.tick_params(axis='x', colors=FlowChartGenerator.COLORS['gray'], labelsize=9)
+
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_color(FlowChartGenerator.COLORS['border'])
+                ax.spines['bottom'].set_color(FlowChartGenerator.COLORS['border'])
+
+                ax.grid(True, alpha=0.12, color=FlowChartGenerator.COLORS['gray'],
+                       linestyle='-', linewidth=0.5, zorder=1)
+                ax.set_axisbelow(True)
+
+                # X-axis labels - show time/date
+                num_ticks = min(8, len(data))
+                tick_positions = np.linspace(0, len(data)-1, num_ticks, dtype=int)
+                ax.set_xticks(tick_positions)
+
+                if 'timestamp' in data.columns:
+                    labels = []
+                    for pos in tick_positions:
+                        if pos < len(data):
+                            ts = data.iloc[pos]['timestamp']
+                            if tf_name == '1 Hour':
+                                labels.append(ts.strftime('%m/%d %H:%M'))
+                            elif tf_name == '4 Hour':
+                                labels.append(ts.strftime('%m/%d %H:%M'))
+                            else:
+                                labels.append(ts.strftime('%m/%d'))
+                        else:
+                            labels.append('')
+                    ax.set_xticklabels(labels, rotation=15, ha='right')
+                else:
+                    ax.set_xticklabels(['' for _ in tick_positions])
+
+            # Main title
+            fig.text(0.5, 0.98, f'{symbol} Support & Resistance Analysis',
+                    ha='center', va='top',
+                    fontsize=22, fontweight='bold',
+                    color=FlowChartGenerator.COLORS['white'])
+
+            # Legend
+            fig.text(0.5, 0.01,
+                    'Green = Support | Red = Resistance | Yellow = Current Price',
+                    ha='center', fontsize=11,
+                    color=FlowChartGenerator.COLORS['gray'])
+
+            buf = BytesIO()
+            plt.savefig(buf, format='png',
+                       facecolor=FlowChartGenerator.COLORS['background'],
+                       dpi=120, bbox_inches='tight')
+            buf.seek(0)
+            plt.close()
+
+            return buf
+
+        except Exception as e:
+            logger.error(f"Error creating TradingView-style S/R chart: {e}")
+            plt.close('all')
+            return None
+
     @staticmethod
     def create_sr_levels_chart(symbol: str, price_data: pd.DataFrame, current_price: float) -> BytesIO:
         """

@@ -30,8 +30,9 @@ def setup_bot_commands(bot):
         
         embed.add_field(
             name="📈 Technical Analysis (Visual)",
-            value="`ok-srlevels SYMBOL` - Support/Resistance chart 📊\n"
-                  "`ok-dplevels SYMBOL` - Darkpool price levels 🌑",
+            value="`ok-srlevels SYMBOL` - S/R levels (1H/4H/Daily) 📊\n"
+                  "`ok-darkpool SYMBOL` - Darkpool/block trades table 🌑\n"
+                  "`ok-dplevels SYMBOL` - Darkpool premium by price 💰",
             inline=False
         )
         
@@ -264,95 +265,155 @@ def setup_bot_commands(bot):
         else:
             await ctx.send("Error generating heatmap")
     
-    @bot.command(name='dplevels', aliases=['darkpool'])
-    async def darkpool_levels(ctx, symbol: str):
-        """Darkpool volume by price level"""
+    @bot.command(name='darkpool', aliases=['dp'])
+    async def darkpool_trades(ctx, symbol: str):
+        """Latest darkpool and block trades with visual table"""
         symbol = symbol.upper()
-        
+
         async with ctx.typing():
             from src.utils.flow_charts import FlowChartGenerator
-            
-            # Get stock trades (darkpool data)
-            trades_list = await bot.fetcher.get_stock_trades(symbol, limit=5000)
+
+            # Get recent stock trades (potential darkpool/block trades)
+            trades_list = await bot.fetcher.get_stock_trades(symbol, limit=10000)
             current_price = await bot.fetcher.get_stock_price(symbol)
-            
+
             if not trades_list:
                 await ctx.send(f"No darkpool data for {symbol}")
                 return
-            
+
             # Convert to DataFrame
             trades_df = pd.DataFrame(trades_list)
-        
-        # Create professional chart (fast, non-blocking)
+
+        # Create professional darkpool table
         from src.utils.flow_charts import FlowChartGenerator
-        chart_buffer = FlowChartGenerator.create_darkpool_levels(
+        chart_buffer = FlowChartGenerator.create_darkpool_table(
             trades_df, symbol, current_price
         )
-        
+
+        if chart_buffer:
+            file = discord.File(chart_buffer, filename='darkpool.png')
+            embed = discord.Embed(
+                title=f"🌑 {symbol} Darkpool & Block Trades",
+                description=f"Recent large trades | Current: ${current_price:.2f}",
+                color=0x9B30FF,
+                timestamp=datetime.now()
+            )
+            embed.set_image(url="attachment://darkpool.png")
+            embed.set_footer(text="ORAKL Bot | Darkpool & Block Trades")
+            await ctx.send(file=file, embed=embed)
+        else:
+            await ctx.send("No significant darkpool trades found")
+
+    @bot.command(name='dplevels')
+    async def darkpool_levels(ctx, symbol: str):
+        """Darkpool premium by price level (horizontal bar chart)"""
+        symbol = symbol.upper()
+
+        async with ctx.typing():
+            from src.utils.flow_charts import FlowChartGenerator
+
+            # Get stock trades (darkpool data)
+            trades_list = await bot.fetcher.get_stock_trades(symbol, limit=10000)
+            current_price = await bot.fetcher.get_stock_price(symbol)
+
+            if not trades_list:
+                await ctx.send(f"No darkpool data for {symbol}")
+                return
+
+            # Convert to DataFrame
+            trades_df = pd.DataFrame(trades_list)
+
+        # Create professional chart showing PREMIUM by price level
+        from src.utils.flow_charts import FlowChartGenerator
+        chart_buffer = FlowChartGenerator.create_darkpool_premium_levels(
+            trades_df, symbol, current_price
+        )
+
         if chart_buffer:
             file = discord.File(chart_buffer, filename='dplevels.png')
             embed = discord.Embed(
-                title=f"🌑 {symbol} Darkpool Levels",
-                description=f"Volume accumulation by price | Current: ${current_price:.2f}",
+                title=f"🌑 {symbol} Darkpool Premium Levels",
+                description=f"Premium accumulation by price | Current: ${current_price:.2f}",
                 color=0x9B30FF,
                 timestamp=datetime.now()
             )
             embed.set_image(url="attachment://dplevels.png")
-            embed.set_footer(text="ORAKL Bot | Darkpool Price Levels")
+            embed.set_footer(text="ORAKL Bot | Darkpool Premium by Price Level")
             await ctx.send(file=file, embed=embed)
         else:
             await ctx.send("No significant darkpool levels found")
     
     @bot.command(name='srlevels', aliases=['sr', 'levels'])
     async def sr_levels(ctx, symbol: str):
-        """Support and Resistance levels with price chart"""
+        """Support and Resistance levels with TradingView-style multi-timeframe chart"""
         symbol = symbol.upper()
-        
+
         async with ctx.typing():
             from src.utils.flow_charts import FlowChartGenerator
             from datetime import timedelta
-            
+
             # Get current price
             current_price = await bot.fetcher.get_stock_price(symbol)
             if not current_price:
                 await ctx.send(f"Could not get price for {symbol}")
                 return
-            
-            # Get 60 days of daily price data
+
             end_date = datetime.now()
-            start_date = end_date - timedelta(days=60)
-            
-            price_data = await bot.fetcher.get_aggregates(
+
+            # Get data for multiple timeframes
+            # 1-hour data (last 7 days)
+            start_1h = end_date - timedelta(days=7)
+            data_1h = await bot.fetcher.get_aggregates(
+                symbol,
+                timespan='hour',
+                multiplier=1,
+                from_date=start_1h.strftime('%Y-%m-%d'),
+                to_date=end_date.strftime('%Y-%m-%d')
+            )
+
+            # 4-hour data (last 30 days)
+            start_4h = end_date - timedelta(days=30)
+            data_4h = await bot.fetcher.get_aggregates(
+                symbol,
+                timespan='hour',
+                multiplier=4,
+                from_date=start_4h.strftime('%Y-%m-%d'),
+                to_date=end_date.strftime('%Y-%m-%d')
+            )
+
+            # Daily data (last 90 days)
+            start_daily = end_date - timedelta(days=90)
+            data_daily = await bot.fetcher.get_aggregates(
                 symbol,
                 timespan='day',
                 multiplier=1,
-                from_date=start_date.strftime('%Y-%m-%d'),
+                from_date=start_daily.strftime('%Y-%m-%d'),
                 to_date=end_date.strftime('%Y-%m-%d')
             )
-            
-            if price_data.empty:
+
+            if data_1h.empty and data_4h.empty and data_daily.empty:
                 await ctx.send(f"No price data available for {symbol}")
                 return
-        
-        # Create professional chart (fast, non-blocking)
+
+        # Create TradingView-style multi-timeframe chart
         from src.utils.flow_charts import FlowChartGenerator
-        chart_buffer = FlowChartGenerator.create_sr_levels_chart(
-            symbol, price_data, current_price
+        chart_buffer = FlowChartGenerator.create_sr_levels_tradingview(
+            symbol, data_1h, data_4h, data_daily, current_price
         )
-        
+
         if chart_buffer:
             file = discord.File(chart_buffer, filename='srlevels.png')
-            
+
             embed = discord.Embed(
                 title=f"📊 {symbol} Support & Resistance Levels",
-                description=f"Current Price: ${current_price:.2f}",
+                description=f"TradingView-style multi-timeframe analysis | Current: ${current_price:.2f}",
                 color=0x5865f2,
                 timestamp=datetime.now()
             )
-            
+
             embed.set_image(url="attachment://srlevels.png")
-            embed.set_footer(text="ORAKL Bot | Technical Analysis | Green = Support | Red = Resistance")
-            
+            embed.set_footer(text="ORAKL Bot | 1H · 4H · Daily | Green = Support | Red = Resistance")
+
             await ctx.send(file=file, embed=embed)
         else:
             await ctx.send(f"Error generating S/R chart for {symbol}")
