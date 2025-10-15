@@ -16,35 +16,35 @@ def setup_bot_commands(bot):
         """Show all ORAKL commands"""
         embed = discord.Embed(
             title="🔮 ORAKL Bot - Professional Visualizations",
-            description="Tradytics-quality charts powered by Polygon API\n**Type `/` to see all commands!**",
+            description="Tradytics-quality charts powered by Polygon API",
             color=0x9B59B6
         )
 
         embed.add_field(
             name="📊 Flow Analysis (Visual)",
-            value="`/topflow` - Top bull/bear bar chart 📊\n"
-                  "`/bigflow SYMBOL` - Biggest trades table 💰\n"
-                  "`/flowsum SYMBOL` - Complete dashboard 📈\n"
-                  "`/flowheatmap SYMBOL` - Strike x Exp heatmap 🔥",
+            value="`ok-topflow` - Top bull/bear bar chart 📊\n"
+                  "`ok-bigflow SYMBOL` - Biggest trades table 💰\n"
+                  "`ok-flowsum SYMBOL` - Complete dashboard 📈\n"
+                  "`ok-flowheatmap SYMBOL` - Strike x Exp heatmap 🔥",
             inline=False
         )
 
         embed.add_field(
             name="📈 Technical Analysis (Visual)",
-            value="`/srlevels SYMBOL [1h|4h|1d]` - S/R levels with timeframe 📊\n"
-                  "`/darkpool SYMBOL` - Last week's darkpool/block trades 🌑\n"
-                  "`/dplevels SYMBOL` - Last week's darkpool premium levels 💰",
+            value="`ok-srlevels SYMBOL [1h|4h|1d]` - S/R levels with timeframe 📊\n"
+                  "`ok-darkpool SYMBOL` - Last week's darkpool/block trades 🌑\n"
+                  "`ok-dplevels SYMBOL` - Last week's darkpool premium levels 💰",
             inline=False
         )
 
         embed.add_field(
             name="🤖 AI & Scans",
-            value="`/all SYMBOL` - AI prediction 🔮\n"
-                  "`/scan` - Force manual scan 🔍",
+            value="`ok-all SYMBOL` - AI prediction 🔮\n"
+                  "`ok-scan` - Force manual scan 🔍",
             inline=False
         )
 
-        embed.set_footer(text="ORAKL Bot v3.0 | Slash Commands | Type / to autocomplete")
+        embed.set_footer(text="ORAKL Bot v3.0 Enhanced | 1-Week Darkpool Data | Timeframe Selection")
         await ctx.send(embed=embed)
     
     @bot.command(name='all', aliases=['ai', 'predict'])
