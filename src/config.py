@@ -81,8 +81,33 @@ class Config:
     MIN_BREAKOUT_SCORE = int(os.getenv('MIN_BREAKOUT_SCORE', '65'))
     MIN_UNUSUAL_VOLUME_SCORE = int(os.getenv('MIN_UNUSUAL_VOLUME_SCORE', '65'))
     
-    # Watchlist
-    WATCHLIST = os.getenv('WATCHLIST', 'SPY,QQQ,AAPL,MSFT,NVDA,TSLA,AMD,META,GOOGL,AMZN,NFLX,BAC').split(',')
+    # Watchlist - Major players from each sector
+    WATCHLIST = os.getenv('WATCHLIST',
+        # Indices & ETFs
+        'SPY,QQQ,IWM,DIA,'
+        # Technology
+        'AAPL,MSFT,NVDA,GOOGL,META,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,TXN,PLTR,CRWD,PANW,'
+        # Consumer Discretionary
+        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,'
+        # Financial Services
+        'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,'
+        # Healthcare
+        'UNH,JNJ,LLY,ABBV,MRK,PFE,TMO,ABT,DHR,BMY,AMGN,CVS,GILD,'
+        # Energy
+        'XOM,CVX,COP,SLB,EOG,MPC,PSX,VLO,OXY,HAL,'
+        # Industrials
+        'BA,CAT,GE,HON,UPS,RTX,LMT,DE,MMM,UNP,'
+        # Communication Services
+        'T,VZ,CMCSA,TMUS,NFLX,DIS,'
+        # Consumer Staples
+        'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,'
+        # Materials
+        'LIN,APD,ECL,DD,NEM,FCX,DOW,'
+        # Real Estate
+        'AMT,PLD,CCI,EQIX,PSA,'
+        # Utilities
+        'NEE,DUK,SO,D,AEP'
+    ).split(',')
     WATCHLIST = [ticker.strip().upper() for ticker in WATCHLIST if ticker.strip()]
     
     # Auto-start Settings
