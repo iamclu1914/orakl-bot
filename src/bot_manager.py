@@ -116,15 +116,15 @@ class BotManager:
         self.bots.append(self.breakouts_bot)
         logger.info(f"  ✓ Breakouts Bot → Channel ID: {Config.BREAKOUTS_WEBHOOK.split('/')[-2]}")
 
-        # Unusual Volume Bot (Volume Surge Detection)
-        self.unusual_volume_bot = UnusualVolumeBot(
-            Config.UNUSUAL_VOLUME_WEBHOOK,
+        # Unusual Activity Bot (Volume Surge Detection)
+        self.unusual_activity_bot = UnusualVolumeBot(
+            Config.UNUSUAL_ACTIVITY_WEBHOOK,
             self.watchlist,
             self.fetcher,
             self.analyzer
         )
-        self.bots.append(self.unusual_volume_bot)
-        logger.info(f"  ✓ Unusual Volume Bot → Channel ID: {Config.UNUSUAL_VOLUME_WEBHOOK.split('/')[-2]}")
+        self.bots.append(self.unusual_activity_bot)
+        logger.info(f"  ✓ Unusual Activity Bot → Channel ID: {Config.UNUSUAL_ACTIVITY_WEBHOOK.split('/')[-2]}")
 
         # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
         self.strat_bot = STRATPatternBot()
