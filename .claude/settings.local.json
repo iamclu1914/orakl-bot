@@ -12,7 +12,9 @@
       "Bash(git branch:*)",
       "Bash(git push:*)",
       "Bash(python:*)",
-      "Bash(TZ:*)"
+      "Bash(TZ:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []
