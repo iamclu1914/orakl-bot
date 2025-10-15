@@ -16,35 +16,35 @@ def setup_bot_commands(bot):
         """Show all ORAKL commands"""
         embed = discord.Embed(
             title="🔮 ORAKL Bot - Professional Visualizations",
-            description="Tradytics-quality charts powered by Polygon API",
+            description="Tradytics-quality charts powered by Polygon API\n**Type `/` to see all commands!**",
             color=0x9B59B6
         )
-        
+
         embed.add_field(
             name="📊 Flow Analysis (Visual)",
-            value="`ok-topflow` - Top bull/bear bar chart 📊\n"
-                  "`ok-bigflow SYMBOL` - Biggest trades table 💰\n"
-                  "`ok-flowsum SYMBOL` - Complete dashboard 📈\n"
-                  "`ok-flowheatmap SYMBOL` - Strike x Exp heatmap 🔥",
+            value="`/topflow` - Top bull/bear bar chart 📊\n"
+                  "`/bigflow SYMBOL` - Biggest trades table 💰\n"
+                  "`/flowsum SYMBOL` - Complete dashboard 📈\n"
+                  "`/flowheatmap SYMBOL` - Strike x Exp heatmap 🔥",
             inline=False
         )
-        
+
         embed.add_field(
             name="📈 Technical Analysis (Visual)",
-            value="`ok-srlevels SYMBOL` - S/R levels (1H/4H/Daily) 📊\n"
-                  "`ok-darkpool SYMBOL` - Darkpool/block trades table 🌑\n"
-                  "`ok-dplevels SYMBOL` - Darkpool premium by price 💰",
+            value="`/srlevels SYMBOL [1h|4h|1d]` - S/R levels with timeframe 📊\n"
+                  "`/darkpool SYMBOL` - Last week's darkpool/block trades 🌑\n"
+                  "`/dplevels SYMBOL` - Last week's darkpool premium levels 💰",
             inline=False
         )
-        
+
         embed.add_field(
             name="🤖 AI & Scans",
-            value="`ok-all SYMBOL` - AI prediction 🔮\n"
-                  "`ok-scan` - Force manual scan 🔍",
+            value="`/all SYMBOL` - AI prediction 🔮\n"
+                  "`/scan` - Force manual scan 🔍",
             inline=False
         )
-        
-        embed.set_footer(text="ORAKL Bot v2.0 Enhanced | Professional Grade | Prefix: ok-")
+
+        embed.set_footer(text="ORAKL Bot v3.0 | Slash Commands | Type / to autocomplete")
         await ctx.send(embed=embed)
     
     @bot.command(name='all', aliases=['ai', 'predict'])
@@ -268,18 +268,26 @@ def setup_bot_commands(bot):
     
     @bot.command(name='darkpool', aliases=['dp'])
     async def darkpool_trades(ctx, symbol: str):
-        """Latest darkpool and block trades with visual table"""
+        """Last week's darkpool and block trades with visual table"""
         symbol = symbol.upper()
 
         async with ctx.typing():
             from src.utils.flow_charts import FlowChartGenerator
+            from datetime import timedelta
 
-            # Get recent stock trades (potential darkpool/block trades)
-            trades_list = await bot.fetcher.get_stock_trades(symbol, limit=10000)
+            # Get 1 week of stock trades for darkpool analysis
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=7)
+
+            trades_list = await bot.fetcher.get_stock_trades_range(
+                symbol,
+                start_date.strftime('%Y-%m-%d'),
+                end_date.strftime('%Y-%m-%d')
+            )
             current_price = await bot.fetcher.get_stock_price(symbol)
 
             if not trades_list:
-                await ctx.send(f"No darkpool data for {symbol}")
+                await ctx.send(f"No darkpool data for {symbol} in the last week")
                 return
 
             # Convert to DataFrame
@@ -307,18 +315,26 @@ def setup_bot_commands(bot):
 
     @bot.command(name='dplevels')
     async def darkpool_levels(ctx, symbol: str):
-        """Darkpool premium by price level (horizontal bar chart)"""
+        """Last week's darkpool premium by price level (horizontal bar chart)"""
         symbol = symbol.upper()
 
         async with ctx.typing():
             from src.utils.flow_charts import FlowChartGenerator
+            from datetime import timedelta
 
-            # Get stock trades (darkpool data)
-            trades_list = await bot.fetcher.get_stock_trades(symbol, limit=10000)
+            # Get 1 week of stock trades for darkpool analysis
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=7)
+
+            trades_list = await bot.fetcher.get_stock_trades_range(
+                symbol,
+                start_date.strftime('%Y-%m-%d'),
+                end_date.strftime('%Y-%m-%d')
+            )
             current_price = await bot.fetcher.get_stock_price(symbol)
 
             if not trades_list:
-                await ctx.send(f"No darkpool data for {symbol}")
+                await ctx.send(f"No darkpool data for {symbol} in the last week")
                 return
 
             # Convert to DataFrame
@@ -345,9 +361,16 @@ def setup_bot_commands(bot):
             await ctx.send("No significant darkpool levels found")
     
     @bot.command(name='srlevels', aliases=['sr', 'levels'])
-    async def sr_levels(ctx, symbol: str):
-        """Support and Resistance levels with TradingView-style multi-timeframe chart"""
+    async def sr_levels(ctx, symbol: str, timeframe: str = 'all'):
+        """Support and Resistance levels - specify timeframe: 1h, 4h, 1d, or all"""
         symbol = symbol.upper()
+        timeframe = timeframe.lower()
+
+        # Validate timeframe
+        valid_timeframes = ['1h', '4h', '1d', 'all']
+        if timeframe not in valid_timeframes:
+            await ctx.send(f"Invalid timeframe. Use: `1h`, `4h`, `1d`, or `all`\nExample: `/srlevels TSLA 4h`")
+            return
 
         async with ctx.typing():
             from src.utils.flow_charts import FlowChartGenerator
@@ -361,59 +384,77 @@ def setup_bot_commands(bot):
 
             end_date = datetime.now()
 
-            # Get data for multiple timeframes
-            # 1-hour data (last 7 days)
-            start_1h = end_date - timedelta(days=7)
-            data_1h = await bot.fetcher.get_aggregates(
-                symbol,
-                timespan='hour',
-                multiplier=1,
-                from_date=start_1h.strftime('%Y-%m-%d'),
-                to_date=end_date.strftime('%Y-%m-%d')
-            )
+            # Fetch data based on timeframe selection
+            data_1h = pd.DataFrame()
+            data_4h = pd.DataFrame()
+            data_daily = pd.DataFrame()
 
-            # 4-hour data (last 30 days)
-            start_4h = end_date - timedelta(days=30)
-            data_4h = await bot.fetcher.get_aggregates(
-                symbol,
-                timespan='hour',
-                multiplier=4,
-                from_date=start_4h.strftime('%Y-%m-%d'),
-                to_date=end_date.strftime('%Y-%m-%d')
-            )
+            if timeframe in ['1h', 'all']:
+                start_1h = end_date - timedelta(days=7)
+                data_1h = await bot.fetcher.get_aggregates(
+                    symbol,
+                    timespan='hour',
+                    multiplier=1,
+                    from_date=start_1h.strftime('%Y-%m-%d'),
+                    to_date=end_date.strftime('%Y-%m-%d')
+                )
 
-            # Daily data (last 90 days)
-            start_daily = end_date - timedelta(days=90)
-            data_daily = await bot.fetcher.get_aggregates(
-                symbol,
-                timespan='day',
-                multiplier=1,
-                from_date=start_daily.strftime('%Y-%m-%d'),
-                to_date=end_date.strftime('%Y-%m-%d')
-            )
+            if timeframe in ['4h', 'all']:
+                start_4h = end_date - timedelta(days=30)
+                data_4h = await bot.fetcher.get_aggregates(
+                    symbol,
+                    timespan='hour',
+                    multiplier=4,
+                    from_date=start_4h.strftime('%Y-%m-%d'),
+                    to_date=end_date.strftime('%Y-%m-%d')
+                )
+
+            if timeframe in ['1d', 'all']:
+                start_daily = end_date - timedelta(days=90)
+                data_daily = await bot.fetcher.get_aggregates(
+                    symbol,
+                    timespan='day',
+                    multiplier=1,
+                    from_date=start_daily.strftime('%Y-%m-%d'),
+                    to_date=end_date.strftime('%Y-%m-%d')
+                )
 
             if data_1h.empty and data_4h.empty and data_daily.empty:
                 await ctx.send(f"No price data available for {symbol}")
                 return
 
-        # Create TradingView-style multi-timeframe chart
+        # Create chart based on timeframe
         from src.utils.flow_charts import FlowChartGenerator
-        chart_buffer = FlowChartGenerator.create_sr_levels_tradingview(
-            symbol, data_1h, data_4h, data_daily, current_price
-        )
+
+        if timeframe == 'all':
+            chart_buffer = FlowChartGenerator.create_sr_levels_tradingview(
+                symbol, data_1h, data_4h, data_daily, current_price
+            )
+            tf_text = "1H · 4H · Daily"
+        else:
+            # Single timeframe chart
+            if timeframe == '1h':
+                chart_buffer = FlowChartGenerator.create_sr_levels_chart(symbol, data_1h, current_price)
+                tf_text = "1 Hour"
+            elif timeframe == '4h':
+                chart_buffer = FlowChartGenerator.create_sr_levels_chart(symbol, data_4h, current_price)
+                tf_text = "4 Hour"
+            else:  # 1d
+                chart_buffer = FlowChartGenerator.create_sr_levels_chart(symbol, data_daily, current_price)
+                tf_text = "Daily"
 
         if chart_buffer:
             file = discord.File(chart_buffer, filename='srlevels.png')
 
             embed = discord.Embed(
                 title=f"📊 {symbol} Support & Resistance Levels",
-                description=f"TradingView-style multi-timeframe analysis | Current: ${current_price:.2f}",
+                description=f"Timeframe: **{tf_text}** | Current: ${current_price:.2f}",
                 color=0x5865f2,
                 timestamp=datetime.now()
             )
 
             embed.set_image(url="attachment://srlevels.png")
-            embed.set_footer(text="ORAKL Bot | 1H · 4H · Daily | Green = Support | Red = Resistance")
+            embed.set_footer(text=f"ORAKL Bot | {tf_text} | Green = Support | Red = Resistance")
 
             await ctx.send(file=file, embed=embed)
         else:

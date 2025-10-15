@@ -241,6 +241,36 @@ class DataFetcher:
             return data['results']
         return []
 
+    async def get_stock_trades_range(self, symbol: str, start_date: str, end_date: str) -> List[Dict]:
+        """Get stock trades for a specific date range (for darkpool analysis)"""
+        try:
+            # Polygon API: /v3/trades/{ticker}?timestamp.gte={start}&timestamp.lte={end}
+            from datetime import datetime
+            import time
+
+            # Convert dates to timestamps (milliseconds)
+            start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp() * 1000)
+            end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp() * 1000)
+
+            endpoint = f"/v3/trades/{symbol}"
+            params = {
+                'timestamp.gte': start_ts,
+                'timestamp.lte': end_ts,
+                'limit': 50000,  # Max for 1 week
+                'sort': 'timestamp',
+                'order': 'desc'
+            }
+
+            data = await self._make_request(endpoint, params)
+
+            if data and 'results' in data:
+                return data['results']
+            return []
+
+        except Exception as e:
+            logger.error(f"Error fetching stock trades range for {symbol}: {e}")
+            return []
+
     async def get_options_trades(self, symbol: str, date: Optional[str] = None) -> pd.DataFrame:
         """Get options trades for a symbol with concurrent fetching"""
         try:
