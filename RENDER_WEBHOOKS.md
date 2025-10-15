@@ -27,31 +27,13 @@ UNUSUAL_ACTIVITY_WEBHOOK=https://discord.com/api/webhooks/1427372929099894794/xy
 
 # STRAT Pattern Bot - 3-2-2, 2-2, 1-3-1 patterns
 STRAT_WEBHOOK=https://discord.com/api/webhooks/1427143775926353952/SGludMyVWxVwug_tdCiGNXeyjWqY1TlyGlIL24FBxfUn_xGn3lpeAPQMYjqW2_xJxAfW
+
+# Darkpool Bot - Large block and darkpool trades
+DARKPOOL_WEBHOOK=https://discord.com/api/webhooks/1428112253697392652/C5WhN4ANtY3kbkgIweYmsZeHYFbhpGdoqQvm7_sk_00QL6zoP7qLOvmfDKyPhohHnKtp
+
+# ORAKL Flow Bot - Repeat and dominant options signals
+ORAKL_FLOW_WEBHOOK=https://discord.com/api/webhooks/1428112598917714113/DlMauOnNu4K6h66hc3_geY5mAp0bhFAm1BCEpNf7DekOMVs3kNFvJ0RQ_btaywZRW8nN
 ```
-
-## Missing Webhooks (Need to be created)
-
-You still need to create Discord webhooks for these bots:
-
-1. **Darkpool Bot** - Set `DARKPOOL_WEBHOOK`
-2. **ORAKL Flow Bot** - Set `ORAKL_FLOW_WEBHOOK`
-
-### How to Create Missing Webhooks:
-
-1. Go to your Discord server
-2. Create channels (if not already created):
-   - `#darkpool` (or similar)
-   - `#orakl-flow` (or similar)
-3. For each channel:
-   - Right-click channel → Edit Channel → Integrations → Webhooks
-   - Click "New Webhook"
-   - Name it (e.g., "Darkpool Bot", "ORAKL Flow Bot")
-   - Copy Webhook URL
-4. Add to Render:
-   ```env
-   DARKPOOL_WEBHOOK=<paste_webhook_url_here>
-   ORAKL_FLOW_WEBHOOK=<paste_webhook_url_here>
-   ```
 
 ## Verification
 
@@ -72,8 +54,8 @@ After adding these to Render:
 | Sweeps Bot | #sweeps | ✅ Configured |
 | Unusual Activity Bot | #unusual-activity | ✅ Configured |
 | STRAT Pattern Bot | #strat-alerts | ✅ Configured |
-| Darkpool Bot | #darkpool | ❌ Need webhook |
-| ORAKL Flow Bot | #orakl-flow | ❌ Need webhook |
+| Darkpool Bot | #darkpool | ✅ Configured |
+| ORAKL Flow Bot | #option-flow | ✅ Configured |
 
 ## Notes
 
