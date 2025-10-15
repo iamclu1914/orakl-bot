@@ -1008,24 +1008,37 @@ class FlowChartGenerator:
                    color=FlowChartGenerator.COLORS['cyan'],
                    linewidth=2.5, label='Price', zorder=5)
             
+            # Add current price line first
+            if current_price:
+                ax.axhline(y=current_price, color=FlowChartGenerator.COLORS['yellow'],
+                          linestyle='-', linewidth=2.5, alpha=0.9, zorder=4)
+                ax.text(-len(price_data)*0.015, current_price, f'${current_price:.2f}',
+                       va='center', ha='right',
+                       color=FlowChartGenerator.COLORS['yellow'],
+                       fontsize=12, fontweight='bold',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor=FlowChartGenerator.COLORS['background'],
+                               edgecolor=FlowChartGenerator.COLORS['yellow'], linewidth=1.5))
+
             # Add S/R levels
             for level in sr_levels:
                 price_level = level['price']
                 level_type = level['type']
-                strength = level['strength']
-                
+                strength = level.get('strength', 0.7)
+
                 color = FlowChartGenerator.COLORS['red'] if level_type == 'resistance' \
                        else FlowChartGenerator.COLORS['green']
                 alpha = 0.6 + (strength * 0.4)
-                
+
                 ax.axhline(y=price_level, color=color, linestyle='--',
-                          linewidth=2, alpha=alpha, zorder=3)
-                
-                # Price label on left
-                ax.text(-len(price_data)*0.015, price_level, f'{price_level:.2f}',
+                          linewidth=2.2, alpha=alpha, zorder=3)
+
+                # Price label on left - use correct color for level type
+                ax.text(-len(price_data)*0.015, price_level, f'${price_level:.2f}',
                        va='center', ha='right',
-                       color=FlowChartGenerator.COLORS['green'],
-                       fontsize=12, fontweight='bold')
+                       color=color,
+                       fontsize=11, fontweight='bold',
+                       bbox=dict(boxstyle='round,pad=0.2', facecolor=FlowChartGenerator.COLORS['panel'],
+                               edgecolor=color, linewidth=1, alpha=0.8))
             
             ax.set_title(f'SR Levels for {symbol}',
                         color=FlowChartGenerator.COLORS['white'],
