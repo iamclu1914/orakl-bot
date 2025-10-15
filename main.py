@@ -93,7 +93,6 @@ class ORAKLRunner:
 
                 self.bot_manager = BotManager(
                     webhook_url=Config.DISCORD_WEBHOOK_URL,
-                    watchlist=Config.WATCHLIST,
                     fetcher=fetcher,
                     analyzer=analyzer
                 )

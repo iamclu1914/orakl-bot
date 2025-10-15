@@ -83,8 +83,18 @@ class Config:
     MIN_BREAKOUT_SCORE = int(os.getenv('MIN_BREAKOUT_SCORE', '65'))
     MIN_UNUSUAL_VOLUME_SCORE = int(os.getenv('MIN_UNUSUAL_VOLUME_SCORE', '65'))
     
-    # Watchlist - Major players from each sector
-    WATCHLIST = os.getenv('WATCHLIST',
+    # Watchlist Mode - Dynamic or Static
+    WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC
+    WATCHLIST_REFRESH_INTERVAL = int(os.getenv('WATCHLIST_REFRESH_INTERVAL', '86400'))  # 24 hours in seconds
+
+    # Minimum liquidity filters for ALL_MARKET mode
+    MIN_MARKET_CAP = float(os.getenv('MIN_MARKET_CAP', '500000000'))  # $500M minimum
+    MIN_DAILY_VOLUME = int(os.getenv('MIN_DAILY_VOLUME', '500000'))  # 500K shares minimum
+    MIN_STOCK_PRICE = float(os.getenv('MIN_STOCK_PRICE', '5.0'))  # $5 minimum (avoid penny stocks)
+    MAX_STOCK_PRICE = float(os.getenv('MAX_STOCK_PRICE', '10000'))  # $10K max (filter out Berkshire)
+
+    # Static Watchlist (fallback when WATCHLIST_MODE = 'STATIC')
+    STATIC_WATCHLIST = os.getenv('WATCHLIST',
         # Indices & ETFs
         'SPY,QQQ,IWM,DIA,'
         # Technology
@@ -110,7 +120,9 @@ class Config:
         # Utilities
         'NEE,DUK,SO,D,AEP'
     ).split(',')
-    WATCHLIST = [ticker.strip().upper() for ticker in WATCHLIST if ticker.strip()]
+
+    # Initialize WATCHLIST (will be populated dynamically by WatchlistManager)
+    WATCHLIST = [ticker.strip().upper() for ticker in STATIC_WATCHLIST if ticker.strip()]
     
     # Auto-start Settings
     AUTO_START = os.getenv('AUTO_START', 'true').lower() == 'true'

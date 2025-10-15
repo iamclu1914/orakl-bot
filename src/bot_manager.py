@@ -5,6 +5,7 @@ from typing import List
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
+from src.watchlist_manager import SmartWatchlistManager
 from src.bots import (
     TradyFlowBot,
     BullseyeBot,
@@ -20,24 +21,26 @@ from src.bots.strat_bot import STRATPatternBot
 logger = logging.getLogger(__name__)
 
 class BotManager:
-    """Manages all auto-posting bots"""
+    """Manages all auto-posting bots with dynamic watchlist"""
 
-    def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
+    def __init__(self, webhook_url: str, fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         """
         Initialize Bot Manager
 
         Args:
             webhook_url: Discord webhook URL
-            watchlist: List of tickers to monitor
             fetcher: Data fetcher instance
             analyzer: Options analyzer instance
         """
         self.webhook_url = webhook_url
-        self.watchlist = watchlist
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.bots = []
         self.running = False
+
+        # Initialize watchlist manager
+        self.watchlist_manager = SmartWatchlistManager(fetcher)
+        self.watchlist = []  # Will be populated dynamically
 
         # Initialize all bots
         self._initialize_bots()
@@ -134,7 +137,7 @@ class BotManager:
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")
 
     async def start_all(self):
-        """Start all bots"""
+        """Start all bots with dynamic watchlist"""
         if self.running:
             logger.warning("Bot manager already running")
             return
@@ -142,8 +145,19 @@ class BotManager:
         self.running = True
         logger.info(f"Starting {len(self.bots)} auto-posting bots...")
 
+        # Initialize watchlist
+        logger.info("🔄 Loading watchlist...")
+        self.watchlist = await self.watchlist_manager.get_watchlist()
+        logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers")
+
+        # Update all bots with current watchlist
+        self._update_bot_watchlists()
+
+        # Start watchlist refresh task
+        watchlist_refresh_task = asyncio.create_task(self._watchlist_refresh_loop())
+
         # Start all bots concurrently
-        tasks = []
+        tasks = [watchlist_refresh_task]
         for bot in self.bots:
             task = asyncio.create_task(bot.start())
             tasks.append(task)
@@ -156,6 +170,32 @@ class BotManager:
         except Exception as e:
             logger.error(f"Bot manager error: {e}")
             await self.stop_all()
+
+    async def _watchlist_refresh_loop(self):
+        """Background task to refresh watchlist periodically"""
+        while self.running:
+            try:
+                # Wait for refresh interval
+                await asyncio.sleep(Config.WATCHLIST_REFRESH_INTERVAL)
+
+                # Refresh watchlist
+                logger.info("🔄 Refreshing watchlist...")
+                self.watchlist = await self.watchlist_manager.get_watchlist()
+                logger.info(f"✅ Watchlist refreshed: {len(self.watchlist)} tickers")
+
+                # Update all bots
+                self._update_bot_watchlists()
+
+            except Exception as e:
+                logger.error(f"Error in watchlist refresh loop: {e}")
+                await asyncio.sleep(60)  # Wait 1 minute before retry
+
+    def _update_bot_watchlists(self):
+        """Update watchlist for all bots"""
+        for bot in self.bots:
+            if hasattr(bot, 'watchlist'):
+                bot.watchlist = self.watchlist
+                logger.debug(f"Updated {bot.name} watchlist: {len(self.watchlist)} tickers")
 
     async def stop_all(self):
         """Stop all bots"""

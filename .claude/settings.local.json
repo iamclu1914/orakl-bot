@@ -14,7 +14,9 @@
       "Bash(python:*)",
       "Bash(TZ:*)",
       "Bash(tasklist)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(curl:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
