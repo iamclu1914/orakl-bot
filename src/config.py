@@ -38,6 +38,7 @@ class Config:
     DARKPOOL_WEBHOOK = os.getenv('DARKPOOL_WEBHOOK', DISCORD_WEBHOOK_URL)
     ORAKL_FLOW_WEBHOOK = os.getenv('ORAKL_FLOW_WEBHOOK', DISCORD_WEBHOOK_URL)
     UNUSUAL_VOLUME_WEBHOOK = os.getenv('UNUSUAL_VOLUME_WEBHOOK', DISCORD_WEBHOOK_URL)
+    STRAT_WEBHOOK = os.getenv('STRAT_WEBHOOK', DISCORD_WEBHOOK_URL)
     
     # Discord Settings
     DISCORD_COMMAND_PREFIX = os.getenv('DISCORD_COMMAND_PREFIX', 'ok-')
@@ -53,6 +54,7 @@ class Config:
     DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '240'))  # 4 minutes
     BREAKOUTS_INTERVAL = int(os.getenv('BREAKOUTS_INTERVAL', '300'))  # 5 minutes
     UNUSUAL_VOLUME_INTERVAL = int(os.getenv('UNUSUAL_VOLUME_INTERVAL', '180'))  # 3 minutes
+    STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '300'))  # 5 minutes
     
     # ORAKL Flow Settings
     SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', '5'))

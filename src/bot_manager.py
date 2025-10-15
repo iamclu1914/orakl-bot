@@ -15,6 +15,7 @@ from src.bots import (
     BreakoutsBot,
     UnusualVolumeBot
 )
+from src.bots.strat_bot import STRATPatternBot
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,11 @@ class BotManager:
         )
         self.bots.append(self.unusual_volume_bot)
         logger.info(f"  ✓ Unusual Volume Bot → Channel ID: {Config.UNUSUAL_VOLUME_WEBHOOK.split('/')[-2]}")
+
+        # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
+        self.strat_bot = STRATPatternBot()
+        self.bots.append(self.strat_bot)
+        logger.info(f"  ✓ STRAT Pattern Bot → Channel ID: {Config.STRAT_WEBHOOK.split('/')[-2]}")
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")
 
