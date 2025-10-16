@@ -440,6 +440,13 @@ class GoldenSweepsBot(BaseAutoBot):
             ]
         )
 
+        # Add disclaimer
+        embed['fields'].append({
+            "name": "",
+            "value": "Please always do your own due diligence on top of these trade ideas.",
+            "inline": False
+        })
+
         embed['footer'] = "ORAKL Bot - Golden Sweeps"
 
         success = await self.post_to_discord(embed)

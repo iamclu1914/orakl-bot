@@ -238,6 +238,11 @@ class DarkpoolBot(BaseAutoBot):
                     "value": f"{'Darkpool activity suggests institutional positioning' if block['is_darkpool'] else 'Large block trade indicates significant position'}\n"
                             f"Trade executed at {'premium' if price_diff > 0 else 'discount' if price_diff < 0 else 'market price'}",
                     "inline": False
+                },
+                {
+                    "name": "",
+                    "value": "Please always do your own due diligence on top of these trade ideas.",
+                    "inline": False
                 }
             ],
             footer=f"{'Darkpool' if block['is_darkpool'] else 'Block Trade'} Bot | Institutional Activity Tracker"

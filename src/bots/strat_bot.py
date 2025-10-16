@@ -410,6 +410,13 @@ class STRATPatternBot:
             if 'setup' in signal:
                 embed.add_embed_field(name="⚙️ Setup", value=signal['setup'], inline=False)
 
+            # Add disclaimer
+            embed.add_embed_field(
+                name="",
+                value="Please always do your own due diligence on top of these trade ideas.",
+                inline=False
+            )
+
             embed.set_footer(text=f"STRAT Pattern Scanner • {datetime.now(self.est).strftime('%Y-%m-%d %H:%M:%S EST')}")
             embed.set_timestamp()
 

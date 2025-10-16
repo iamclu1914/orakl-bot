@@ -283,6 +283,11 @@ class BreakoutsBot(BaseAutoBot):
                     "name": "💡 Analysis",
                     "value": f"Strong {'upward' if breakout['breakout_type'] == 'BULLISH' else 'downward'} momentum with {breakout['volume_surge']:.1f}x volume confirmation",
                     "inline": False
+                },
+                {
+                    "name": "",
+                    "value": "Please always do your own due diligence on top of these trade ideas.",
+                    "inline": False
                 }
             ],
             footer="Breakouts Bot | Technical Breakout Scanner"

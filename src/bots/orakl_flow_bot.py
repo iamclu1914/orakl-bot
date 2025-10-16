@@ -164,6 +164,11 @@ class TradyFlowBot(BaseAutoBot):
                     "name": "⏰ Days to Expiry",
                     "value": f"{signal['days_to_expiry']} days",
                     "inline": True
+                },
+                {
+                    "name": "",
+                    "value": "Please always do your own due diligence on top of these trade ideas.",
+                    "inline": False
                 }
             ],
             footer="Orakl Flow Bot | High ITM Success Rate"

@@ -470,6 +470,11 @@ class UnusualVolumeBot(BaseAutoBot):
                     "name": "💡 Analysis",
                     "value": self._generate_analysis(signal),
                     "inline": False
+                },
+                {
+                    "name": "",
+                    "value": "Please always do your own due diligence on top of these trade ideas.",
+                    "inline": False
                 }
             ],
             footer="Unusual Volume Bot | Institutional Activity Detector"

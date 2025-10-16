@@ -315,6 +315,11 @@ class ScalpsBot(BaseAutoBot):
                     "name": "⚠️ Note",
                     "value": "Quick scalp - monitor closely",
                     "inline": False
+                },
+                {
+                    "name": "",
+                    "value": "Please always do your own due diligence on top of these trade ideas.",
+                    "inline": False
                 }
             ],
             footer="Scalps Bot | The Strat Quick Signals"
