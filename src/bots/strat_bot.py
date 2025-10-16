@@ -25,6 +25,7 @@ class STRATPatternBot:
         self.scan_interval = Config.STRAT_INTERVAL
         self.detected_today = {}
         self.is_running = False
+        self.running = False  # Add for compatibility with BotManager.get_bot_status()
         self.est = pytz.timezone('America/New_York')
 
         logger.info(f"{self.name} initialized")
@@ -442,6 +443,7 @@ class STRATPatternBot:
     async def start(self):
         """Start the bot"""
         self.is_running = True
+        self.running = True  # Sync with is_running
         logger.info(f"{self.name} started with {self.scan_interval}s interval")
 
         while self.is_running:
@@ -462,4 +464,5 @@ class STRATPatternBot:
     async def stop(self):
         """Stop the bot"""
         self.is_running = False
+        self.running = False  # Sync with is_running
         logger.info(f"{self.name} stopped")
