@@ -136,15 +136,21 @@ class WatchlistManager:
             # Initial request
             params = {
                 'market': 'stocks',
-                'exchange': 'XNGS,XNYS,ARCX',  # NASDAQ, NYSE, NYSE Arca
+                'type': 'CS',  # Common Stock only
                 'active': 'true',
                 'limit': 1000  # Max per page
             }
 
             endpoint = '/v3/reference/tickers'
-            logger.debug(f"Fetching tickers from {endpoint} with params: {params}")
+            logger.info(f"🔍 Fetching tickers from Polygon API: {endpoint}")
+            logger.info(f"📋 Parameters: {params}")
             data = await self.data_fetcher._make_request(endpoint, params)
-            logger.debug(f"Received response with {len(data.get('results', []))} results")
+
+            if not data:
+                logger.error(f"❌ Polygon API returned empty response")
+                return []
+
+            logger.info(f"📊 API Response - Status: {data.get('status', 'unknown')}, Count: {data.get('count', 0)}")
 
             if data and 'results' in data:
                 all_tickers.extend(data['results'])
