@@ -264,11 +264,10 @@ class ScalpsBot(BaseAutoBot):
     async def _post_signal(self, signal: Dict):
         """Post Scalps signal to Discord"""
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
-        emoji = "⚡" if signal['type'] == 'CALL' else "⚡"
 
         embed = self.create_embed(
-            title=f"{emoji} Scalp: {signal['ticker']}",
-            description=f"**{signal['pattern']}** | Quick {signal['type']} Setup",
+            title=f"⚡ Scalp: {signal['ticker']}",
+            description=f"{signal['pattern']} | Quick {signal['type']} Setup",
             color=color,
             fields=[
                 {
