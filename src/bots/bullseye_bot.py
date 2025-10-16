@@ -441,63 +441,95 @@ class BullseyeBot(BaseAutoBot):
 
     async def _post_signal(self, signal: Dict):
         """Post Bullseye signal to Discord"""
-        color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
-        emoji = "🎯" if signal['type'] == 'CALL' else "🎯"
-        direction = "↗️" if signal['momentum'] > 0 else "↘️"
+        # Teal/turquoise color like in the image
+        color = 0x5DADE2
+
+        # Format expiration date
+        exp_date = pd.to_datetime(signal.get('expiration', datetime.now()))
+        exp_str = exp_date.strftime('%m/%d/%Y')
+
+        # Determine Call/Put
+        call_put = "Call" if signal['type'] == 'CALL' else "Put"
+
+        # Determine Buy/Sell (for Bullseye, these are always Buy signals)
+        buy_sell = "Buy"
+
+        # Format premium in M if over 1M, otherwise in K
+        premium = signal['premium']
+        if premium >= 1000000:
+            prem_str = f"{premium/1000000:.2f}M"
+        elif premium >= 1000:
+            prem_str = f"{premium/1000:.0f}K"
+        else:
+            prem_str = f"{premium:.0f}"
+
+        # OI (Open Interest) - placeholder if not available
+        oi = signal.get('open_interest', 'N/A')
+
+        # Volume
+        volume = signal['volume']
 
         embed = self.create_embed(
-            title=f"{emoji} Bullseye: {signal['ticker']} {direction}",
-            description=f"AI Intraday {signal['type']} Signal | Score: {signal['ai_score']}/100",
+            title=f"∞ Bullseye Trade Idea",
+            description=f"Expected to pan out within 1-2 days.",
             color=color,
             fields=[
                 {
-                    "name": "📊 Contract",
-                    "value": f"{signal['type']} ${signal['strike']}\n{signal['days_to_expiry']}DTE",
+                    "name": "Symbol",
+                    "value": signal['ticker'],
                     "inline": True
                 },
                 {
-                    "name": "🤖 AI Score",
-                    "value": f"**{signal['ai_score']}/100**",
+                    "name": "Strike",
+                    "value": f"{signal['strike']:.1f}",
                     "inline": True
                 },
                 {
-                    "name": "📈 Momentum",
-                    "value": f"{signal['momentum']:+.2f}%",
+                    "name": "Expiration",
+                    "value": exp_str,
                     "inline": True
                 },
                 {
-                    "name": "💵 Current Price",
-                    "value": f"${signal['current_price']:.2f}",
+                    "name": "Call/Put",
+                    "value": call_put,
                     "inline": True
                 },
                 {
-                    "name": "📊 Volume",
-                    "value": f"{signal['volume']:,}",
+                    "name": "Buy/Sell",
+                    "value": buy_sell,
                     "inline": True
                 },
                 {
-                    "name": "💰 Premium",
-                    "value": f"${signal['premium']:,.0f}",
+                    "name": "AI Confidence",
+                    "value": f"{signal['ai_score']:.2f}%",
                     "inline": True
                 },
                 {
-                    "name": "🎯 Target",
-                    "value": f"${signal['strike']:.2f} ({signal['strike_distance']:.1f}% {'away' if signal['strike_distance'] > 0 else 'ITM'})",
-                    "inline": False
-                },
-                {
-                    "name": "⏰ Timeframe",
-                    "value": f"Intraday - {signal['days_to_expiry']} DTE",
+                    "name": "Prems Spent",
+                    "value": prem_str,
                     "inline": True
                 },
                 {
-                    "name": "🎲 Probability",
-                    "value": f"{signal['probability_itm']:.1f}%",
+                    "name": "Volume",
+                    "value": f"{volume:,}",
+                    "inline": True
+                },
+                {
+                    "name": "OI",
+                    "value": str(oi),
                     "inline": True
                 }
-            ],
-            footer="Bullseye Bot | AI Intraday Signals"
+            ]
         )
+
+        # Add disclaimer footer
+        embed['fields'].append({
+            "name": "∞",
+            "value": "Please always do your own due diligence on top of these trade ideas. For shorter term expirations, it is better to add some extra time.",
+            "inline": False
+        })
+
+        embed['footer'] = f"ORAKL Bot - Bullseye • {datetime.now().strftime('%m/%d/%Y')}"
 
         await self.post_to_discord(embed)
         logger.info(f"Posted Bullseye signal: {signal['ticker']} {signal['type']} ${signal['strike']} Score:{signal['ai_score']}")
