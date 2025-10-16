@@ -351,146 +351,112 @@ class GoldenSweepsBot(BaseAutoBot):
     async def _post_signal(self, sweep: Dict) -> bool:
         """Post enhanced golden sweep signal to Discord"""
         color = 0xFFD700  # Gold color
-        emoji = "💎" if sweep['type'] == 'CALL' else "💎"
 
-        # Check if accumulation alert
-        if sweep.get('alert_type') == 'ACCUMULATION':
-            emoji = "🔥💎🔥"  # Special emoji for accumulation
-            color = 0xFF4500  # Orange-red for accumulation
+        # Format time
+        now = datetime.now()
+        time_str = now.strftime('%I:%M %p')
+        date_str = now.strftime('%m/%d/%y')
+
+        # Format expiration
+        exp_str = sweep['expiration']
 
         # Format premium in millions
         premium_millions = sweep['premium'] / 1000000
 
-        # Sentiment
-        if sweep['moneyness'] == 'ITM':
-            sentiment = f"Deep ITM {sweep['type']}"
-        elif sweep['moneyness'] == 'ATM':
-            sentiment = f"ATM {sweep['type']}"
-        else:
-            sentiment = f"OTM {sweep['type']}"
-
         # Get enhanced score
         final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep['golden_score']))
 
-        # Build confidence string
-        volume_ratio = sweep.get('volume_ratio', 0)
-        price_aligned = sweep.get('price_aligned', False)
-        confidence_parts = []
-        if volume_ratio >= 3.0:
-            confidence_parts.append(f"{volume_ratio:.1f}x Vol")
-        if price_aligned:
-            confidence_parts.append("Price Aligned")
-        confidence = " | ".join(confidence_parts) if confidence_parts else "N/A"
-        
-        # Get market context if available
-        market_context = sweep.get('market_context', {})
-        regime = market_context.get('regime', 'unknown')
-        trend = market_context.get('trend', 'unknown')
-        
-        # Get suggestions if available
-        suggestions = sweep.get('suggestions', {})
-        action = suggestions.get('action', 'MONITOR')
-        notes = suggestions.get('notes', [])
+        # Get sector (placeholder - would need to be added to sweep data)
+        sector = sweep.get('sector', 'N/A')
 
-        # Build description with enhanced info
-        alert_type = sweep.get('alert_type', 'NEW')
-        description_parts = [f"**${premium_millions:.2f}M {sentiment}**"]
+        # Format details string (contracts @ avg_price)
+        details = f"{sweep['volume']:,} @ {sweep['avg_price']:.2f}"
 
-        # Add accumulation notice
-        if alert_type == 'ACCUMULATION':
-            description_parts.append(f"🔥 **ACCUMULATION DETECTED** 🔥")
-
-        description_parts.append(f"Score: {int(final_score)}/100")
-        if confidence != 'N/A':
-            description_parts.append(confidence)
-        
         embed = self.create_embed(
-            title=f"{emoji} GOLDEN SWEEP: {sweep['ticker']} 💰",
-            description=" | ".join(description_parts),
+            title=f"{sweep['ticker']} {sweep['type']} (GOLDEN SIGNAL)",
+            description="",
             color=color,
             fields=[
                 {
-                    "name": "📊 Contract",
-                    "value": f"{sweep['type']} ${sweep['strike']}\nExp: {sweep['expiration']}",
+                    "name": "Date",
+                    "value": date_str,
                     "inline": True
                 },
                 {
-                    "name": "💰 PREMIUM",
-                    "value": f"**${premium_millions:.2f}M**",
+                    "name": "Time",
+                    "value": time_str,
                     "inline": True
                 },
                 {
-                    "name": "💎 Golden Score",
-                    "value": f"**{sweep['golden_score']}/100**",
+                    "name": "Ticker",
+                    "value": sweep['ticker'],
                     "inline": True
                 },
                 {
-                    "name": "📈 Current Price",
-                    "value": f"${sweep['current_price']:.2f}",
+                    "name": "Exp",
+                    "value": exp_str,
                     "inline": True
                 },
                 {
-                    "name": "📊 Volume",
-                    "value": f"{sweep['volume']:,} contracts",
+                    "name": "Strike",
+                    "value": f"{sweep['strike']:.0f}",
                     "inline": True
                 },
                 {
-                    "name": "⚡ Number of Fills",
-                    "value": f"{sweep['num_fills']} fills",
+                    "name": "C/P",
+                    "value": sweep['type'] + "S",
                     "inline": True
                 },
                 {
-                    "name": "🎯 Strike",
-                    "value": f"${sweep['strike']:.2f} ({sweep['moneyness']})",
+                    "name": "Spot",
+                    "value": f"{sweep['current_price']:.2f}",
                     "inline": True
                 },
                 {
-                    "name": "📍 Distance to Strike",
-                    "value": f"{sweep['strike_distance']:+.2f}%",
+                    "name": "Details",
+                    "value": details,
                     "inline": True
                 },
                 {
-                    "name": "⏰ Days to Expiry",
-                    "value": f"{sweep['days_to_expiry']} days",
+                    "name": "Type",
+                    "value": "SWEEP",
                     "inline": True
                 },
                 {
-                    "name": "🎲 Probability ITM",
-                    "value": f"{sweep['probability_itm']:.1f}%",
+                    "name": "Prem",
+                    "value": f"${premium_millions:.1f}M",
                     "inline": True
                 },
                 {
-                    "name": "💵 Avg Contract Price",
-                    "value": f"${sweep['avg_price']:.2f}",
+                    "name": "Algo Score",
+                    "value": str(int(final_score)),
                     "inline": True
                 },
                 {
-                    "name": "⏱️ Execution Time",
-                    "value": f"{int(sweep['time_span'])}s",
-                    "inline": True
-                },
-                {
-                    "name": "🌐 Exchanges Hit",
-                    "value": f"**{sweep.get('exchanges_hit', 1)}** venues",
-                    "inline": True
-                },
-                {
-                    "name": "⚡ Urgency",
-                    "value": f"**{sweep.get('urgency', 'N/A')}** ({sweep.get('contracts_per_second', 0):.1f} cps)",
+                    "name": "Sect",
+                    "value": sector,
                     "inline": True
                 }
             ]
         )
 
-        # Add enhanced analysis fields
-        if volume_ratio >= 2.0:
+        embed['footer'] = "ORAKL Bot - Golden Sweeps"
+
+        success = await self.post_to_discord(embed)
+        if success:
+            logger.info(f"🚨 GOLDEN SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${premium_millions:.1f}M Score:{int(final_score)}")
+
+        return success
+
+        # Removed old enhanced fields code below
+        if False and volume_ratio >= 2.0:
             embed['fields'].append({
                 "name": "📊 Volume Analysis",
                 "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)",
                 "inline": False
             })
 
-        if price_aligned:
+        if False and price_aligned:
             momentum_str = sweep.get('momentum_strength', 0)
             embed['fields'].append({
                 "name": "✅ Price Action Confirmed",
