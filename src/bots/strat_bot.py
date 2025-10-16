@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 class STRATPatternBot:
     """Bot for detecting STRAT trading patterns"""
 
-    def __init__(self):
+    def __init__(self, data_fetcher: DataFetcher = None):
         self.name = "STRAT Pattern Scanner"
-        self.data_fetcher = DataFetcher()
+        # Use provided data_fetcher or create new one with API key from config
+        self.data_fetcher = data_fetcher if data_fetcher else DataFetcher(Config.POLYGON_API_KEY)
         self.webhook_url = Config.STRAT_WEBHOOK
         self.scan_interval = Config.STRAT_INTERVAL
         self.detected_today = {}

@@ -130,7 +130,7 @@ class BotManager:
         logger.info(f"  ✓ Unusual Activity Bot → Channel ID: {Config.UNUSUAL_ACTIVITY_WEBHOOK.split('/')[-2]}")
 
         # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
-        self.strat_bot = STRATPatternBot()
+        self.strat_bot = STRATPatternBot(self.fetcher)
         self.bots.append(self.strat_bot)
         logger.info(f"  ✓ STRAT Pattern Bot → Channel ID: {Config.STRAT_WEBHOOK.split('/')[-2]}")
 
