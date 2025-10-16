@@ -325,8 +325,22 @@ class STRATPatternBot:
                         signal['confidence_score'] = 0.75
                         signals.append(signal)
 
-            # 3-2-2 Reversal - Scan at 10 AM ET (after 3rd bar completes)
-            if now.hour == 10 and 0 <= now.minute <= 5:
+            # 3-2-2 Reversal - Scan at 8am, 9am, and 10:01am ET
+            if now.hour in [8, 9] and 0 <= now.minute <= 5:
+                df_60m = await self.data_fetcher.get_aggregates(
+                    ticker, 'minute', 60,
+                    now.replace(hour=7, minute=0).strftime('%Y-%m-%d'),
+                    now.strftime('%Y-%m-%d')
+                )
+                if not df_60m.empty:
+                    bars_60m = df_60m.to_dict('records')
+                    bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                                 't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
+                    signal = self.check_322_reversal(bars_60m, ticker)
+                    if signal:
+                        signal['confidence_score'] = 0.70
+                        signals.append(signal)
+            elif now.hour == 10 and now.minute == 1:
                 df_60m = await self.data_fetcher.get_aggregates(
                     ticker, 'minute', 60,
                     now.replace(hour=7, minute=0).strftime('%Y-%m-%d'),
@@ -341,8 +355,8 @@ class STRATPatternBot:
                         signal['confidence_score'] = 0.70
                         signals.append(signal)
 
-            # 2-2 Reversal - Scan after 8 AM candle closes
-            if now.hour == 8 and 55 <= now.minute <= 59:
+            # 2-2 Reversal - Scan at 4am and 8am ET
+            if now.hour in [4, 8] and 0 <= now.minute <= 5:
                 df_4h = await self.data_fetcher.get_aggregates(
                     ticker, 'hour', 4,
                     (now - timedelta(days=2)).strftime('%Y-%m-%d'),
