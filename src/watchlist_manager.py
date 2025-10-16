@@ -190,26 +190,19 @@ class WatchlistManager:
         """
         filtered = []
 
-        # First pass: Filter by market cap (from ticker details)
-        candidates = []
-        for ticker in tickers:
-            try:
-                # Skip non-common stock (ADRs, preferred, etc.)
-                ticker_type = ticker.get('type', '')
-                if ticker_type not in ['CS', 'ADRC']:  # CS = Common Stock, ADRC = ADR Common
-                    continue
+        # Extract all ticker symbols (already filtered to CS type from API)
+        candidates = [t['ticker'] for t in tickers if t.get('ticker')]
+        logger.info(f"📊 Processing {len(candidates)} tickers from Polygon API")
 
-                # Get market cap
-                market_cap = ticker.get('market_cap', 0)
-                if market_cap and market_cap >= self.min_market_cap:
-                    candidates.append(ticker['ticker'])
+        # For performance: Skip snapshot filtering and return all tickers
+        # Bots will filter during scanning based on their own criteria
+        if len(candidates) > 1000:
+            logger.info(f"⚡ Large ticker count ({len(candidates)}), skipping volume/price filtering")
+            logger.info(f"✅ Returning all {len(candidates)} tickers - bots will filter during scans")
+            return candidates
 
-            except Exception as e:
-                logger.debug(f"Error filtering {ticker.get('ticker', 'unknown')}: {e}")
-                continue
-
-        logger.info(f"📊 {len(candidates)} tickers passed market cap filter (>${self.min_market_cap/1e9:.1f}B)")
-
+        # For smaller lists: Do snapshot filtering for better quality
+        logger.info(f"📊 Applying volume/price filters to {len(candidates)} tickers")
         # Second pass: Get snapshot data for volume/price filtering
         # Process in batches of 250 (Polygon limit)
         batch_size = 250
