@@ -373,7 +373,7 @@ class GoldenSweepsBot(BaseAutoBot):
         details = f"{sweep['volume']:,} @ {sweep['avg_price']:.2f}"
 
         embed = self.create_embed(
-            title=f"{sweep['ticker']} {sweep['type']} (GOLDEN SIGNAL)",
+            title=f"🏆 {sweep['ticker']} - Golden Sweep Detected",
             description="",
             color=color,
             fields=[

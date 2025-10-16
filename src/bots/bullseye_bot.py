@@ -470,7 +470,7 @@ class BullseyeBot(BaseAutoBot):
         volume = signal['volume']
 
         embed = self.create_embed(
-            title=f"∞ Bullseye Trade Idea",
+            title=f"🎯 Bullseye Trade Idea",
             description=f"Expected to pan out within 1-2 days.",
             color=color,
             fields=[
