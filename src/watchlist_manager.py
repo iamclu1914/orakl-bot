@@ -84,11 +84,14 @@ class WatchlistManager:
             if not all_tickers:
                 logger.warning("⚠️ No tickers fetched from Polygon API, using static fallback")
                 static_list = Config.STATIC_WATCHLIST
+                logger.info(f"🔍 Static list type: {type(static_list)}, length: {len(static_list)}")
                 if isinstance(static_list, str):
                     self.watchlist = [t.strip() for t in static_list.split(',') if t.strip()]
                 else:
                     self.watchlist = [t.strip() for t in static_list if t.strip()]
                 logger.info(f"📋 Loaded {len(self.watchlist)} tickers from static watchlist")
+                logger.info(f"📊 First 10: {self.watchlist[:10]}")
+                logger.info(f"📊 Last 10: {self.watchlist[-10:]}")
                 self.last_refresh = datetime.now()
                 return
 
