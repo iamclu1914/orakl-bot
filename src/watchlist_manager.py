@@ -194,11 +194,14 @@ class WatchlistManager:
         candidates = [t['ticker'] for t in tickers if t.get('ticker')]
         logger.info(f"📊 Processing {len(candidates)} tickers from Polygon API")
 
-        # For performance: Skip snapshot filtering and return all tickers
-        # Bots will filter during scanning based on their own criteria
-        if len(candidates) > 1000:
-            logger.info(f"⚡ Large ticker count ({len(candidates)}), skipping volume/price filtering")
-            logger.info(f"✅ Returning all {len(candidates)} tickers - bots will filter during scans")
+        # Limit to prevent bot scan timeouts (max 1000 tickers)
+        # Bot scans timeout after 600s when processing 5000+ tickers
+        max_tickers = 1000
+        if len(candidates) > max_tickers:
+            logger.info(f"⚡ Limiting from {len(candidates)} to {max_tickers} tickers to prevent scan timeouts")
+            # Take first 1000 (most likely to be liquid/active since API returns sorted by activity)
+            candidates = candidates[:max_tickers]
+            logger.info(f"✅ Using {len(candidates)} tickers for bot scanning")
             return candidates
 
         # For smaller lists: Do snapshot filtering for better quality
