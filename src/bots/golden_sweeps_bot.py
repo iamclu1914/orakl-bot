@@ -166,6 +166,24 @@ class GoldenSweepsBot(BaseAutoBot):
                 if total_premium < self.MIN_GOLDEN_PREMIUM:
                     continue
 
+                # PRD Enhancement #1: Multi-exchange detection (require 3+ venues)
+                exchanges_hit = self.detect_multi_exchange(group)
+                if exchanges_hit < 3:
+                    logger.debug(f"{symbol} {opt_type} {strike}: Only {exchanges_hit} exchanges (need 3+)")
+                    continue
+
+                # PRD Enhancement #2: Urgency check (require at least MEDIUM urgency)
+                urgency_data = self.calculate_urgency(group)
+                if urgency_data['urgency'] == 'LOW':
+                    logger.debug(f"{symbol} {opt_type} {strike}: Low urgency ({urgency_data['cps']:.1f} cps)")
+                    continue
+
+                # PRD Enhancement #3: Smart strike filtering (≤5% OTM/ITM only)
+                if not self.is_smart_strike(strike, current_price, opt_type):
+                    strike_distance_pct = abs((strike - current_price) / current_price) * 100
+                    logger.debug(f"{symbol} {opt_type} {strike}: Lottery ticket ({strike_distance_pct:.1f}% OTM)")
+                    continue
+
                 # Calculate metrics
                 exp_date = pd.to_datetime(expiration)
                 days_to_expiry = (exp_date - datetime.now()).days
@@ -185,10 +203,26 @@ class GoldenSweepsBot(BaseAutoBot):
                 else:
                     moneyness = 'ITM' if strike > current_price else 'OTM' if strike < current_price else 'ATM'
 
-                # Golden score (conviction level)
+                # Golden score (conviction level) - boosted for passing all PRD filters
                 golden_score = self._calculate_golden_score(
                     total_premium, total_volume, abs(strike_distance), days_to_expiry
                 )
+
+                # Boost score for multi-exchange and high urgency (PRD Enhancement)
+                score_boost = 0
+                if exchanges_hit >= 5:
+                    score_boost += 10
+                elif exchanges_hit >= 4:
+                    score_boost += 5
+
+                if urgency_data['urgency'] == 'VERY HIGH':
+                    score_boost += 15
+                elif urgency_data['urgency'] == 'HIGH':
+                    score_boost += 10
+                elif urgency_data['urgency'] == 'MEDIUM':
+                    score_boost += 5
+
+                golden_score += score_boost
 
                 # Time span of fills
                 time_span = (group['timestamp'].max() - group['timestamp'].min()).total_seconds()
@@ -214,7 +248,12 @@ class GoldenSweepsBot(BaseAutoBot):
                     'probability_itm': prob_itm,
                     'golden_score': golden_score,
                     'time_span': time_span,
-                    'volume_ratio': total_volume / 100  # Approximate for scoring
+                    'volume_ratio': total_volume / 100,  # Approximate for scoring
+                    # PRD Enhancement: Add new fields
+                    'exchanges_hit': exchanges_hit,
+                    'urgency': urgency_data['urgency'],
+                    'contracts_per_second': urgency_data['cps'],
+                    'urgency_score': urgency_data['score']
                 }
 
                 # CRITICAL FEATURE #4: Smart Deduplication (catches accumulation)
@@ -226,10 +265,45 @@ class GoldenSweepsBot(BaseAutoBot):
                     sweep['alert_reason'] = dedup_result['reason']
                     sweeps.append(sweep)
 
+                    logger.info(f"✅ Golden Sweep passed PRD filters: {symbol} {opt_type} ${strike} - "
+                              f"Exchanges:{exchanges_hit}, Urgency:{urgency_data['urgency']}, "
+                              f"Score:{golden_score}/100")
+
         except Exception as e:
             logger.error(f"Error scanning golden sweeps for {symbol}: {e}")
 
         return sweeps
+
+    def detect_multi_exchange(self, trades_df: pd.DataFrame) -> int:
+        """PRD Enhancement: Count unique exchanges hit"""
+        if 'exchange' not in trades_df.columns:
+            return 1
+        return trades_df['exchange'].nunique()
+
+    def calculate_urgency(self, trades_df: pd.DataFrame) -> Dict:
+        """PRD Enhancement: Calculate execution urgency (contracts per second)"""
+        time_span = (trades_df['timestamp'].max() - trades_df['timestamp'].min()).total_seconds()
+        total_contracts = trades_df['volume'].sum()
+
+        contracts_per_sec = total_contracts / max(time_span, 1)
+
+        if contracts_per_sec >= 200:
+            return {'urgency': 'VERY HIGH', 'score': 1.0, 'cps': contracts_per_sec}
+        elif contracts_per_sec >= 100:
+            return {'urgency': 'HIGH', 'score': 0.8, 'cps': contracts_per_sec}
+        elif contracts_per_sec >= 50:
+            return {'urgency': 'MEDIUM', 'score': 0.6, 'cps': contracts_per_sec}
+        else:
+            return {'urgency': 'LOW', 'score': 0.4, 'cps': contracts_per_sec}
+
+    def is_smart_strike(self, strike: float, current_price: float, option_type: str) -> bool:
+        """PRD Enhancement: Filter lottery tickets (only ≤5% OTM/ITM allowed)"""
+        distance_pct = abs((strike - current_price) / current_price) * 100
+
+        # Only allow near-money strikes (≤5%)
+        if distance_pct > 5.0:
+            return False
+        return True
 
     def _calculate_golden_score(self, premium: float, volume: int,
                                 strike_distance: float, dte: int) -> int:
@@ -393,6 +467,16 @@ class GoldenSweepsBot(BaseAutoBot):
                 {
                     "name": "⏱️ Execution Time",
                     "value": f"{int(sweep['time_span'])}s",
+                    "inline": True
+                },
+                {
+                    "name": "🌐 Exchanges Hit",
+                    "value": f"**{sweep.get('exchanges_hit', 1)}** venues",
+                    "inline": True
+                },
+                {
+                    "name": "⚡ Urgency",
+                    "value": f"**{sweep.get('urgency', 'N/A')}** ({sweep.get('contracts_per_second', 0):.1f} cps)",
                     "inline": True
                 }
             ]

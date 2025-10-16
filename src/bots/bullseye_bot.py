@@ -44,7 +44,7 @@ class BullseyeBot(BaseAutoBot):
                 logger.error(f"{self.name} error scanning {symbol}: {e}")
 
     async def _scan_intraday_momentum(self, symbol: str) -> List[Dict]:
-        """Scan for intraday momentum plays"""
+        """PRD Enhanced: Scan with relative volume, smart money, and directional conviction"""
         signals = []
 
         try:
@@ -53,34 +53,58 @@ class BullseyeBot(BaseAutoBot):
             if not current_price:
                 return signals
 
-            # Calculate real multi-timeframe momentum
-            momentum = await self._calculate_momentum(symbol)
-
-            if momentum is None or momentum['strength'] < 0.3:  # Lower threshold, more signals
-                return signals
-
-            # Extract momentum value for backward compatibility
-            momentum_value = momentum['momentum_5m']
-
             # Get options trades (recent only)
             trades = await self.fetcher.get_options_trades(symbol)
             if trades.empty:
                 return signals
 
+            # Calculate relative volume vs 20-day baseline (PRD Enhancement #1)
+            current_volume = trades['volume'].sum()
+            volume_ratio = await self._calculate_relative_volume(symbol, current_volume)
+
+            # Require 3x minimum (PRD requirement)
+            if volume_ratio < 3.0:
+                logger.debug(f"{symbol}: Volume ratio {volume_ratio:.1f}x below 3x minimum")
+                return signals
+
+            # Filter for smart money only ($10k+ trades) (PRD Enhancement #2)
+            smart_trades = self._filter_smart_money(trades)
+
+            if smart_trades.empty:
+                logger.debug(f"{symbol}: No smart money trades detected")
+                return signals
+
+            # Calculate directional conviction (80/20 split) (PRD Enhancement #3)
+            call_premium = smart_trades[smart_trades['type'] == 'CALL']['premium'].sum()
+            put_premium = smart_trades[smart_trades['type'] == 'PUT']['premium'].sum()
+
+            conviction_data = self._calculate_directional_conviction(call_premium, put_premium)
+
+            # Require 80/20 split (PRD requirement)
+            if not conviction_data['passes']:
+                logger.debug(f"{symbol}: Directional conviction {conviction_data['split']} below 80/20 minimum")
+                return signals
+
+            # Calculate real multi-timeframe momentum
+            momentum = await self._calculate_momentum(symbol)
+
+            if momentum is None or momentum['strength'] < 0.2:
+                return signals
+
+            # Extract momentum value for backward compatibility
+            momentum_value = momentum['momentum_5m']
+
             # Filter for high activity and near-term expiry
             today = datetime.now()
-            max_exp = today + timedelta(days=3)  # 0-3 DTE for intraday
 
-            recent_trades = trades[
-                (trades['timestamp'] > datetime.now() - timedelta(minutes=30)) &
-                (trades['premium'] >= 5000) &  # Lower minimum for intraday
-                (trades['volume'] >= 50)
+            recent_trades = smart_trades[
+                (smart_trades['timestamp'] > datetime.now() - timedelta(minutes=30))
             ]
 
             if recent_trades.empty:
                 return signals
 
-            # Group by contract
+            # Group by contract - only process ATM/near-money strikes (PRD Enhancement #4)
             for (contract, opt_type, strike, expiration), group in recent_trades.groupby(
                 ['contract', 'type', 'strike', 'expiration']
             ):
@@ -91,9 +115,17 @@ class BullseyeBot(BaseAutoBot):
                 if days_to_expiry < 0 or days_to_expiry > 3:
                     continue
 
+                # Calculate strike distance
+                strike_distance = abs(strike - current_price) / current_price * 100
+
+                # ATM/near-money only (within 5%) - PRD requirement
+                if strike_distance > 5.0:
+                    continue
+
                 total_premium = group['premium'].sum()
                 total_volume = group['volume'].sum()
                 avg_price = group['price'].mean()
+                avg_trade_size = total_premium / len(group)
 
                 # Check momentum alignment with direction
                 momentum_aligned = (
@@ -104,30 +136,20 @@ class BullseyeBot(BaseAutoBot):
                 if not momentum_aligned:
                     continue
 
-                # Calculate strike distance
-                strike_distance = abs(strike - current_price) / current_price * 100
-
-                # Prefer ATM or slightly OTM (within 3%)
-                if strike_distance > 5:
-                    continue
-
                 # Calculate probability with high volatility assumption
                 prob_itm = self.analyzer.calculate_probability_itm(
                     opt_type, strike, current_price, days_to_expiry,
                     implied_volatility=0.5  # Higher IV for intraday
                 )
 
-                # AI scoring for intraday movement
-                ai_score = self._calculate_ai_score(
-                    momentum['strength'], total_volume, total_premium, strike_distance, days_to_expiry
+                # Enhanced AI scoring with new factors
+                ai_score = self._calculate_enhanced_ai_score(
+                    momentum['strength'], total_volume, total_premium, strike_distance,
+                    days_to_expiry, volume_ratio, conviction_data['conviction'], avg_trade_size
                 )
 
-                # Bonus for volume confirmation
-                if momentum['volume_confirmed']:
-                    ai_score += 15
-
-                # Lower threshold for faster signals
-                if ai_score >= 60:  # Reduced from 70
+                # Lower threshold for high-quality signals
+                if ai_score >= 70:  # Raised from 60 due to stricter filters
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
@@ -141,7 +163,10 @@ class BullseyeBot(BaseAutoBot):
                         'momentum': momentum_value,
                         'momentum_5m': momentum['momentum_5m'],
                         'momentum_15m': momentum['momentum_15m'],
-                        'volume_ratio': momentum['volume_ratio'],
+                        'volume_ratio': volume_ratio,  # PRD: Relative volume
+                        'directional_conviction': conviction_data['conviction'],  # PRD: 80/20 split
+                        'conviction_split': conviction_data['split'],
+                        'avg_trade_size': avg_trade_size,  # PRD: Smart money indicator
                         'strike_distance': strike_distance,
                         'probability_itm': prob_itm,
                         'ai_score': ai_score
@@ -152,6 +177,7 @@ class BullseyeBot(BaseAutoBot):
                     if signal_key not in self.signal_history:
                         signals.append(signal)
                         self.signal_history[signal_key] = datetime.now()
+                        logger.info(f"✅ Bullseye signal: {symbol} {opt_type} - Vol:{volume_ratio:.1f}x, Conv:{conviction_data['split']}, Score:{ai_score}")
 
         except Exception as e:
             logger.error(f"Error scanning intraday momentum for {symbol}: {e}")
@@ -229,9 +255,150 @@ class BullseyeBot(BaseAutoBot):
             logger.error(f"Error calculating momentum for {symbol}: {e}")
             return None
 
+    async def _calculate_relative_volume(self, symbol: str, current_volume: int) -> float:
+        """PRD Enhancement: Calculate volume vs 20-day baseline"""
+        try:
+            # Get 20-day bars
+            bars_20d = await self.fetcher.get_aggregates(
+                symbol, 'day', 1,
+                (datetime.now() - timedelta(days=25)).strftime('%Y-%m-%d'),
+                datetime.now().strftime('%Y-%m-%d')
+            )
+
+            if bars_20d.empty:
+                return 1.0
+
+            baseline_avg_volume = bars_20d['volume'].mean()
+
+            if baseline_avg_volume > 0:
+                volume_ratio = current_volume / baseline_avg_volume
+            else:
+                volume_ratio = 1.0
+
+            return volume_ratio
+
+        except Exception as e:
+            logger.error(f"Error calculating relative volume for {symbol}: {e}")
+            return 1.0
+
+    def _calculate_directional_conviction(self, call_premium: float, put_premium: float) -> Dict:
+        """PRD Enhancement: Require 80/20 directional split"""
+        total = call_premium + put_premium
+
+        if total == 0:
+            return {'conviction': 0, 'direction': 'NEUTRAL', 'split': '0/0', 'passes': False}
+
+        call_pct = call_premium / total
+        put_pct = put_premium / total
+
+        # Check for 80/20 split
+        if call_pct >= 0.80:
+            return {
+                'conviction': call_pct,
+                'direction': 'BULLISH',
+                'split': f"{call_pct*100:.0f}/{put_pct*100:.0f}",
+                'passes': True
+            }
+        elif put_pct >= 0.80:
+            return {
+                'conviction': put_pct,
+                'direction': 'BEARISH',
+                'split': f"{call_pct*100:.0f}/{put_pct*100:.0f}",
+                'passes': True
+            }
+        else:
+            return {
+                'conviction': max(call_pct, put_pct),
+                'direction': 'MIXED',
+                'split': f"{call_pct*100:.0f}/{put_pct*100:.0f}",
+                'passes': False
+            }
+
+    def _filter_smart_money(self, trades_df: pd.DataFrame) -> pd.DataFrame:
+        """PRD Enhancement: Filter for smart money trades ($10k+ avg)"""
+        if trades_df.empty:
+            return trades_df
+
+        # Calculate premium if not already present
+        if 'premium' not in trades_df.columns:
+            trades_df['premium'] = trades_df['price'] * trades_df['size'] * 100
+
+        # Filter for $10k+ trades
+        smart_money = trades_df[trades_df['premium'] >= 10_000]
+
+        return smart_money
+
+    def _calculate_enhanced_ai_score(self, momentum: float, volume: int, premium: float,
+                                    strike_distance: float, dte: int, volume_ratio: float,
+                                    conviction: float, avg_trade_size: float) -> int:
+        """PRD Enhanced: AI scoring with new factors"""
+        score = 0
+
+        # Momentum strength (30%)
+        if abs(momentum) >= 2.0:
+            score += 30
+        elif abs(momentum) >= 1.0:
+            score += 22
+        elif abs(momentum) >= 0.5:
+            score += 15
+
+        # Volume intensity (20%)
+        if volume >= 500:
+            score += 20
+        elif volume >= 200:
+            score += 15
+        elif volume >= 100:
+            score += 10
+
+        # Premium flow (15%)
+        if premium >= 50000:
+            score += 15
+        elif premium >= 20000:
+            score += 11
+        elif premium >= 10000:
+            score += 7
+
+        # Relative volume (15% - NEW PRD factor)
+        if volume_ratio >= 5.0:
+            score += 15
+        elif volume_ratio >= 4.0:
+            score += 12
+        elif volume_ratio >= 3.0:
+            score += 9
+
+        # Directional conviction (10% - NEW PRD factor)
+        if conviction >= 0.90:  # 90/10 split
+            score += 10
+        elif conviction >= 0.85:  # 85/15 split
+            score += 8
+        elif conviction >= 0.80:  # 80/20 split
+            score += 6
+
+        # Smart money size (5% - NEW PRD factor)
+        if avg_trade_size >= 50_000:
+            score += 5
+        elif avg_trade_size >= 25_000:
+            score += 3
+        elif avg_trade_size >= 10_000:
+            score += 2
+
+        # Strike proximity (3%)
+        if strike_distance <= 1:
+            score += 3
+        elif strike_distance <= 3:
+            score += 2
+
+        # DTE factor (2%)
+        if dte == 0:
+            score += 2
+        elif dte <= 1:
+            score += 1
+
+        return score
+
     def _calculate_ai_score(self, momentum: float, volume: int, premium: float,
                            strike_distance: float, dte: int) -> int:
-        """AI scoring algorithm for intraday signals"""
+        """DEPRECATED: Legacy AI scoring algorithm - use _calculate_enhanced_ai_score"""
         score = 0
 
         # Momentum strength (40%)

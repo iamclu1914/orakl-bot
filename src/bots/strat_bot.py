@@ -11,7 +11,6 @@ from discord_webhook import DiscordWebhook, DiscordEmbed
 
 from ..config import Config
 from ..data_fetcher import DataFetcher
-from ..utils.exceptions import APIError, DataValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +71,10 @@ class STRATPatternBot:
 
     def check_322_reversal(self, bars: List[Dict], ticker: str) -> Optional[Dict]:
         """
-        Check for 3-2-2 Reversal Pattern (60-minute timeframe)
-        Bar 1 (8am): Outside bar, Bar 2 (9am): Directional, Bar 3 (10am): Opposite
+        PRD Corrected: 3-2-2 Reversal Pattern (60-minute timeframe)
+        1. 8:00 AM → Look for 3-bar (outside bar)
+        2. 9:00 AM → 2-bar forms (any direction), mark high/low
+        3. 10:00 AM → 2-bar opposite direction (high probability alert)
         """
         if len(bars) < 4:
             return None
@@ -86,22 +87,16 @@ class STRATPatternBot:
         pattern_bars = []
         target_hours = {8: None, 9: None, 10: None}
 
+        # Extract bars at 8am, 9am, 10am
         for bar in bars:
             if 't' not in bar:
                 continue
             bar_time = datetime.fromtimestamp(bar['t'] / 1000, tz=self.est)
             bar['time'] = bar_time
             bar_hour = bar_time.hour
-            bar_minute = bar_time.minute
 
-            for target_hour in target_hours:
-                if target_hours[target_hour] is None:
-                    if bar_hour == target_hour and bar_minute <= 5:
-                        target_hours[target_hour] = bar
-                        break
-                    elif bar_hour == target_hour - 1 and bar_minute >= 55:
-                        target_hours[target_hour] = bar
-                        break
+            if bar_hour in target_hours and target_hours[bar_hour] is None:
+                target_hours[bar_hour] = bar
 
         for hour in [8, 9, 10]:
             if target_hours[hour] is not None:
@@ -110,52 +105,72 @@ class STRATPatternBot:
         if len(pattern_bars) < 3:
             return None
 
-        prev_bar = bars[0] if len(bars) > 0 else pattern_bars[0]
-        bar1_type = self.detect_bar_type(pattern_bars[0], prev_bar)
-        bar2_type = self.detect_bar_type(pattern_bars[1], pattern_bars[0])
-        bar3_type = self.detect_bar_type(pattern_bars[2], pattern_bars[1])
+        bar_8am = pattern_bars[0]
+        bar_9am = pattern_bars[1]
+        bar_10am = pattern_bars[2]
 
+        # Find previous bar for 8am comparison
+        prev_bar = bars[0] if len(bars) > 0 else bar_8am
+
+        # Step 1: 8am must be 3-bar (outside)
+        bar1_type = self.detect_bar_type(bar_8am, prev_bar)
         if bar1_type != 3:
+            return None
+
+        # Step 2: 9am is a 2-bar (direction doesn't matter)
+        bar2_type = self.detect_bar_type(bar_9am, bar_8am)
+        if abs(bar2_type) != 2:
+            return None
+
+        # Step 3: 10am must be 2-bar in opposite direction
+        bar3_type = self.detect_bar_type(bar_10am, bar_9am)
+        if abs(bar3_type) != 2:
             return None
 
         signal = None
         rr = lambda e, t, s: round(abs(t - e) / abs(e - s), 2) if abs(e - s) > 0 else 0
 
+        # If 9am=2U and 10am=2D → Bearish reversal
         if bar2_type == 2 and bar3_type == -2:
             signal = {
                 'pattern': '3-2-2 Reversal',
                 'direction': 'Bearish',
                 'ticker': ticker,
                 'timeframe': '60min',
-                'entry': pattern_bars[2]['c'],
-                'target': pattern_bars[0]['h'],
-                'stop': pattern_bars[2]['h'],
-                'risk_reward': rr(pattern_bars[2]['c'], pattern_bars[0]['h'], pattern_bars[2]['h'])
+                'entry': bar_10am['c'],
+                'target': bar_9am['l'],  # Low of 9am bar
+                'stop': bar_9am['h'],    # High of 9am bar
+                'risk_reward': rr(bar_10am['c'], bar_9am['l'], bar_9am['h'])
             }
+        # If 9am=2D and 10am=2U → Bullish reversal
         elif bar2_type == -2 and bar3_type == 2:
             signal = {
                 'pattern': '3-2-2 Reversal',
                 'direction': 'Bullish',
                 'ticker': ticker,
                 'timeframe': '60min',
-                'entry': pattern_bars[2]['c'],
-                'target': pattern_bars[0]['l'],
-                'stop': pattern_bars[2]['l'],
-                'risk_reward': rr(pattern_bars[2]['c'], pattern_bars[0]['l'], pattern_bars[2]['l'])
+                'entry': bar_10am['c'],
+                'target': bar_9am['h'],  # High of 9am bar
+                'stop': bar_9am['l'],    # Low of 9am bar
+                'risk_reward': rr(bar_10am['c'], bar_9am['h'], bar_9am['l'])
             }
 
         return signal
 
     def check_22_reversal(self, bars: List[Dict], ticker: str) -> Optional[Dict]:
         """
-        Check for 2-2 Reversal Retrigger (4-hour timeframe)
-        Bar 1 (4am): Directional, Bar 2 (8am): Opens inside, moves opposite
+        PRD Corrected: 2-2 Reversal Retrigger (4-hour timeframe)
+        1. 4:00 AM → Look for 2-bar (2D or 2U)
+        2. 8:00 AM → Opens inside previous bar, triggers opposite direction
+        3. Target: High/Low of candle BEFORE 4am bar
+        Alert sent after 8am candle closes
         """
         if len(bars) < 3:
             return None
 
         bar_4am = None
         bar_8am = None
+        bar_before_4am = None
 
         for i, bar in enumerate(bars):
             if 't' not in bar:
@@ -163,32 +178,39 @@ class STRATPatternBot:
             bar_time = datetime.fromtimestamp(bar['t'] / 1000, tz=self.est)
             bar['time'] = bar_time
             bar_hour = bar_time.hour
-            bar_minute = bar_time.minute
 
-            if not bar_4am:
-                if (bar_hour == 4 and bar_minute <= 5) or (bar_hour == 3 and bar_minute >= 55):
-                    bar_4am = (i, bar)
-            if not bar_8am:
-                if (bar_hour == 8 and bar_minute <= 5) or (bar_hour == 7 and bar_minute >= 55):
-                    bar_8am = (i, bar)
+            if bar_hour == 0 and bar_before_4am is None:  # Midnight bar (before 4am)
+                bar_before_4am = (i, bar)
+            elif bar_hour == 4 and bar_4am is None:
+                bar_4am = (i, bar)
+            elif bar_hour == 8 and bar_8am is None:
+                bar_8am = (i, bar)
 
-        if not bar_4am or not bar_8am:
+        if not bar_4am or not bar_8am or not bar_before_4am:
             return None
 
+        idx_before, data_before = bar_before_4am
         idx_4am, data_4am = bar_4am
         idx_8am, data_8am = bar_8am
 
-        prev_bar = bars[idx_4am - 1] if idx_4am > 0 else data_4am
-        bar1_type = self.detect_bar_type(data_4am, prev_bar)
-        bar2_type = self.detect_bar_type(data_8am, data_4am)
+        # Step 1: 4am must be a 2-bar (2D or 2U)
+        bar1_type = self.detect_bar_type(data_4am, data_before)
+        if abs(bar1_type) != 2:
+            return None
 
+        # Step 2: 8am must open inside 4am bar
         opened_inside = (data_8am['o'] <= data_4am['h'] and data_8am['o'] >= data_4am['l'])
-
         if not opened_inside:
+            return None
+
+        # Step 3: 8am must be opposite direction 2-bar
+        bar2_type = self.detect_bar_type(data_8am, data_4am)
+        if abs(bar2_type) != 2:
             return None
 
         signal = None
 
+        # If 4am=2D and 8am=2U → Bullish reversal
         if bar1_type == -2 and bar2_type == 2:
             signal = {
                 'pattern': '2-2 Reversal Retrigger',
@@ -196,9 +218,10 @@ class STRATPatternBot:
                 'ticker': ticker,
                 'timeframe': '4hour',
                 'entry': data_8am['c'],
-                'target': prev_bar['h'],
+                'target': data_before['h'],  # High of candle BEFORE 4am
                 'stop': data_4am['l']
             }
+        # If 4am=2U and 8am=2D → Bearish reversal
         elif bar1_type == 2 and bar2_type == -2:
             signal = {
                 'pattern': '2-2 Reversal Retrigger',
@@ -206,7 +229,7 @@ class STRATPatternBot:
                 'ticker': ticker,
                 'timeframe': '4hour',
                 'entry': data_8am['c'],
-                'target': prev_bar['l'],
+                'target': data_before['l'],  # Low of candle BEFORE 4am
                 'stop': data_4am['h']
             }
 
@@ -214,10 +237,14 @@ class STRATPatternBot:
 
     def check_131_miyagi(self, bars: List[Dict], ticker: str) -> Optional[Dict]:
         """
-        Check for 1-3-1 Miyagi Pattern (12-hour timeframe)
-        Pattern: Inside-Outside-Inside, 4th bar breaks midpoint
+        PRD Corrected: 1-3-1 Miyagi Pattern (12-hour timeframe)
+        1. Identify 1-3-1: Inside → Outside → Inside (3 consecutive candles)
+        2. Calculate midpoint of 3rd candle (last 1-bar)
+        3. 4th candle direction determines trade:
+           - If 4th candle is 2U → take PUTS (reversal from overextension)
+           - If 4th candle is 2D → take CALLS (reversal from overextension)
         """
-        if len(bars) < 5:
+        if len(bars) < 4:
             return None
 
         # Add time to bars
@@ -225,107 +252,63 @@ class STRATPatternBot:
             if 't' in bar:
                 bar['time'] = datetime.fromtimestamp(bar['t'] / 1000, tz=self.est)
 
-        bar1_type = self.detect_bar_type(bars[1], bars[0])
-        bar2_type = self.detect_bar_type(bars[2], bars[1])
-        bar3_type = self.detect_bar_type(bars[3], bars[2])
+        # Get last 4 bars
+        candle1 = bars[-4]
+        candle2 = bars[-3]
+        candle3 = bars[-2]
+        candle4 = bars[-1]
 
-        if not (bar1_type == 1 and bar2_type == 3 and bar3_type == 1):
+        # Determine bar types for 1-3-1 pattern
+        type1 = self.detect_bar_type(candle1, bars[-5] if len(bars) > 4 else candle1)
+        type2 = self.detect_bar_type(candle2, candle1)
+        type3 = self.detect_bar_type(candle3, candle2)
+        type4 = self.detect_bar_type(candle4, candle3)
+
+        # Step 1: Must have 1-3-1 pattern
+        if not (type1 == 1 and type2 == 3 and type3 == 1):
             return None
 
-        midpoint = (bars[3]['h'] + bars[3]['l']) / 2
-        bar4 = bars[4]
-        bar4_type = self.detect_bar_type(bar4, bars[3])
+        # Step 2: Calculate midpoint of 3rd candle (last 1-bar)
+        midpoint = (candle3['h'] + candle3['l']) / 2
 
         signal = None
 
-        if bar4['c'] > midpoint:
-            if bar4_type == 2:
-                signal = {
-                    'pattern': '1-3-1 Miyagi',
-                    'setup': '1-3-1 2U (Fade)',
-                    'direction': 'Bearish',
-                    'ticker': ticker,
-                    'timeframe': '12hour',
-                    'entry': bar4['c'],
-                    'target': midpoint,
-                    'stop': bar4['h']
-                }
-            else:
-                signal = {
-                    'pattern': '1-3-1 Miyagi',
-                    'setup': '1-3-1 Continuation',
-                    'direction': 'Bullish',
-                    'ticker': ticker,
-                    'timeframe': '12hour',
-                    'entry': bar4['c'],
-                    'target': bars[2]['h'],
-                    'stop': midpoint
-                }
-        elif bar4['c'] < midpoint:
-            if bar4_type == -2:
-                signal = {
-                    'pattern': '1-3-1 Miyagi',
-                    'setup': '1-3-1 2D (Fade)',
-                    'direction': 'Bullish',
-                    'ticker': ticker,
-                    'timeframe': '12hour',
-                    'entry': bar4['c'],
-                    'target': midpoint,
-                    'stop': bar4['l']
-                }
-            else:
-                signal = {
-                    'pattern': '1-3-1 Miyagi',
-                    'setup': '1-3-1 Continuation',
-                    'direction': 'Bearish',
-                    'ticker': ticker,
-                    'timeframe': '12hour',
-                    'entry': bar4['c'],
-                    'target': bars[2]['l'],
-                    'stop': midpoint
-                }
+        # Step 3: 4th candle determines direction
+        # If 4th is 2U (breaks above midpoint) → PUTS (reversal down expected)
+        if type4 == 2:
+            signal = {
+                'pattern': '1-3-1 Miyagi',
+                'setup': '1-3-1 2U (Fade)',
+                'direction': 'Bearish',  # Take PUTS
+                'ticker': ticker,
+                'timeframe': '12hour',
+                'entry': candle4['c'],
+                'target': midpoint,
+                'stop': candle4['h']
+            }
+        # If 4th is 2D (breaks below midpoint) → CALLS (reversal up expected)
+        elif type4 == -2:
+            signal = {
+                'pattern': '1-3-1 Miyagi',
+                'setup': '1-3-1 2D (Fade)',
+                'direction': 'Bullish',  # Take CALLS
+                'ticker': ticker,
+                'timeframe': '12hour',
+                'entry': candle4['c'],
+                'target': midpoint,
+                'stop': candle4['l']
+            }
 
         return signal
 
     async def scan_ticker(self, ticker: str) -> List[Dict]:
-        """Scan a single ticker for all STRAT patterns"""
+        """PRD Enhanced: Scan with time-based pattern scheduling"""
         signals = []
         now = datetime.now(self.est)
 
         try:
-            # 3-2-2 pattern (60-minute bars)
-            if 10 <= now.hour <= 15:
-                df_60m = await self.data_fetcher.get_aggregates(
-                    ticker, 'minute', 60,
-                    (now - timedelta(hours=6)).strftime('%Y-%m-%d'),
-                    now.strftime('%Y-%m-%d')
-                )
-                if not df_60m.empty:
-                    bars_60m = df_60m.to_dict('records')
-                    # Convert to expected format
-                    bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                                 't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
-                    signal = self.check_322_reversal(bars_60m, ticker)
-                    if signal:
-                        signals.append(signal)
-
-            # 2-2 pattern (4-hour bars)
-            if 8 <= now.hour <= 9:
-                df_4h = await self.data_fetcher.get_aggregates(
-                    ticker, 'hour', 4,
-                    (now - timedelta(days=2)).strftime('%Y-%m-%d'),
-                    now.strftime('%Y-%m-%d')
-                )
-                if not df_4h.empty:
-                    bars_4h = df_4h.to_dict('records')
-                    bars_4h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                               't': int(b['timestamp'].timestamp() * 1000)} for b in bars_4h]
-                    signal = self.check_22_reversal(bars_4h, ticker)
-                    if signal:
-                        signals.append(signal)
-
-            # 1-3-1 pattern (12-hour bars)
-            if now.hour in [0, 4, 8, 12, 16, 20]:
+            # 1-3-1 Miyagi - Scan on 12H timeframe at 4am, 4pm
+            if now.hour in [4, 16] and now.minute <= 5:
                 df_12h = await self.data_fetcher.get_aggregates(
                     ticker, 'hour', 12,
                     (now - timedelta(days=5)).strftime('%Y-%m-%d'),
@@ -337,6 +320,39 @@ class STRATPatternBot:
                                 't': int(b['timestamp'].timestamp() * 1000)} for b in bars_12h]
                     signal = self.check_131_miyagi(bars_12h, ticker)
                     if signal:
+                        signal['confidence_score'] = 0.75
+                        signals.append(signal)
+
+            # 3-2-2 Reversal - Scan at 10 AM ET (after 3rd bar completes)
+            if now.hour == 10 and 0 <= now.minute <= 5:
+                df_60m = await self.data_fetcher.get_aggregates(
+                    ticker, 'minute', 60,
+                    now.replace(hour=7, minute=0).strftime('%Y-%m-%d'),
+                    now.strftime('%Y-%m-%d')
+                )
+                if not df_60m.empty:
+                    bars_60m = df_60m.to_dict('records')
+                    bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                                 't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
+                    signal = self.check_322_reversal(bars_60m, ticker)
+                    if signal:
+                        signal['confidence_score'] = 0.70
+                        signals.append(signal)
+
+            # 2-2 Reversal - Scan after 8 AM candle closes
+            if now.hour == 8 and 55 <= now.minute <= 59:
+                df_4h = await self.data_fetcher.get_aggregates(
+                    ticker, 'hour', 4,
+                    (now - timedelta(days=2)).strftime('%Y-%m-%d'),
+                    now.strftime('%Y-%m-%d')
+                )
+                if not df_4h.empty:
+                    bars_4h = df_4h.to_dict('records')
+                    bars_4h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                               't': int(b['timestamp'].timestamp() * 1000)} for b in bars_4h]
+                    signal = self.check_22_reversal(bars_4h, ticker)
+                    if signal:
+                        signal['confidence_score'] = 0.68
                         signals.append(signal)
 
         except Exception as e:
@@ -345,7 +361,7 @@ class STRATPatternBot:
         return signals
 
     def send_alert(self, signal: Dict):
-        """Send Discord alert for pattern detection"""
+        """PRD Enhanced: Send Discord alert with confidence score"""
         try:
             webhook = DiscordWebhook(url=self.webhook_url, rate_limit_retry=True)
 
@@ -367,6 +383,14 @@ class STRATPatternBot:
             if 'risk_reward' in signal:
                 embed.add_embed_field(name="💰 R:R", value=f"{signal['risk_reward']:.2f}", inline=True)
 
+            # PRD Enhancement: Display confidence score
+            if 'confidence_score' in signal:
+                embed.add_embed_field(
+                    name="🎲 Confidence",
+                    value=f"{signal['confidence_score']*100:.0f}%",
+                    inline=True
+                )
+
             if 'setup' in signal:
                 embed.add_embed_field(name="⚙️ Setup", value=signal['setup'], inline=False)
 
@@ -383,7 +407,7 @@ class STRATPatternBot:
             logger.error(f"Failed to send alert: {e}")
 
     async def scan(self):
-        """Main scan loop"""
+        """PRD Enhanced: Scan with best signal selection"""
         logger.info(f"{self.name} scan started")
 
         signals_found = []
@@ -391,13 +415,20 @@ class STRATPatternBot:
         for ticker in Config.WATCHLIST:
             try:
                 signals = await self.scan_ticker(ticker)
-                for signal in signals:
+
+                # PRD Enhancement: Post only highest confidence signal per ticker
+                if signals:
+                    best_signal = max(signals, key=lambda x: x.get('confidence_score', 0))
+
                     # Check if already detected today
-                    key = f"{ticker}_{signal['pattern']}_{datetime.now(self.est).date()}"
+                    key = f"{ticker}_{best_signal['pattern']}_{datetime.now(self.est).date()}"
                     if key not in self.detected_today:
-                        self.send_alert(signal)
-                        signals_found.append(signal)
+                        self.send_alert(best_signal)
+                        signals_found.append(best_signal)
                         self.detected_today[key] = True
+
+                        logger.info(f"✅ STRAT signal: {ticker} {best_signal['pattern']} - "
+                                  f"Confidence:{best_signal.get('confidence_score', 0):.2f}")
 
             except Exception as e:
                 logger.error(f"Error scanning {ticker}: {e}")
