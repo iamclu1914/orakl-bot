@@ -72,9 +72,20 @@ class WatchlistManager:
         start_time = datetime.now()
 
         try:
+            # Validate data_fetcher is initialized
+            if not self.data_fetcher or not hasattr(self.data_fetcher, '_make_request'):
+                logger.error(f"❌ DataFetcher not properly initialized. Type: {type(self.data_fetcher)}")
+                raise ValueError("DataFetcher not initialized")
+
             # Get all active tickers from Polygon
             all_tickers = await self._fetch_all_tickers()
             logger.info(f"📊 Fetched {len(all_tickers)} total tickers from Polygon")
+
+            if not all_tickers:
+                logger.warning("⚠️ No tickers fetched from Polygon API, using static fallback")
+                self.watchlist = Config.STATIC_WATCHLIST.split(',')
+                self.last_refresh = datetime.now()
+                return
 
             # Filter by liquidity criteria
             liquid_tickers = await self._filter_by_liquidity(all_tickers)
@@ -89,11 +100,17 @@ class WatchlistManager:
             logger.info(f"📈 Sample tickers: {', '.join(self.watchlist[:10])}")
 
         except Exception as e:
-            logger.error(f"❌ Error refreshing watchlist: {e}")
+            logger.error(f"❌ Error refreshing watchlist: {e}", exc_info=True)
             # Fall back to static watchlist on error
             if not self.watchlist:
                 logger.warning("⚠️ Using static watchlist as fallback")
-                self.watchlist = Config.STATIC_WATCHLIST
+                static_list = Config.STATIC_WATCHLIST
+                if isinstance(static_list, str):
+                    self.watchlist = [t.strip() for t in static_list.split(',') if t.strip()]
+                else:
+                    self.watchlist = static_list
+                logger.info(f"📋 Loaded {len(self.watchlist)} tickers from static watchlist")
+                self.last_refresh = datetime.now()
 
     async def _fetch_all_tickers(self) -> List[Dict]:
         """
@@ -104,6 +121,10 @@ class WatchlistManager:
         next_url = None
 
         try:
+            # Ensure DataFetcher session is initialized
+            if hasattr(self.data_fetcher, 'ensure_session'):
+                await self.data_fetcher.ensure_session()
+
             # Initial request
             params = {
                 'market': 'stocks',
@@ -113,7 +134,9 @@ class WatchlistManager:
             }
 
             endpoint = '/v3/reference/tickers'
+            logger.debug(f"Fetching tickers from {endpoint} with params: {params}")
             data = await self.data_fetcher._make_request(endpoint, params)
+            logger.debug(f"Received response with {len(data.get('results', []))} results")
 
             if data and 'results' in data:
                 all_tickers.extend(data['results'])
