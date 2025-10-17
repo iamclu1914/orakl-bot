@@ -13,6 +13,7 @@ from ..config import Config
 from ..data_fetcher import DataFetcher
 from src.utils.market_hours import MarketHours
 from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,142 @@ class STRATPatternBot:
         elif curr_high <= prev_high and curr_low < prev_low:
             return -2  # 2D (Down)
         return 0
+
+    async def calculate_dynamic_confidence(self, ticker: str, pattern_type: str, 
+                                          pattern_data: Dict, bars: List[Dict]) -> float:
+        """
+        Calculate dynamic confidence score based on multiple factors:
+        - Volume analysis (compare to average)
+        - Trend alignment
+        - Pattern clarity/strength
+        - Market conditions
+        - Recent price action
+        """
+        base_scores = {
+            '3-2-2 Reversal': 0.65,      # Base 65%
+            '2-2 Reversal': 0.60,         # Base 60%
+            '1-3-1 Miyagi': 0.70          # Base 70%
+        }
+        
+        confidence = base_scores.get(pattern_type, 0.65)
+        adjustments = []
+        
+        try:
+            # 1. Volume Analysis (±15%)
+            if len(bars) >= 20:
+                volumes = [b.get('v', 0) for b in bars[-20:] if 'v' in b and b['v'] > 0]
+                if volumes:
+                    avg_volume = np.mean(volumes)
+                    recent_volume = bars[-1].get('v', 0) if bars else 0
+                    
+                    if recent_volume > avg_volume * 2:
+                        volume_boost = 0.15
+                        adjustments.append(("High volume", volume_boost))
+                    elif recent_volume > avg_volume * 1.5:
+                        volume_boost = 0.10
+                        adjustments.append(("Above avg volume", volume_boost))
+                    elif recent_volume > avg_volume:
+                        volume_boost = 0.05
+                        adjustments.append(("Normal volume", volume_boost))
+                    else:
+                        volume_boost = -0.05
+                        adjustments.append(("Low volume", volume_boost))
+                    
+                    confidence += volume_boost
+            
+            # 2. Trend Alignment (±10%)
+            if len(bars) >= 10:
+                closes = [b['c'] for b in bars[-10:] if self.validate_bar(b)]
+                if len(closes) >= 10:
+                    sma = np.mean(closes)
+                    current_price = closes[-1]
+                    
+                    # For reversal patterns, being far from SMA is good
+                    distance_pct = abs(current_price - sma) / sma
+                    if distance_pct > 0.03:  # More than 3% from SMA
+                        trend_boost = 0.10
+                        adjustments.append(("Extended from mean", trend_boost))
+                    elif distance_pct > 0.02:  # 2-3% from SMA
+                        trend_boost = 0.05
+                        adjustments.append(("Moderate extension", trend_boost))
+                    else:
+                        trend_boost = 0
+                        adjustments.append(("Near mean", trend_boost))
+                    
+                    confidence += trend_boost
+            
+            # 3. Pattern Clarity (±10%)
+            if pattern_type == '3-2-2 Reversal' and 'bar_9am' in pattern_data:
+                # Check how clear the 3-bar (outside bar) was
+                bar_8am = pattern_data.get('bar_8am', {})
+                bar_9am = pattern_data.get('bar_9am', {})
+                
+                if bar_8am and bar_9am:
+                    # Larger outside bar = clearer pattern
+                    bar_8am_range = bar_8am.get('h', 0) - bar_8am.get('l', 0)
+                    bar_9am_range = bar_9am.get('h', 0) - bar_9am.get('l', 0)
+                    
+                    if bar_8am_range > bar_9am_range * 1.5:
+                        clarity_boost = 0.10
+                        adjustments.append(("Strong 3-bar", clarity_boost))
+                    else:
+                        clarity_boost = 0.05
+                        adjustments.append(("Normal 3-bar", clarity_boost))
+                    
+                    confidence += clarity_boost
+            
+            # 4. Recent Volatility (±5%)
+            if len(bars) >= 5:
+                recent_ranges = [(b['h'] - b['l']) / b['c'] for b in bars[-5:] 
+                               if self.validate_bar(b) and b['c'] > 0]
+                if recent_ranges:
+                    avg_range_pct = np.mean(recent_ranges) * 100
+                    
+                    if avg_range_pct > 2.0:  # High volatility
+                        vol_boost = 0.05
+                        adjustments.append(("High volatility", vol_boost))
+                    elif avg_range_pct < 0.5:  # Low volatility
+                        vol_boost = -0.05
+                        adjustments.append(("Low volatility", vol_boost))
+                    else:
+                        vol_boost = 0
+                        adjustments.append(("Normal volatility", vol_boost))
+                    
+                    confidence += vol_boost
+            
+            # 5. Time of Day Factor (±5%)
+            now = datetime.now(self.est)
+            hour = now.hour
+            
+            if 9 <= hour <= 10:  # First hour - high activity
+                time_boost = 0.05
+                adjustments.append(("Opening hour", time_boost))
+            elif 15 <= hour <= 16:  # Last hour - high activity
+                time_boost = 0.05
+                adjustments.append(("Closing hour", time_boost))
+            elif 11 <= hour <= 14:  # Mid-day - normal
+                time_boost = 0
+                adjustments.append(("Mid-day", time_boost))
+            else:
+                time_boost = -0.05
+                adjustments.append(("Off-hours", time_boost))
+            
+            confidence += time_boost
+            
+        except Exception as e:
+            logger.error(f"Error calculating dynamic confidence: {e}")
+            # Return base confidence on error
+            return base_scores.get(pattern_type, 0.65)
+        
+        # Cap confidence between 0.40 and 0.95
+        confidence = max(0.40, min(0.95, confidence))
+        
+        # Log adjustments for debugging
+        if adjustments:
+            adj_str = ", ".join([f"{name}: {val:+.2f}" for name, val in adjustments])
+            logger.debug(f"{ticker} {pattern_type} confidence adjustments: {adj_str}")
+        
+        return confidence
 
     def check_322_reversal(self, bars: List[Dict], ticker: str) -> Optional[Dict]:
         """
@@ -354,10 +491,14 @@ class STRATPatternBot:
             if not df_12h.empty:
                 bars_12h = df_12h.to_dict('records')
                 bars_12h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                            't': int(b['timestamp'].timestamp() * 1000)} for b in bars_12h]
+                            't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)} for b in bars_12h]
                 signal = self.check_131_miyagi(bars_12h, ticker)
                 if signal:
-                    signal['confidence_score'] = 0.75
+                    # Calculate dynamic confidence
+                    confidence = await self.calculate_dynamic_confidence(
+                        ticker, '1-3-1 Miyagi', signal, bars_12h
+                    )
+                    signal['confidence_score'] = confidence
                     signals.append(signal)
 
             # 3-2-2 Reversal - Always scan, pattern must have formed after 10am ET
@@ -371,10 +512,14 @@ class STRATPatternBot:
             if not df_60m.empty:
                 bars_60m = df_60m.to_dict('records')
                 bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                             't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
+                             't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)} for b in bars_60m]
                 signal = self.check_322_reversal(bars_60m, ticker)
                 if signal:
-                    signal['confidence_score'] = 0.70
+                    # Calculate dynamic confidence
+                    confidence = await self.calculate_dynamic_confidence(
+                        ticker, '3-2-2 Reversal', signal, bars_60m
+                    )
+                    signal['confidence_score'] = confidence
                     signals.append(signal)
 
             # 2-2 Reversal - Always scan on 4H timeframe
@@ -387,10 +532,14 @@ class STRATPatternBot:
             if not df_4h.empty:
                 bars_4h = df_4h.to_dict('records')
                 bars_4h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                           't': int(b['timestamp'].timestamp() * 1000)} for b in bars_4h]
+                           't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)} for b in bars_4h]
                 signal = self.check_22_reversal(bars_4h, ticker)
                 if signal:
-                    signal['confidence_score'] = 0.68
+                    # Calculate dynamic confidence
+                    confidence = await self.calculate_dynamic_confidence(
+                        ticker, '2-2 Reversal', signal, bars_4h
+                    )
+                    signal['confidence_score'] = confidence
                     signals.append(signal)
 
         except Exception as e:
