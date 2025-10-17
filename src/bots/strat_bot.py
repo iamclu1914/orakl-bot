@@ -132,31 +132,40 @@ class STRATPatternBot:
             return None
 
         signal = None
-        rr = lambda e, t, s: round(abs(t - e) / abs(e - s), 2) if abs(e - s) > 0 else 0
-
+        
         # If 9am=2U and 10am=2D → Bearish reversal
         if bar2_type == 2 and bar3_type == -2:
+            entry = bar_10am['c']
+            stop = bar_9am['h']    # High of 9am bar
+            risk = abs(entry - stop)
+            target = entry - (risk * 2)  # 2:1 R:R target
+            
             signal = {
                 'pattern': '3-2-2 Reversal',
                 'direction': 'Bearish',
                 'ticker': ticker,
                 'timeframe': '60min',
-                'entry': bar_10am['c'],
-                'target': bar_9am['l'],  # Low of 9am bar
-                'stop': bar_9am['h'],    # High of 9am bar
-                'risk_reward': rr(bar_10am['c'], bar_9am['l'], bar_9am['h'])
+                'entry': entry,
+                'target': target,
+                'stop': stop,
+                'risk_reward': 2.0  # Fixed 2:1 R:R
             }
         # If 9am=2D and 10am=2U → Bullish reversal
         elif bar2_type == -2 and bar3_type == 2:
+            entry = bar_10am['c']
+            stop = bar_9am['l']    # Low of 9am bar
+            risk = abs(entry - stop)
+            target = entry + (risk * 2)  # 2:1 R:R target
+            
             signal = {
                 'pattern': '3-2-2 Reversal',
                 'direction': 'Bullish',
                 'ticker': ticker,
                 'timeframe': '60min',
-                'entry': bar_10am['c'],
-                'target': bar_9am['h'],  # High of 9am bar
-                'stop': bar_9am['l'],    # Low of 9am bar
-                'risk_reward': rr(bar_10am['c'], bar_9am['h'], bar_9am['l'])
+                'entry': entry,
+                'target': target,
+                'stop': stop,
+                'risk_reward': 2.0  # Fixed 2:1 R:R
             }
 
         return signal
@@ -216,25 +225,37 @@ class STRATPatternBot:
 
         # If 4am=2D and 8am=2U → Bullish reversal
         if bar1_type == -2 and bar2_type == 2:
+            entry = data_8am['c']
+            stop = data_4am['l']
+            risk = abs(entry - stop)
+            target = entry + (risk * 2)  # 2:1 R:R target
+            
             signal = {
                 'pattern': '2-2 Reversal Retrigger',
                 'direction': 'Bullish',
                 'ticker': ticker,
                 'timeframe': '4hour',
-                'entry': data_8am['c'],
-                'target': data_before['h'],  # High of candle BEFORE 4am
-                'stop': data_4am['l']
+                'entry': entry,
+                'target': target,
+                'stop': stop,
+                'risk_reward': 2.0  # Fixed 2:1 R:R
             }
         # If 4am=2U and 8am=2D → Bearish reversal
         elif bar1_type == 2 and bar2_type == -2:
+            entry = data_8am['c']
+            stop = data_4am['h']
+            risk = abs(entry - stop)
+            target = entry - (risk * 2)  # 2:1 R:R target
+            
             signal = {
                 'pattern': '2-2 Reversal Retrigger',
                 'direction': 'Bearish',
                 'ticker': ticker,
                 'timeframe': '4hour',
-                'entry': data_8am['c'],
-                'target': data_before['l'],  # Low of candle BEFORE 4am
-                'stop': data_4am['h']
+                'entry': entry,
+                'target': target,
+                'stop': stop,
+                'risk_reward': 2.0  # Fixed 2:1 R:R
             }
 
         return signal
@@ -280,27 +301,39 @@ class STRATPatternBot:
         # Step 3: 4th candle determines direction
         # If 4th is 2U (breaks above midpoint) → PUTS (reversal down expected)
         if type4 == 2:
+            entry = candle4['c']
+            stop = candle4['h']
+            risk = abs(entry - stop)
+            target = entry - (risk * 2)  # 2:1 R:R target
+            
             signal = {
                 'pattern': '1-3-1 Miyagi',
                 'setup': '1-3-1 2U (Fade)',
                 'direction': 'Bearish',  # Take PUTS
                 'ticker': ticker,
                 'timeframe': '12hour',
-                'entry': candle4['c'],
-                'target': midpoint,
-                'stop': candle4['h']
+                'entry': entry,
+                'target': target,
+                'stop': stop,
+                'risk_reward': 2.0  # Fixed 2:1 R:R
             }
         # If 4th is 2D (breaks below midpoint) → CALLS (reversal up expected)
         elif type4 == -2:
+            entry = candle4['c']
+            stop = candle4['l']
+            risk = abs(entry - stop)
+            target = entry + (risk * 2)  # 2:1 R:R target
+            
             signal = {
                 'pattern': '1-3-1 Miyagi',
                 'setup': '1-3-1 2D (Fade)',
                 'direction': 'Bullish',  # Take CALLS
                 'ticker': ticker,
                 'timeframe': '12hour',
-                'entry': candle4['c'],
-                'target': midpoint,
-                'stop': candle4['l']
+                'entry': entry,
+                'target': target,
+                'stop': stop,
+                'risk_reward': 2.0  # Fixed 2:1 R:R
             }
 
         return signal
@@ -386,7 +419,7 @@ class STRATPatternBot:
                 embed.add_embed_field(name="🛑 Stop", value=f"${signal['stop']:.2f}", inline=True)
 
             if 'risk_reward' in signal:
-                embed.add_embed_field(name="💰 R:R", value=f"{signal['risk_reward']:.2f}", inline=True)
+                embed.add_embed_field(name="💰 R:R", value="2.00", inline=True)  # Always 2:1
 
             # PRD Enhancement: Display confidence score
             if 'confidence_score' in signal:
