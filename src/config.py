@@ -130,8 +130,8 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     
     # Performance Settings
-    MAX_CONCURRENT_REQUESTS = int(os.getenv('MAX_CONCURRENT_REQUESTS', '5'))
-    REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
+    MAX_CONCURRENT_REQUESTS = int(os.getenv('MAX_CONCURRENT_REQUESTS', '10'))  # Increased for faster scanning
+    REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '60'))  # Increased timeout
     RETRY_ATTEMPTS = int(os.getenv('RETRY_ATTEMPTS', '3'))
     RETRY_DELAY = int(os.getenv('RETRY_DELAY', '5'))
     MAX_CONSECUTIVE_ERRORS = int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
