@@ -12,6 +12,7 @@ from discord_webhook import DiscordWebhook, DiscordEmbed
 from ..config import Config
 from ..data_fetcher import DataFetcher
 from src.utils.market_hours import MarketHours
+from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST
 
 logger = logging.getLogger(__name__)
 
@@ -427,8 +428,12 @@ class STRATPatternBot:
             return
 
         signals_found = []
+        
+        # Use comprehensive mega/large cap watchlist for STRAT bot
+        watchlist = STRAT_COMPLETE_WATCHLIST
+        logger.info(f"Scanning {len(watchlist)} mega/large cap stocks across all sectors")
 
-        for ticker in Config.WATCHLIST:
+        for ticker in watchlist:
             try:
                 signals = await self.scan_ticker(ticker)
 

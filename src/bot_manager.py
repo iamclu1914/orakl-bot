@@ -199,6 +199,11 @@ class BotManager:
         """Update watchlist for all bots with optional limit"""
         for i, bot in enumerate(self.bots):
             if hasattr(bot, 'watchlist'):
+                # STRAT bot uses its own comprehensive watchlist
+                if hasattr(bot, 'name') and 'STRAT' in bot.name:
+                    logger.info(f"  {bot.name}: Uses dedicated sector-based watchlist")
+                    continue
+                    
                 if max_symbols and len(self.watchlist) > max_symbols:
                     # Distribute symbols across bots
                     # Each bot gets a different subset
