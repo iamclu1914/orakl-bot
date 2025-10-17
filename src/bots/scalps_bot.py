@@ -3,11 +3,14 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict
 import pandas as pd
+import asyncio
 from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.utils.market_hours import MarketHours
+from src.utils.market_context import MarketContext
+from src.utils.exit_strategies import ExitStrategies
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ class ScalpsBot(BaseAutoBot):
         self.candle_history = {}
 
     async def scan_and_post(self):
-        """Scan for Strat-based scalp signals"""
+        """Enhanced scan with market context and concurrent processing"""
         logger.info(f"{self.name} scanning for quick scalp setups")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
@@ -35,15 +38,54 @@ class ScalpsBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        for symbol in self.watchlist:
-            try:
-                signals = await self._scan_strat_setup(symbol)
-                for signal in signals:
-                    await self._post_signal(signal)
-            except Exception as e:
-                logger.error(f"{self.name} error scanning {symbol}: {e}")
+        # Get market context
+        market_context = await MarketContext.get_market_context(self.fetcher)
+        logger.info(f"{self.name} - Market: {market_context['regime']}, Bias: {market_context['trading_bias']}")
+        
+        # Adjust threshold based on market conditions
+        base_threshold = 65  # Base scalp score threshold
+        adjusted_threshold = MarketContext.adjust_signal_threshold(base_threshold, market_context)
+        logger.debug(f"{self.name} - Adjusted threshold: {adjusted_threshold} (base: {base_threshold})")
+        
+        # Prioritize watchlist by recent activity
+        prioritized_watchlist = await self._prioritize_by_activity(self.watchlist)
+        
+        # Batch processing for efficiency
+        batch_size = 10
+        all_signals = []
+        
+        for i in range(0, len(prioritized_watchlist), batch_size):
+            batch = prioritized_watchlist[i:i+batch_size]
+            
+            # Concurrent scanning within batch
+            tasks = [self._scan_strat_setup(symbol, market_context, adjusted_threshold) 
+                    for symbol in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for signals in batch_results:
+                if isinstance(signals, list):
+                    all_signals.extend(signals)
+        
+        # Apply quality filters and rank signals
+        filtered_signals = [sig for sig in all_signals if self.apply_quality_filters(sig)]
+        top_signals = self.rank_signals(filtered_signals)
+        
+        # Post top signals
+        for signal in top_signals:
+            await self._post_signal(signal)
+    
+    async def _prioritize_by_activity(self, watchlist: List[str]) -> List[str]:
+        """Prioritize tickers by recent trading activity"""
+        try:
+            # For now, return original order
+            # TODO: Implement activity-based prioritization
+            return watchlist
+        except Exception as e:
+            logger.error(f"Error prioritizing watchlist: {e}")
+            return watchlist
 
-    async def _scan_strat_setup(self, symbol: str) -> List[Dict]:
+    async def _scan_strat_setup(self, symbol: str, market_context: Dict = None, 
+                               adjusted_threshold: int = 65) -> List[Dict]:
         """Scan for Strat patterns and quick scalp opportunities"""
         signals = []
 
@@ -115,7 +157,16 @@ class ScalpsBot(BaseAutoBot):
                     pattern, total_volume, strike_distance, days_to_expiry
                 )
 
-                if scalp_score >= 65:
+                if scalp_score >= adjusted_threshold:
+                    # Get average price for exit calculations
+                    avg_price = group['price'].mean()
+                    
+                    # Calculate exit strategies
+                    exits = ExitStrategies.calculate_exits(
+                        'scalp', avg_price, current_price, opt_type, 
+                        atr=current_price * 0.02, dte=days_to_expiry
+                    )
+                    
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
@@ -127,9 +178,18 @@ class ScalpsBot(BaseAutoBot):
                         'premium': total_premium,
                         'pattern': pattern['name'],
                         'pattern_direction': pattern['direction'],
+                        'pattern_strength': pattern['strength'],
                         'strike_distance': strike_distance,
                         'scalp_score': scalp_score,
-                        'timeframe': '5m'
+                        'timeframe': '5m',
+                        'avg_price': avg_price,
+                        'stop_loss': exits['stop_loss'],
+                        'target_1': exits['target_1'],
+                        'target_2': exits['target_2'],
+                        'risk_reward_1': exits['risk_reward_1'],
+                        'risk_reward_2': exits['risk_reward_2'],
+                        'exit_strategy': exits,
+                        'market_context': market_context
                     }
 
                     # Check if already posted
@@ -184,13 +244,18 @@ class ScalpsBot(BaseAutoBot):
             return []
 
     def _identify_strat_pattern(self, candles: List[Dict]) -> Dict:
-        """Identify Strat pattern from candles"""
+        """Enhanced pattern identification with advanced patterns"""
         if len(candles) < 3:
             return None
 
         last = candles[-1]
         prev = candles[-2]
         prev2 = candles[-3]
+
+        # Check advanced patterns first
+        advanced_pattern = self._identify_advanced_patterns(candles)
+        if advanced_pattern:
+            return advanced_pattern
 
         # Inside bar (2)
         is_inside = (last['high'] < prev['high'] and last['low'] > prev['low'])
@@ -225,6 +290,126 @@ class ScalpsBot(BaseAutoBot):
         elif is_bearish and prev['close'] < prev['open']:
             return {'name': 'Bearish Continuation', 'direction': 'bearish', 'strength': 70}
 
+        return None
+    
+    def _identify_advanced_patterns(self, candles: List[Dict]) -> Dict:
+        """Identify advanced trading patterns"""
+        if len(candles) < 5:
+            return None
+        
+        # Volume breakout pattern
+        volume_breakout = self._is_volume_breakout(candles)
+        if volume_breakout:
+            return volume_breakout
+        
+        # Gap patterns
+        gap_pattern = self._check_gap_pattern(candles)
+        if gap_pattern:
+            return gap_pattern
+        
+        # Support/Resistance bounce
+        sr_bounce = self._check_sr_bounce(candles)
+        if sr_bounce:
+            return sr_bounce
+        
+        # Exhaustion reversal
+        exhaustion = self._check_exhaustion(candles)
+        if exhaustion:
+            return exhaustion
+        
+        return None
+    
+    def _is_volume_breakout(self, candles: List[Dict]) -> Dict:
+        """Check for volume breakout pattern"""
+        try:
+            # Get average volume
+            volumes = [c.get('volume', 0) for c in candles[:-1]]
+            avg_volume = sum(volumes) / len(volumes) if volumes else 0
+            
+            last = candles[-1]
+            last_volume = last.get('volume', 0)
+            
+            # Volume surge check
+            if last_volume > avg_volume * 2:  # 2x average volume
+                # Price breakout check
+                highs = [c['high'] for c in candles[:-1]]
+                lows = [c['low'] for c in candles[:-1]]
+                
+                if last['close'] > max(highs):
+                    return {'name': 'Volume Breakout Up', 'direction': 'bullish', 'strength': 95}
+                elif last['close'] < min(lows):
+                    return {'name': 'Volume Breakout Down', 'direction': 'bearish', 'strength': 95}
+        except Exception:
+            pass
+        
+        return None
+    
+    def _check_gap_pattern(self, candles: List[Dict]) -> Dict:
+        """Check for gap patterns"""
+        try:
+            last = candles[-1]
+            prev = candles[-2]
+            
+            # Gap up
+            if last['low'] > prev['high']:
+                gap_size = (last['low'] - prev['high']) / prev['high'] * 100
+                if gap_size > 1.0:  # 1% gap
+                    return {'name': 'Gap & Go Up', 'direction': 'bullish', 'strength': 88}
+            
+            # Gap down
+            elif last['high'] < prev['low']:
+                gap_size = (prev['low'] - last['high']) / prev['low'] * 100
+                if gap_size > 1.0:  # 1% gap
+                    return {'name': 'Gap & Go Down', 'direction': 'bearish', 'strength': 88}
+        except Exception:
+            pass
+        
+        return None
+    
+    def _check_sr_bounce(self, candles: List[Dict]) -> Dict:
+        """Check for support/resistance bounce"""
+        try:
+            # Calculate recent support/resistance
+            recent_highs = [c['high'] for c in candles[-10:-1]]
+            recent_lows = [c['low'] for c in candles[-10:-1]]
+            
+            resistance = max(recent_highs)
+            support = min(recent_lows)
+            
+            last = candles[-1]
+            
+            # Support bounce
+            if last['low'] <= support * 1.005 and last['close'] > last['open']:
+                return {'name': 'Support Bounce', 'direction': 'bullish', 'strength': 82}
+            
+            # Resistance rejection
+            elif last['high'] >= resistance * 0.995 and last['close'] < last['open']:
+                return {'name': 'Resistance Rejection', 'direction': 'bearish', 'strength': 82}
+        except Exception:
+            pass
+        
+        return None
+    
+    def _check_exhaustion(self, candles: List[Dict]) -> Dict:
+        """Check for exhaustion reversal pattern"""
+        try:
+            # Check for extended move
+            closes = [c['close'] for c in candles]
+            avg_close = sum(closes[:-1]) / len(closes[:-1])
+            
+            last = candles[-1]
+            extension = (last['close'] - avg_close) / avg_close * 100
+            
+            # Bullish exhaustion (oversold bounce)
+            if extension < -3.0 and last['close'] > last['open']:
+                return {'name': 'Exhaustion Reversal Up', 'direction': 'bullish', 'strength': 87}
+            
+            # Bearish exhaustion (overbought reversal)
+            elif extension > 3.0 and last['close'] < last['open']:
+                return {'name': 'Exhaustion Reversal Down', 'direction': 'bearish', 'strength': 87}
+        except Exception:
+            pass
+        
         return None
 
     def _calculate_scalp_score(self, pattern: Dict, volume: int,
@@ -262,57 +447,91 @@ class ScalpsBot(BaseAutoBot):
         return score
 
     async def _post_signal(self, signal: Dict):
-        """Post Scalps signal to Discord"""
+        """Post enhanced Scalps signal to Discord"""
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
+        
+        # Format priority
+        priority_level = "HIGH" if signal.get('priority_score', 0) >= 80 else "MEDIUM"
+        
+        # Get market context
+        market = signal.get('market_context', {})
+        market_status = f"{market.get('momentum', {}).get('direction', 'neutral').title()}, {market.get('volatility', {}).get('level', 'normal').title()} VIX"
 
         embed = self.create_embed(
             title=f"⚡ Scalp: {signal['ticker']}",
-            description=f"{signal['pattern']} | Quick {signal['type']} Setup",
+            description=f"{signal['pattern']} | Quick {signal['type']} Setup\n**Priority: {priority_level}**",
             color=color,
             fields=[
                 {
                     "name": "📊 Contract",
-                    "value": f"{signal['type']} ${signal['strike']}\n{signal['days_to_expiry']}DTE",
+                    "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE",
                     "inline": True
                 },
                 {
-                    "name": "⚡ Scalp Score",
+                    "name": "⚡ Score",
                     "value": f"**{signal['scalp_score']}/100**",
                     "inline": True
                 },
                 {
+                    "name": "🎯 Priority",
+                    "value": f"{signal.get('priority_score', 0):.0f}",
+                    "inline": True
+                },
+                {
+                    "name": "💵 Entry Zone",
+                    "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}",
+                    "inline": True
+                },
+                {
+                    "name": "🛑 Stop Loss",
+                    "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})",
+                    "inline": True
+                },
+                {
+                    "name": "✅ Target 1",
+                    "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})",
+                    "inline": True
+                },
+                {
+                    "name": "🎯 Target 2",
+                    "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})",
+                    "inline": True
+                },
+                {
+                    "name": "📊 R:R Ratios",
+                    "value": f"T1: {signal['risk_reward_1']:.1f}:1\nT2: {signal['risk_reward_2']:.1f}:1",
+                    "inline": True
+                },
+                {
                     "name": "📈 Pattern",
-                    "value": f"{signal['pattern']}",
+                    "value": f"{signal['pattern']} ({signal['pattern_strength']})",
                     "inline": True
                 },
                 {
-                    "name": "💵 Current Price",
-                    "value": f"${signal['current_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Volume",
-                    "value": f"{signal['volume']:,}",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Strike",
-                    "value": f"${signal['strike']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "⏱️ Timeframe",
-                    "value": f"{signal['timeframe']} bars",
+                    "name": "💰 Volume/Premium",
+                    "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}",
                     "inline": True
                 },
                 {
                     "name": "📍 Distance",
-                    "value": f"{signal['strike_distance']:.2f}%",
+                    "value": f"{signal['strike_distance']:.1f}%",
                     "inline": True
                 },
                 {
-                    "name": "⚠️ Note",
-                    "value": "Quick scalp - monitor closely",
+                    "name": "🌍 Market",
+                    "value": market_status,
+                    "inline": True
+                },
+                {
+                    "name": "📋 Exit Plan",
+                    "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n"
+                           f"• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n"
+                           f"• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}",
+                    "inline": False
+                },
+                {
+                    "name": "⚠️ Management",
+                    "value": signal['exit_strategy']['management'],
                     "inline": False
                 },
                 {
@@ -321,8 +540,8 @@ class ScalpsBot(BaseAutoBot):
                     "inline": False
                 }
             ],
-            footer="Scalps Bot | The Strat Quick Signals"
+            footer=f"Scalps Bot | Pattern: {signal['pattern']} | Score: {signal['scalp_score']}"
         )
 
         await self.post_to_discord(embed)
-        logger.info(f"Posted Scalp signal: {signal['ticker']} {signal['type']} ${signal['strike']} Pattern:{signal['pattern']}")
+        logger.info(f"Posted Scalp signal: {signal['ticker']} {signal['type']} ${signal['strike']} Pattern:{signal['pattern']} Priority:{signal.get('priority_score', 0):.0f}")

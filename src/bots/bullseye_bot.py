@@ -3,11 +3,15 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict
 import pandas as pd
+import asyncio
+import numpy as np
 from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.utils.market_hours import MarketHours
+from src.utils.market_context import MarketContext
+from src.utils.exit_strategies import ExitStrategies
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +31,7 @@ class BullseyeBot(BaseAutoBot):
         self.price_history = {}  # Track price momentum
 
     async def scan_and_post(self):
-        """Scan for intraday momentum signals"""
+        """Enhanced scan with market context and concurrent processing"""
         logger.info(f"{self.name} scanning for intraday movements")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
@@ -35,15 +39,41 @@ class BullseyeBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        for symbol in self.watchlist:
-            try:
-                signals = await self._scan_intraday_momentum(symbol)
-                for signal in signals:
-                    await self._post_signal(signal)
-            except Exception as e:
-                logger.error(f"{self.name} error scanning {symbol}: {e}")
+        # Get market context
+        market_context = await MarketContext.get_market_context(self.fetcher)
+        logger.info(f"{self.name} - Market: {market_context['regime']}, Risk: {market_context['risk_level']}")
+        
+        # Adjust threshold based on market conditions
+        base_threshold = 70  # Base AI score threshold
+        adjusted_threshold = MarketContext.adjust_signal_threshold(base_threshold, market_context)
+        logger.debug(f"{self.name} - Adjusted threshold: {adjusted_threshold} (base: {base_threshold})")
+        
+        # Batch processing for efficiency
+        batch_size = 8
+        all_signals = []
+        
+        for i in range(0, len(self.watchlist), batch_size):
+            batch = self.watchlist[i:i+batch_size]
+            
+            # Concurrent scanning within batch
+            tasks = [self._scan_intraday_momentum(symbol, market_context, adjusted_threshold) 
+                    for symbol in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for signals in batch_results:
+                if isinstance(signals, list):
+                    all_signals.extend(signals)
+        
+        # Apply quality filters and rank signals
+        filtered_signals = [sig for sig in all_signals if self.apply_quality_filters(sig)]
+        top_signals = self.rank_signals(filtered_signals)
+        
+        # Post top signals
+        for signal in top_signals:
+            await self._post_signal(signal)
 
-    async def _scan_intraday_momentum(self, symbol: str) -> List[Dict]:
+    async def _scan_intraday_momentum(self, symbol: str, market_context: Dict = None,
+                                     adjusted_threshold: int = 70) -> List[Dict]:
         """PRD Enhanced: Scan with relative volume, smart money, and directional conviction"""
         signals = []
 
@@ -149,7 +179,16 @@ class BullseyeBot(BaseAutoBot):
                 )
 
                 # Lower threshold for high-quality signals
-                if ai_score >= 70:  # Raised from 60 due to stricter filters
+                if ai_score >= adjusted_threshold:
+                    # Analyze order flow
+                    flow_analysis = await self._analyze_order_flow(symbol, group)
+                    
+                    # Calculate exit strategies
+                    exits = ExitStrategies.calculate_exits(
+                        'bullseye', avg_price, current_price, opt_type,
+                        atr=current_price * 0.02, dte=days_to_expiry
+                    )
+                    
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
@@ -163,13 +202,24 @@ class BullseyeBot(BaseAutoBot):
                         'momentum': momentum_value,
                         'momentum_5m': momentum['momentum_5m'],
                         'momentum_15m': momentum['momentum_15m'],
+                        'momentum_accelerating': momentum['momentum_accelerating'],
                         'volume_ratio': volume_ratio,  # PRD: Relative volume
                         'directional_conviction': conviction_data['conviction'],  # PRD: 80/20 split
                         'conviction_split': conviction_data['split'],
                         'avg_trade_size': avg_trade_size,  # PRD: Smart money indicator
                         'strike_distance': strike_distance,
                         'probability_itm': prob_itm,
-                        'ai_score': ai_score
+                        'ai_score': ai_score,
+                        'flow_analysis': flow_analysis,
+                        'sweep_detected': flow_analysis['sweep_detected'],
+                        'stop_loss': exits['stop_loss'],
+                        'target_1': exits['target_1'],
+                        'target_2': exits['target_2'],
+                        'target_3': exits.get('target_3'),
+                        'risk_reward_1': exits['risk_reward_1'],
+                        'risk_reward_2': exits['risk_reward_2'],
+                        'exit_strategy': exits,
+                        'market_context': market_context
                     }
 
                     # Check if already posted
@@ -190,7 +240,7 @@ class BullseyeBot(BaseAutoBot):
         pass
 
     async def _calculate_momentum(self, symbol: str) -> Dict:
-        """Calculate REAL momentum with multiple timeframes and volume confirmation"""
+        """Enhanced momentum calculation with volume weighting and divergence detection"""
         try:
             now = datetime.now()
             # Polygon API requires YYYY-MM-DD format only
@@ -218,15 +268,33 @@ class BullseyeBot(BaseAutoBot):
             if bars_5m.empty or bars_15m.empty:
                 return None
 
-            # Calculate 5-minute momentum
+            # Calculate standard momentum
             momentum_5m = ((bars_5m.iloc[-1]['close'] - bars_5m.iloc[0]['close']) /
                            bars_5m.iloc[0]['close']) * 100
 
-            # Calculate 15-minute momentum
             momentum_15m = ((bars_15m.iloc[-1]['close'] - bars_15m.iloc[0]['close']) /
                             bars_15m.iloc[0]['close']) * 100
 
-            # Volume confirmation
+            # Calculate volume-weighted momentum
+            vwap_5m = (bars_5m['close'] * bars_5m['volume']).sum() / bars_5m['volume'].sum()
+            vw_momentum_5m = ((bars_5m.iloc[-1]['close'] - vwap_5m) / vwap_5m) * 100
+
+            # Check for momentum acceleration
+            if len(bars_5m) >= 3:
+                recent_momentum = ((bars_5m.iloc[-1]['close'] - bars_5m.iloc[-3]['close']) /
+                                 bars_5m.iloc[-3]['close']) * 100
+                older_momentum = ((bars_5m.iloc[-3]['close'] - bars_5m.iloc[-5]['close']) /
+                                bars_5m.iloc[-5]['close']) * 100 if len(bars_5m) >= 5 else 0
+                accelerating = abs(recent_momentum) > abs(older_momentum)
+            else:
+                accelerating = False
+
+            # Check for momentum divergence
+            price_trend = momentum_5m > 0
+            volume_trend = bars_5m.iloc[-3:]['volume'].mean() > bars_5m.iloc[:-3]['volume'].mean()
+            divergence = (price_trend and not volume_trend) or (not price_trend and volume_trend)
+
+            # Volume analysis
             avg_volume_5m = bars_5m['volume'].mean()
             current_volume = bars_5m.iloc[-1]['volume']
             volume_ratio = current_volume / avg_volume_5m if avg_volume_5m > 0 else 1.0
@@ -234,10 +302,10 @@ class BullseyeBot(BaseAutoBot):
             # Determine direction and strength
             if momentum_5m > 0 and momentum_15m > 0:
                 direction = 'bullish'
-                strength = (momentum_5m + momentum_15m) / 2
+                strength = (abs(momentum_5m) + abs(momentum_15m) + abs(vw_momentum_5m)) / 3
             elif momentum_5m < 0 and momentum_15m < 0:
                 direction = 'bearish'
-                strength = abs((momentum_5m + momentum_15m) / 2)
+                strength = (abs(momentum_5m) + abs(momentum_15m) + abs(vw_momentum_5m)) / 3
             else:
                 direction = 'mixed'
                 strength = 0
@@ -247,13 +315,59 @@ class BullseyeBot(BaseAutoBot):
                 'strength': strength,
                 'momentum_5m': momentum_5m,
                 'momentum_15m': momentum_15m,
+                'vw_momentum_5m': vw_momentum_5m,
                 'volume_ratio': volume_ratio,
-                'volume_confirmed': volume_ratio >= 1.5  # 50% above average
+                'volume_confirmed': volume_ratio >= 1.5,
+                'momentum_accelerating': accelerating,
+                'divergence': divergence
             }
 
         except Exception as e:
             logger.error(f"Error calculating momentum for {symbol}: {e}")
             return None
+    
+    async def _analyze_order_flow(self, symbol: str, trades_df: pd.DataFrame) -> Dict:
+        """Analyze order flow for sweep patterns and buy/sell pressure"""
+        try:
+            if trades_df.empty:
+                return {'sweep_detected': False, 'buy_pressure': 0.5}
+            
+            # Identify large block trades (>$100k)
+            block_trades = trades_df[trades_df['premium'] >= 100_000]
+            
+            # Check for sweep patterns (multiple exchanges hit quickly)
+            recent_trades = trades_df[trades_df['timestamp'] > datetime.now() - timedelta(minutes=5)]
+            
+            sweep_detected = False
+            if len(recent_trades) >= 5:
+                # Check if trades hit multiple exchanges in quick succession
+                time_spread = (recent_trades['timestamp'].max() - recent_trades['timestamp'].min()).total_seconds()
+                if time_spread < 60 and recent_trades['exchange'].nunique() >= 3:
+                    sweep_detected = True
+            
+            # Calculate buy/sell pressure
+            call_premium = trades_df[trades_df['type'] == 'CALL']['premium'].sum()
+            put_premium = trades_df[trades_df['type'] == 'PUT']['premium'].sum()
+            total_premium = call_premium + put_premium
+            
+            buy_pressure = call_premium / total_premium if total_premium > 0 else 0.5
+            
+            # Identify aggressive orders (at ask)
+            # Note: This is simplified - real implementation would need bid/ask data
+            aggressive_ratio = len(trades_df[trades_df['price'] > trades_df['price'].median()]) / len(trades_df)
+            
+            return {
+                'sweep_detected': sweep_detected,
+                'buy_pressure': buy_pressure,
+                'block_trades_count': len(block_trades),
+                'block_trades_value': block_trades['premium'].sum(),
+                'aggressive_ratio': aggressive_ratio,
+                'flow_direction': 'bullish' if buy_pressure > 0.7 else 'bearish' if buy_pressure < 0.3 else 'neutral'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing order flow for {symbol}: {e}")
+            return {'sweep_detected': False, 'buy_pressure': 0.5}
 
     async def _calculate_relative_volume(self, symbol: str, current_volume: int) -> float:
         """PRD Enhancement: Calculate volume vs 20-day baseline"""
@@ -440,7 +554,7 @@ class BullseyeBot(BaseAutoBot):
         return score
 
     async def _post_signal(self, signal: Dict):
-        """Post Bullseye signal to Discord"""
+        """Post enhanced Bullseye signal to Discord"""
         # Teal/turquoise color like in the image
         color = 0x5DADE2
 
@@ -448,88 +562,109 @@ class BullseyeBot(BaseAutoBot):
         exp_date = pd.to_datetime(signal.get('expiration', datetime.now()))
         exp_str = exp_date.strftime('%m/%d/%Y')
 
-        # Determine Call/Put
-        call_put = "Call" if signal['type'] == 'CALL' else "Put"
+        # Format priority
+        priority_level = "URGENT" if signal.get('priority_score', 0) >= 85 else "HIGH" if signal.get('priority_score', 0) >= 75 else "MEDIUM"
 
-        # Determine Buy/Sell (for Bullseye, these are always Buy signals)
-        buy_sell = "Buy"
-
-        # Format premium in M if over 1M, otherwise in K
-        premium = signal['premium']
-        if premium >= 1000000:
-            prem_str = f"{premium/1000000:.2f}M"
-        elif premium >= 1000:
-            prem_str = f"{premium/1000:.0f}K"
+        # Format smart money
+        smart_money = signal['premium']
+        if smart_money >= 1000000:
+            smart_str = f"${smart_money/1000000:.1f}M"
         else:
-            prem_str = f"{premium:.0f}"
+            smart_str = f"${smart_money/1000:.0f}K"
 
-        # OI (Open Interest) - placeholder if not available
-        oi = signal.get('open_interest', 'N/A')
+        # Format momentum
+        momentum_str = f"{'Accelerating' if signal.get('momentum_accelerating', False) else ''} {signal['momentum_5m']:+.1f}%"
 
-        # Volume
-        volume = signal['volume']
+        # Market context
+        market = signal.get('market_context', {})
+        market_status = f"{market.get('regime', 'normal').replace('_', ' ').title()}"
 
         embed = self.create_embed(
-            title=f"🎯 Bullseye Trade Idea",
-            description=f"Expected to pan out within 1-2 days.",
+            title=f"🎯 Bullseye: {signal['ticker']}",
+            description=f"AI Score: **{signal['ai_score']:.0f}%** | Priority: **{priority_level}**",
             color=color,
             fields=[
                 {
-                    "name": "Symbol",
-                    "value": signal['ticker'],
+                    "name": "📊 Contract",
+                    "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE\n{exp_str}",
                     "inline": True
                 },
                 {
-                    "name": "Strike",
-                    "value": f"{signal['strike']:.1f}",
+                    "name": "💰 Smart Money",
+                    "value": f"{smart_str} ({signal['conviction_split']} split)",
                     "inline": True
                 },
                 {
-                    "name": "Expiration",
-                    "value": exp_str,
+                    "name": "📈 Momentum",
+                    "value": momentum_str,
                     "inline": True
                 },
                 {
-                    "name": "Call/Put",
-                    "value": call_put,
+                    "name": "💵 Entry Zone",
+                    "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}",
                     "inline": True
                 },
                 {
-                    "name": "Buy/Sell",
-                    "value": buy_sell,
+                    "name": "🛑 Stop Loss",
+                    "value": f"${signal['stop_loss']:.2f}",
                     "inline": True
                 },
                 {
-                    "name": "AI Confidence",
-                    "value": f"{signal['ai_score']:.2f}%",
+                    "name": "🎯 Targets",
+                    "value": f"T1: ${signal['target_1']:.2f}\nT2: ${signal['target_2']:.2f}\nT3: ${signal.get('target_3', 0):.2f}",
                     "inline": True
                 },
                 {
-                    "name": "Prems Spent",
-                    "value": prem_str,
+                    "name": "📊 Volume Metrics",
+                    "value": f"Relative: {signal['volume_ratio']:.1f}x\nVolume: {signal['volume']:,}",
                     "inline": True
                 },
                 {
-                    "name": "Volume",
-                    "value": f"{volume:,}",
+                    "name": "🎲 Avg Trade",
+                    "value": f"${signal['avg_trade_size']:,.0f}",
                     "inline": True
                 },
                 {
-                    "name": "OI",
-                    "value": str(oi),
+                    "name": "🌍 Market",
+                    "value": market_status,
                     "inline": True
                 }
             ]
         )
 
-        # Add disclaimer footer
+        # Add flow analysis if sweep detected
+        if signal.get('sweep_detected', False):
+            embed['fields'].append({
+                "name": "🚨 Order Flow",
+                "value": f"**SWEEP DETECTED** - Aggressive buying across exchanges",
+                "inline": False
+            })
+
+        # Add scale out plan
+        scale_out = signal['exit_strategy']['scale_out']
         embed['fields'].append({
-            "name": "∞",
-            "value": "Please always do your own due diligence on top of these trade ideas. For shorter term expirations, it is better to add some extra time.",
+            "name": "📋 Scale Out Plan",
+            "value": f"• {int(scale_out['target_1_size']*100)}% at T1 (R:R {signal['risk_reward_1']:.1f}:1)\n"
+                   f"• {int(scale_out['target_2_size']*100)}% at T2 (R:R {signal['risk_reward_2']:.1f}:1)\n"
+                   f"• {int(scale_out['runner_size']*100)}% runner",
             "inline": False
         })
 
-        embed['footer'] = f"ORAKL Bot - Bullseye • {datetime.now().strftime('%m/%d/%Y')}"
+        # Add management note
+        embed['fields'].append({
+            "name": "💡 Management",
+            "value": signal['exit_strategy']['management'],
+            "inline": False
+        })
+
+        # Add disclaimer
+        embed['fields'].append({
+            "name": "",
+            "value": "Please always do your own due diligence on top of these trade ideas.",
+            "inline": False
+        })
+
+        embed['footer'] = f"Bullseye Bot | AI Score: {signal['ai_score']:.0f} | {signal['volume_ratio']:.1f}x Vol | {signal['conviction_split']}"
 
         await self.post_to_discord(embed)
-        logger.info(f"Posted Bullseye signal: {signal['ticker']} {signal['type']} ${signal['strike']} Score:{signal['ai_score']}")
+        logger.info(f"Posted Bullseye signal: {signal['ticker']} {signal['type']} ${signal['strike']} Score:{signal['ai_score']:.0f} Priority:{signal.get('priority_score', 0):.0f}")

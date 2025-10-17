@@ -391,3 +391,151 @@ class BaseAutoBot(ABC):
             return "🟡 Warning"
         else:
             return "🟢 Running"
+    
+    def apply_quality_filters(self, signal: Dict) -> bool:
+        """
+        Universal quality filters for all options signals
+        
+        Args:
+            signal: Signal dictionary with trade details
+            
+        Returns:
+            True if signal passes all quality checks, False otherwise
+        """
+        try:
+            # Check bid-ask spread if available
+            if 'bid_ask_spread' in signal:
+                if signal['bid_ask_spread'] > 0.10:  # >10% spread
+                    logger.debug(f"{self.name} - Rejected signal: Spread too wide ({signal['bid_ask_spread']*100:.1f}%)")
+                    return False
+            
+            # Verify open interest
+            if 'open_interest' in signal:
+                if signal.get('open_interest', 0) < 100:
+                    logger.debug(f"{self.name} - Rejected signal: Low OI ({signal.get('open_interest', 0)})")
+                    return False
+            
+            # Validate volume/OI ratio
+            if 'volume' in signal and 'open_interest' in signal:
+                volume = signal.get('volume', 0)
+                oi = signal.get('open_interest', 1)
+                volume_oi_ratio = volume / oi if oi > 0 else 0
+                
+                if volume_oi_ratio < 0.5:  # Volume should be at least 50% of OI
+                    logger.debug(f"{self.name} - Rejected signal: Low volume/OI ratio ({volume_oi_ratio:.2f})")
+                    return False
+            
+            # Ensure smart money percentage (if available)
+            if 'smart_money_volume' in signal and 'volume' in signal:
+                smart_money_pct = signal.get('smart_money_volume', 0) / signal.get('volume', 1)
+                if smart_money_pct < 0.6:  # At least 60% smart money
+                    logger.debug(f"{self.name} - Rejected signal: Low smart money % ({smart_money_pct*100:.0f}%)")
+                    return False
+            
+            # Check minimum premium threshold
+            if 'premium' in signal:
+                min_premium = 5000  # $5k minimum
+                if signal.get('premium', 0) < min_premium:
+                    logger.debug(f"{self.name} - Rejected signal: Premium below threshold (${signal.get('premium', 0):,.0f})")
+                    return False
+            
+            # Greeks validation (if available)
+            if 'delta' in signal:
+                delta = abs(signal.get('delta', 0))
+                if delta < 0.25 or delta > 0.75:  # Avoid deep OTM/ITM
+                    logger.debug(f"{self.name} - Rejected signal: Delta out of range ({delta:.2f})")
+                    return False
+            
+            # Days to expiry check
+            if 'days_to_expiry' in signal:
+                dte = signal.get('days_to_expiry', 0)
+                if dte < 0:  # Expired
+                    logger.debug(f"{self.name} - Rejected signal: Contract expired")
+                    return False
+            
+            # All checks passed
+            return True
+            
+        except Exception as e:
+            logger.error(f"{self.name} - Error in quality filter: {e}")
+            # On error, be conservative and reject
+            return False
+    
+    def rank_signals(self, signals: List[Dict]) -> List[Dict]:
+        """
+        Rank signals by quality and urgency
+        
+        Args:
+            signals: List of signal dictionaries
+            
+        Returns:
+            Sorted list of top signals
+        """
+        if not signals:
+            return []
+        
+        try:
+            for signal in signals:
+                # Calculate urgency score based on time decay and momentum
+                urgency = 0
+                
+                # Time decay factor (DTE)
+                dte = signal.get('days_to_expiry', 99)
+                if dte == 0:
+                    urgency += 40
+                elif dte == 1:
+                    urgency += 25
+                elif dte <= 3:
+                    urgency += 15
+                
+                # Momentum acceleration
+                if signal.get('momentum_accelerating', False):
+                    urgency += 30
+                
+                # Volume surge
+                volume_ratio = signal.get('volume_ratio', 1)
+                if volume_ratio > 5:
+                    urgency += 30
+                elif volume_ratio > 3:
+                    urgency += 20
+                elif volume_ratio > 2:
+                    urgency += 10
+                
+                # Directional conviction (for bullseye)
+                conviction = signal.get('directional_conviction', 0)
+                if conviction >= 0.90:
+                    urgency += 20
+                elif conviction >= 0.85:
+                    urgency += 15
+                elif conviction >= 0.80:
+                    urgency += 10
+                
+                # Pattern strength (for scalps)
+                pattern_strength = signal.get('pattern_strength', 0)
+                if pattern_strength >= 90:
+                    urgency += 25
+                elif pattern_strength >= 85:
+                    urgency += 20
+                elif pattern_strength >= 80:
+                    urgency += 15
+                
+                # Calculate priority score
+                quality_score = signal.get('ai_score', signal.get('scalp_score', 50))
+                signal['urgency_score'] = urgency
+                signal['priority_score'] = (quality_score * 0.6) + (urgency * 0.4)
+            
+            # Sort by priority score and return top 3
+            sorted_signals = sorted(signals, key=lambda x: x['priority_score'], reverse=True)
+            
+            # Log ranking results
+            logger.info(f"{self.name} - Ranked {len(signals)} signals, returning top {min(3, len(sorted_signals))}")
+            for i, sig in enumerate(sorted_signals[:3]):
+                logger.debug(f"  #{i+1}: {sig.get('ticker')} - Priority: {sig['priority_score']:.1f} "
+                           f"(Quality: {sig.get('ai_score', sig.get('scalp_score', 0))}, Urgency: {sig['urgency_score']})")
+            
+            return sorted_signals[:3]  # Return top 3 signals
+            
+        except Exception as e:
+            logger.error(f"{self.name} - Error ranking signals: {e}")
+            # Return original list on error
+            return signals[:3]
