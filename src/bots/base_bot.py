@@ -131,10 +131,10 @@ class BaseAutoBot(ABC):
                 await asyncio.sleep(backoff_time)
     
     async def _perform_scan(self):
-        """Perform a single scan with generous timeout"""
+        """Perform a single scan with reasonable timeout"""
         try:
-            # Add timeout to prevent hanging - be generous for API calls
-            timeout_duration = max(self.scan_interval * 2, 600)  # 2x interval or 10 min minimum
+            # Add timeout to prevent hanging - reasonable for smaller watchlist
+            timeout_duration = min(self.scan_interval * 1.5, 300)  # 1.5x interval or 5 min maximum
             await asyncio.wait_for(
                 self.scan_and_post(),
                 timeout=timeout_duration
