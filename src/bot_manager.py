@@ -149,9 +149,13 @@ class BotManager:
         logger.info("🔄 Loading watchlist...")
         self.watchlist = await self.watchlist_manager.get_watchlist()
         logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers")
-
+        
+        # Limit watchlist size for each bot to prevent timeouts
+        # Different bots scan different subsets to cover more ground
+        max_per_bot = 100  # Each bot scans max 100 symbols
+        
         # Update all bots with current watchlist
-        self._update_bot_watchlists()
+        self._update_bot_watchlists(max_symbols=max_per_bot)
 
         # Start watchlist refresh task
         watchlist_refresh_task = asyncio.create_task(self._watchlist_refresh_loop())
@@ -183,19 +187,32 @@ class BotManager:
                 self.watchlist = await self.watchlist_manager.get_watchlist()
                 logger.info(f"✅ Watchlist refreshed: {len(self.watchlist)} tickers")
 
-                # Update all bots
-                self._update_bot_watchlists()
+                # Update all bots with limited watchlist
+                max_per_bot = 100
+                self._update_bot_watchlists(max_symbols=max_per_bot)
 
             except Exception as e:
                 logger.error(f"Error in watchlist refresh loop: {e}")
                 await asyncio.sleep(60)  # Wait 1 minute before retry
 
-    def _update_bot_watchlists(self):
-        """Update watchlist for all bots"""
-        for bot in self.bots:
+    def _update_bot_watchlists(self, max_symbols: int = None):
+        """Update watchlist for all bots with optional limit"""
+        for i, bot in enumerate(self.bots):
             if hasattr(bot, 'watchlist'):
-                bot.watchlist = self.watchlist
-                logger.debug(f"Updated {bot.name} watchlist: {len(self.watchlist)} tickers")
+                if max_symbols and len(self.watchlist) > max_symbols:
+                    # Distribute symbols across bots
+                    # Each bot gets a different subset
+                    start_idx = (i * max_symbols) % len(self.watchlist)
+                    end_idx = start_idx + max_symbols
+                    if end_idx > len(self.watchlist):
+                        # Wrap around
+                        bot.watchlist = self.watchlist[start_idx:] + self.watchlist[:end_idx - len(self.watchlist)]
+                    else:
+                        bot.watchlist = self.watchlist[start_idx:end_idx]
+                    logger.info(f"  {bot.name}: {len(bot.watchlist)} symbols (subset {start_idx}-{end_idx})")
+                else:
+                    bot.watchlist = self.watchlist
+                    logger.debug(f"Updated {bot.name} watchlist: {len(self.watchlist)} tickers")
 
     async def stop_all(self):
         """Stop all bots"""
