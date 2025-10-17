@@ -17,6 +17,7 @@ from src.bots import (
     UnusualVolumeBot
 )
 from src.bots.strat_bot import STRATPatternBot
+from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST
 
 logger = logging.getLogger(__name__)
 
@@ -145,17 +146,13 @@ class BotManager:
         self.running = True
         logger.info(f"Starting {len(self.bots)} auto-posting bots...")
 
-        # Initialize watchlist
-        logger.info("🔄 Loading watchlist...")
-        self.watchlist = await self.watchlist_manager.get_watchlist()
-        logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers")
+        # Use comprehensive sector watchlist for all bots
+        logger.info("🔄 Loading comprehensive sector watchlist...")
+        self.watchlist = STRAT_COMPLETE_WATCHLIST
+        logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (all mega/large caps)")
         
-        # Limit watchlist size for each bot to prevent timeouts
-        # Different bots scan different subsets to cover more ground
-        max_per_bot = 100  # Each bot scans max 100 symbols
-        
-        # Update all bots with current watchlist
-        self._update_bot_watchlists(max_symbols=max_per_bot)
+        # Update all bots with the comprehensive watchlist
+        self._update_bot_watchlists()
 
         # Start watchlist refresh task
         watchlist_refresh_task = asyncio.create_task(self._watchlist_refresh_loop())
@@ -182,42 +179,21 @@ class BotManager:
                 # Wait for refresh interval
                 await asyncio.sleep(Config.WATCHLIST_REFRESH_INTERVAL)
 
-                # Refresh watchlist
-                logger.info("🔄 Refreshing watchlist...")
-                self.watchlist = await self.watchlist_manager.get_watchlist()
-                logger.info(f"✅ Watchlist refreshed: {len(self.watchlist)} tickers")
-
-                # Update all bots with limited watchlist
-                max_per_bot = 100
-                self._update_bot_watchlists(max_symbols=max_per_bot)
+                # No need to refresh - using static comprehensive watchlist
+                logger.info("🔄 Using static comprehensive watchlist...")
+                logger.info(f"✅ All bots using: {len(self.watchlist)} mega/large cap tickers")
 
             except Exception as e:
                 logger.error(f"Error in watchlist refresh loop: {e}")
                 await asyncio.sleep(60)  # Wait 1 minute before retry
 
-    def _update_bot_watchlists(self, max_symbols: int = None):
-        """Update watchlist for all bots with optional limit"""
-        for i, bot in enumerate(self.bots):
+    def _update_bot_watchlists(self):
+        """Update watchlist for all bots with comprehensive sector list"""
+        for bot in self.bots:
             if hasattr(bot, 'watchlist'):
-                # STRAT bot uses its own comprehensive watchlist
-                if hasattr(bot, 'name') and 'STRAT' in bot.name:
-                    logger.info(f"  {bot.name}: Uses dedicated sector-based watchlist")
-                    continue
-                    
-                if max_symbols and len(self.watchlist) > max_symbols:
-                    # Distribute symbols across bots
-                    # Each bot gets a different subset
-                    start_idx = (i * max_symbols) % len(self.watchlist)
-                    end_idx = start_idx + max_symbols
-                    if end_idx > len(self.watchlist):
-                        # Wrap around
-                        bot.watchlist = self.watchlist[start_idx:] + self.watchlist[:end_idx - len(self.watchlist)]
-                    else:
-                        bot.watchlist = self.watchlist[start_idx:end_idx]
-                    logger.info(f"  {bot.name}: {len(bot.watchlist)} symbols (subset {start_idx}-{end_idx})")
-                else:
-                    bot.watchlist = self.watchlist
-                    logger.debug(f"Updated {bot.name} watchlist: {len(self.watchlist)} tickers")
+                # All bots now use the same comprehensive watchlist
+                bot.watchlist = self.watchlist
+                logger.info(f"  {bot.name}: {len(self.watchlist)} tickers (full mega/large cap list)")
 
     async def stop_all(self):
         """Stop all bots"""
