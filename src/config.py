@@ -45,16 +45,16 @@ class Config:
     DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID', '1427156934582079588'))
     ALERT_CHANNEL_ID = int(os.getenv('ALERT_CHANNEL_ID', '1427156934582079588'))
     
-    # Bot Scan Intervals (seconds) - Increased for 400+ ticker scanning
-    TRADY_FLOW_INTERVAL = int(os.getenv('TRADY_FLOW_INTERVAL', '600'))  # 10 minutes (was 5)
-    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '300'))  # 5 minutes (was 3)
-    SCALPS_INTERVAL = int(os.getenv('SCALPS_INTERVAL', '300'))  # 5 minutes (was 2)
-    SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '300'))  # 5 minutes (was 3)
-    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '300'))  # 5 minutes (was 2)
-    DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '600'))  # 10 minutes (was 4)
-    BREAKOUTS_INTERVAL = int(os.getenv('BREAKOUTS_INTERVAL', '600'))  # 10 minutes (was 5)
-    UNUSUAL_VOLUME_INTERVAL = int(os.getenv('UNUSUAL_VOLUME_INTERVAL', '300'))  # 5 minutes (was 3)
-    STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '600'))  # 10 minutes (was 5)
+    # Bot Scan Intervals (seconds) - Original intervals restored
+    TRADY_FLOW_INTERVAL = int(os.getenv('TRADY_FLOW_INTERVAL', '300'))  # 5 minutes
+    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '180'))  # 3 minutes
+    SCALPS_INTERVAL = int(os.getenv('SCALPS_INTERVAL', '120'))  # 2 minutes
+    SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
+    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '120'))  # 2 minutes
+    DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '240'))  # 4 minutes
+    BREAKOUTS_INTERVAL = int(os.getenv('BREAKOUTS_INTERVAL', '300'))  # 5 minutes
+    UNUSUAL_VOLUME_INTERVAL = int(os.getenv('UNUSUAL_VOLUME_INTERVAL', '180'))  # 3 minutes
+    STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '300'))  # 5 minutes
     
     # ORAKL Flow Settings
     SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', '5'))
