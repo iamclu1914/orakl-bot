@@ -10,6 +10,7 @@ from src.config import Config
 from src.utils.monitoring import signals_generated, timed
 from src.utils.exceptions import DataException, handle_exception
 from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
+from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,10 @@ class GoldenSweepsBot(BaseAutoBot):
         """Scan for golden sweeps (1M+ premium) with enhanced analysis"""
         logger.info(f"{self.name} scanning for million dollar sweeps")
 
-        # Scan 24/7 - golden sweeps can be placed after hours for next day
-        # Remove market hours check to enable continuous scanning
+        # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
+        if not MarketHours.is_market_open():
+            logger.debug(f"{self.name} - Market closed, skipping scan")
+            return
         
         signals_found = 0
         

@@ -9,6 +9,7 @@ from src.config import Config
 from src.utils.monitoring import signals_generated, timed
 from src.utils.exceptions import DataException, handle_exception
 from src.utils.validation import SafeCalculations
+from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,10 @@ class UnusualVolumeBot(BaseAutoBot):
         """Scan for unusual volume activity"""
         logger.info(f"{self.name} scanning for unusual volume")
 
-        # Scan 24/7 - unusual volume can occur in pre-market and after-hours
-        # Remove market hours check to enable continuous scanning
+        # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
+        if not MarketHours.is_market_open():
+            logger.debug(f"{self.name} - Market closed, skipping scan")
+            return
         
         signals_posted = 0
         

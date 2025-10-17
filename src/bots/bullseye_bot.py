@@ -7,6 +7,7 @@ from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
+from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,10 @@ class BullseyeBot(BaseAutoBot):
         """Scan for intraday momentum signals"""
         logger.info(f"{self.name} scanning for intraday movements")
 
-        # Scan 24/7 - can catch pre-market and after-hours momentum
-        # Remove market hours check to enable continuous scanning
+        # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
+        if not MarketHours.is_market_open():
+            logger.debug(f"{self.name} - Market closed, skipping scan")
+            return
         
         for symbol in self.watchlist:
             try:

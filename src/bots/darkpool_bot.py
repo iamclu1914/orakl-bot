@@ -6,6 +6,7 @@ from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
+from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,10 @@ class DarkpoolBot(BaseAutoBot):
         """Scan for large darkpool and block trades"""
         logger.info(f"{self.name} scanning for darkpool activity")
 
-        # Darkpool trades can happen 24/7, no market hours check needed
-        # Block trades and darkpool activity can occur during pre-market,
-        # regular hours, and after-hours
+        # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
+        if not MarketHours.is_market_open():
+            logger.debug(f"{self.name} - Market closed, skipping scan")
+            return
         
         for symbol in self.watchlist:
             try:

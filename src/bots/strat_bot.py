@@ -11,6 +11,7 @@ from discord_webhook import DiscordWebhook, DiscordEmbed
 
 from ..config import Config
 from ..data_fetcher import DataFetcher
+from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
@@ -419,6 +420,11 @@ class STRATPatternBot:
     async def scan(self):
         """PRD Enhanced: Scan with best signal selection"""
         logger.info(f"{self.name} scan started")
+        
+        # STRAT bot scans 24/7 but only on trading days (weekdays, excluding holidays)
+        if not MarketHours.is_trading_day():
+            logger.debug(f"{self.name} - Not a trading day (weekend/holiday), skipping scan")
+            return
 
         signals_found = []
 
