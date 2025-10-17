@@ -30,6 +30,7 @@ class STRATPatternBot:
         self.is_running = False
         self.running = False  # Add for compatibility with BotManager.get_bot_status()
         self.est = pytz.timezone('America/New_York')
+        self.pattern_states = {}  # Track patterns waiting for conditions
 
         logger.info(f"{self.name} initialized")
 
@@ -210,6 +211,34 @@ class STRATPatternBot:
         
         return confidence
 
+    def should_alert_pattern(self, pattern_type: str, signal: Dict) -> bool:
+        """Check if pattern should be alerted based on time windows"""
+        now = datetime.now(self.est)
+        
+        if pattern_type == '3-2-2 Reversal':
+            # Alert only at 10:01 AM EST
+            return now.hour == 10 and now.minute <= 5
+        
+        elif pattern_type == '2-2 Reversal':
+            # Alert between 8:01 AM - 9:29 AM EST
+            # Must have pullback confirmed
+            return (now.hour == 8 or (now.hour == 9 and now.minute < 30)) and signal.get('pullback_confirmed', False)
+        
+        elif pattern_type == '1-3-1 Miyagi':
+            # Alert at 4:01 AM or 4:01 PM EST
+            return (now.hour in [4, 16] and now.minute <= 5)
+        
+        return False
+
+    def track_pattern_state(self, ticker: str, pattern: Dict):
+        """Track patterns that need monitoring (e.g., 2-2 waiting for pullback)"""
+        key = f"{ticker}_{pattern['pattern']}"
+        self.pattern_states[key] = {
+            'pattern': pattern,
+            'detected_time': datetime.now(self.est),
+            'status': 'waiting_pullback' if pattern['pattern'] == '2-2 Reversal' else 'ready'
+        }
+
     def check_322_reversal(self, bars: List[Dict], ticker: str) -> Optional[Dict]:
         """
         PRD Corrected: 3-2-2 Reversal Pattern (60-minute timeframe)
@@ -368,7 +397,7 @@ class STRATPatternBot:
             target = entry + (risk * 2)  # 2:1 R:R target
             
             signal = {
-                'pattern': '2-2 Reversal Retrigger',
+                'pattern': '2-2 Reversal',
                 'direction': 'Bullish',
                 'ticker': ticker,
                 'timeframe': '4hour',
@@ -385,7 +414,7 @@ class STRATPatternBot:
             target = entry - (risk * 2)  # 2:1 R:R target
             
             signal = {
-                'pattern': '2-2 Reversal Retrigger',
+                'pattern': '2-2 Reversal',
                 'direction': 'Bearish',
                 'ticker': ticker,
                 'timeframe': '4hour',
@@ -394,6 +423,28 @@ class STRATPatternBot:
                 'stop': stop,
                 'risk_reward': 2.0  # Fixed 2:1 R:R
             }
+
+        # Add pullback detection logic
+        if signal and len(bars) > 0:
+            # Check for pullback wick on the most recent bar
+            current_bar = bars[-1]
+            pullback_confirmed = False
+            
+            if self.validate_bar(current_bar):
+                if signal['direction'] == 'Bullish':
+                    # For bullish, check for lower wick (indicating pullback down)
+                    wick_size = current_bar['o'] - current_bar['l']
+                    body_size = abs(current_bar['c'] - current_bar['o'])
+                    if body_size > 0 and wick_size > body_size * 0.5:  # Wick > 50% of body
+                        pullback_confirmed = True
+                else:
+                    # For bearish, check for upper wick (indicating pullback up)
+                    wick_size = current_bar['h'] - current_bar['o']
+                    body_size = abs(current_bar['c'] - current_bar['o'])
+                    if body_size > 0 and wick_size > body_size * 0.5:
+                        pullback_confirmed = True
+            
+            signal['pullback_confirmed'] = pullback_confirmed
 
         return signal
 
@@ -623,15 +674,22 @@ class STRATPatternBot:
                 if signals:
                     best_signal = max(signals, key=lambda x: x.get('confidence_score', 0))
 
-                    # Check if already detected today
-                    key = f"{ticker}_{best_signal['pattern']}_{datetime.now(self.est).date()}"
-                    if key not in self.detected_today:
-                        self.send_alert(best_signal)
-                        signals_found.append(best_signal)
-                        self.detected_today[key] = True
+                    # Track pattern state
+                    self.track_pattern_state(ticker, best_signal)
 
-                        logger.info(f"✅ STRAT signal: {ticker} {best_signal['pattern']} - "
-                                  f"Confidence:{best_signal.get('confidence_score', 0):.2f}")
+                    # Check if alert time is appropriate
+                    if self.should_alert_pattern(best_signal['pattern'], best_signal):
+                        # Check if already detected today
+                        key = f"{ticker}_{best_signal['pattern']}_{datetime.now(self.est).date()}"
+                        if key not in self.detected_today:
+                            self.send_alert(best_signal)
+                            signals_found.append(best_signal)
+                            self.detected_today[key] = True
+
+                            logger.info(f"✅ STRAT signal: {ticker} {best_signal['pattern']} - "
+                                      f"Confidence:{best_signal.get('confidence_score', 0):.2f}")
+                    else:
+                        logger.debug(f"Pattern {best_signal['pattern']} for {ticker} detected but outside alert window")
 
             except Exception as e:
                 logger.error(f"Error scanning {ticker}: {e}")
@@ -641,11 +699,31 @@ class STRATPatternBot:
         else:
             logger.info("No new STRAT patterns detected")
 
+    async def get_next_scan_interval(self):
+        """Calculate optimal scan interval based on current time"""
+        now = datetime.now(self.est)
+        
+        # During critical alert windows, scan more frequently
+        if (now.hour == 3 and now.minute >= 55) or (now.hour == 4 and now.minute <= 5):  # 1-3-1 window
+            return 60  # 1 minute
+        elif now.hour == 7 and now.minute >= 55:  # Pre 2-2 window
+            return 60
+        elif now.hour == 8 or (now.hour == 9 and now.minute < 30):  # 2-2 window
+            return 120  # 2 minutes
+        elif now.hour == 9 and now.minute >= 55:  # Pre 3-2-2 window
+            return 60
+        elif now.hour == 10 and now.minute <= 5:  # 3-2-2 window
+            return 60
+        elif (now.hour == 15 and now.minute >= 55) or (now.hour == 16 and now.minute <= 5):  # PM 1-3-1
+            return 60
+        else:
+            return 300  # Default 5 minutes
+
     async def start(self):
         """Start the bot"""
         self.is_running = True
         self.running = True  # Sync with is_running
-        logger.info(f"{self.name} started with {self.scan_interval}s interval")
+        logger.info(f"{self.name} started with dynamic scan intervals")
 
         while self.is_running:
             try:
@@ -653,10 +731,15 @@ class STRATPatternBot:
                 now = datetime.now(self.est)
                 if now.hour == 0 and now.minute == 0:
                     self.detected_today.clear()
-                    logger.info("Daily pattern tracking reset")
+                    self.pattern_states.clear()  # Also clear pattern states
+                    logger.info("Daily pattern tracking and states reset")
 
                 await self.scan()
-                await asyncio.sleep(self.scan_interval)
+                
+                # Get dynamic scan interval based on current time
+                next_interval = await self.get_next_scan_interval()
+                logger.debug(f"Next scan in {next_interval}s")
+                await asyncio.sleep(next_interval)
 
             except Exception as e:
                 logger.error(f"{self.name} error: {e}")
