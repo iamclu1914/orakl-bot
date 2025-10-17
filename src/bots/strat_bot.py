@@ -304,72 +304,59 @@ class STRATPatternBot:
         return signal
 
     async def scan_ticker(self, ticker: str) -> List[Dict]:
-        """PRD Enhanced: Scan with time-based pattern scheduling"""
+        """PRD Enhanced: Scan with continuous pattern detection"""
         signals = []
         now = datetime.now(self.est)
 
         try:
-            # 1-3-1 Miyagi - Scan on 12H timeframe at 4am, 4pm
-            if now.hour in [4, 16] and now.minute <= 5:
-                df_12h = await self.data_fetcher.get_aggregates(
-                    ticker, 'hour', 12,
-                    (now - timedelta(days=5)).strftime('%Y-%m-%d'),
-                    now.strftime('%Y-%m-%d')
-                )
-                if not df_12h.empty:
-                    bars_12h = df_12h.to_dict('records')
-                    bars_12h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                                't': int(b['timestamp'].timestamp() * 1000)} for b in bars_12h]
-                    signal = self.check_131_miyagi(bars_12h, ticker)
-                    if signal:
-                        signal['confidence_score'] = 0.75
-                        signals.append(signal)
+            # 1-3-1 Miyagi - Always scan on 12H timeframe
+            # Pattern can form at any time, not just at 4am/4pm
+            df_12h = await self.data_fetcher.get_aggregates(
+                ticker, 'hour', 12,
+                (now - timedelta(days=5)).strftime('%Y-%m-%d'),
+                now.strftime('%Y-%m-%d')
+            )
+            if not df_12h.empty:
+                bars_12h = df_12h.to_dict('records')
+                bars_12h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                            't': int(b['timestamp'].timestamp() * 1000)} for b in bars_12h]
+                signal = self.check_131_miyagi(bars_12h, ticker)
+                if signal:
+                    signal['confidence_score'] = 0.75
+                    signals.append(signal)
 
-            # 3-2-2 Reversal - Scan at 8am, 9am, and 10:01am ET
-            if now.hour in [8, 9] and 0 <= now.minute <= 5:
-                df_60m = await self.data_fetcher.get_aggregates(
-                    ticker, 'minute', 60,
-                    now.replace(hour=7, minute=0).strftime('%Y-%m-%d'),
-                    now.strftime('%Y-%m-%d')
-                )
-                if not df_60m.empty:
-                    bars_60m = df_60m.to_dict('records')
-                    bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                                 't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
-                    signal = self.check_322_reversal(bars_60m, ticker)
-                    if signal:
-                        signal['confidence_score'] = 0.70
-                        signals.append(signal)
-            elif now.hour == 10 and now.minute == 1:
-                df_60m = await self.data_fetcher.get_aggregates(
-                    ticker, 'minute', 60,
-                    now.replace(hour=7, minute=0).strftime('%Y-%m-%d'),
-                    now.strftime('%Y-%m-%d')
-                )
-                if not df_60m.empty:
-                    bars_60m = df_60m.to_dict('records')
-                    bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                                 't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
-                    signal = self.check_322_reversal(bars_60m, ticker)
-                    if signal:
-                        signal['confidence_score'] = 0.70
-                        signals.append(signal)
+            # 3-2-2 Reversal - Always scan, pattern must have formed after 10am ET
+            # Get data from 7am to current time
+            start_time = now.replace(hour=7, minute=0) if now.hour >= 7 else now - timedelta(days=1)
+            df_60m = await self.data_fetcher.get_aggregates(
+                ticker, 'minute', 60,
+                start_time.strftime('%Y-%m-%d'),
+                now.strftime('%Y-%m-%d')
+            )
+            if not df_60m.empty:
+                bars_60m = df_60m.to_dict('records')
+                bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                             't': int(b['timestamp'].timestamp() * 1000)} for b in bars_60m]
+                signal = self.check_322_reversal(bars_60m, ticker)
+                if signal:
+                    signal['confidence_score'] = 0.70
+                    signals.append(signal)
 
-            # 2-2 Reversal - Scan at 4am and 8am ET
-            if now.hour in [4, 8] and 0 <= now.minute <= 5:
-                df_4h = await self.data_fetcher.get_aggregates(
-                    ticker, 'hour', 4,
-                    (now - timedelta(days=2)).strftime('%Y-%m-%d'),
-                    now.strftime('%Y-%m-%d')
-                )
-                if not df_4h.empty:
-                    bars_4h = df_4h.to_dict('records')
-                    bars_4h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                               't': int(b['timestamp'].timestamp() * 1000)} for b in bars_4h]
-                    signal = self.check_22_reversal(bars_4h, ticker)
-                    if signal:
-                        signal['confidence_score'] = 0.68
-                        signals.append(signal)
+            # 2-2 Reversal - Always scan on 4H timeframe
+            # Pattern can complete at any time after 8am
+            df_4h = await self.data_fetcher.get_aggregates(
+                ticker, 'hour', 4,
+                (now - timedelta(days=2)).strftime('%Y-%m-%d'),
+                now.strftime('%Y-%m-%d')
+            )
+            if not df_4h.empty:
+                bars_4h = df_4h.to_dict('records')
+                bars_4h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                           't': int(b['timestamp'].timestamp() * 1000)} for b in bars_4h]
+                signal = self.check_22_reversal(bars_4h, ticker)
+                if signal:
+                    signal['confidence_score'] = 0.68
+                    signals.append(signal)
 
         except Exception as e:
             logger.error(f"Error scanning {ticker}: {e}")

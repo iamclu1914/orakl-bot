@@ -28,11 +28,10 @@ class DarkpoolBot(BaseAutoBot):
         """Scan for large darkpool and block trades"""
         logger.info(f"{self.name} scanning for darkpool activity")
 
-        is_open = await self.fetcher.is_market_open()
-        if not is_open:
-            logger.debug(f"{self.name} - Market closed")
-            return
-
+        # Darkpool trades can happen 24/7, no market hours check needed
+        # Block trades and darkpool activity can occur during pre-market,
+        # regular hours, and after-hours
+        
         for symbol in self.watchlist:
             try:
                 blocks = await self._scan_block_trades(symbol)
