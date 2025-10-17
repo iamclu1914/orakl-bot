@@ -146,10 +146,15 @@ class BotManager:
         self.running = True
         logger.info(f"Starting {len(self.bots)} auto-posting bots...")
 
-        # Use comprehensive sector watchlist for all bots
-        logger.info("🔄 Loading comprehensive sector watchlist...")
-        self.watchlist = STRAT_COMPLETE_WATCHLIST
-        logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (all mega/large caps)")
+        # Use watchlist based on config mode
+        if Config.WATCHLIST_MODE == 'STATIC':
+            logger.info("🔄 Loading static watchlist from config...")
+            self.watchlist = Config.STATIC_WATCHLIST
+            logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (focused list)")
+        else:
+            logger.info("🔄 Loading comprehensive sector watchlist...")
+            self.watchlist = STRAT_COMPLETE_WATCHLIST
+            logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (all mega/large caps)")
         
         # Update all bots with the comprehensive watchlist
         self._update_bot_watchlists()
