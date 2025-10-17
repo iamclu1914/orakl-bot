@@ -29,12 +29,9 @@ class ScalpsBot(BaseAutoBot):
         """Scan for Strat-based scalp signals"""
         logger.info(f"{self.name} scanning for quick scalp setups")
 
-        # Only during market hours
-        is_open = await self.fetcher.is_market_open()
-        if not is_open:
-            logger.debug(f"{self.name} - Market closed")
-            return
-
+        # Scan 24/7 - scalp setups can form in pre-market/after-hours
+        # Remove market hours check to enable continuous scanning
+        
         for symbol in self.watchlist:
             try:
                 signals = await self._scan_strat_setup(symbol)

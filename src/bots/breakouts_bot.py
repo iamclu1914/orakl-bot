@@ -28,11 +28,9 @@ class BreakoutsBot(BaseAutoBot):
         """Scan for stock breakouts"""
         logger.info(f"{self.name} scanning for breakouts")
 
-        is_open = await self.fetcher.is_market_open()
-        if not is_open:
-            logger.debug(f"{self.name} - Market closed")
-            return
-
+        # Scan 24/7 - breakouts can form during pre-market and after-hours
+        # Remove market hours check to enable continuous scanning
+        
         for symbol in self.watchlist:
             try:
                 breakouts = await self._scan_breakout(symbol)

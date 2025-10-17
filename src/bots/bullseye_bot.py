@@ -29,12 +29,9 @@ class BullseyeBot(BaseAutoBot):
         """Scan for intraday momentum signals"""
         logger.info(f"{self.name} scanning for intraday movements")
 
-        # Only run during market hours
-        is_open = await self.fetcher.is_market_open()
-        if not is_open:
-            logger.debug(f"{self.name} - Market closed")
-            return
-
+        # Scan 24/7 - can catch pre-market and after-hours momentum
+        # Remove market hours check to enable continuous scanning
+        
         for symbol in self.watchlist:
             try:
                 signals = await self._scan_intraday_momentum(symbol)

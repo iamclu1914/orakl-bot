@@ -50,6 +50,12 @@ class WatchlistManager:
         if self._needs_refresh():
             await self.refresh_watchlist()
 
+        # If watchlist is empty after refresh (e.g., API errors), use static fallback
+        if not self.watchlist:
+            logger.warning("Dynamic watchlist is empty, using static fallback")
+            self.watchlist = Config.STATIC_WATCHLIST
+            logger.info(f"Loaded {len(self.watchlist)} tickers from static watchlist")
+
         return self.watchlist
 
     def _needs_refresh(self) -> bool:

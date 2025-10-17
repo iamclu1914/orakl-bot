@@ -38,11 +38,9 @@ class SweepsBot(BaseAutoBot):
         """Scan for large options sweeps with enhanced analysis"""
         logger.info(f"{self.name} scanning for large sweeps")
 
-        is_open = await self.fetcher.is_market_open()
-        if not is_open:
-            logger.debug(f"{self.name} - Market closed")
-            return
-
+        # Scan 24/7 - sweeps can be placed after hours for next day
+        # Remove market hours check to enable continuous scanning
+        
         signals_found = 0
         for symbol in self.watchlist:
             try:

@@ -35,11 +35,9 @@ class UnusualVolumeBot(BaseAutoBot):
         """Scan for unusual volume activity"""
         logger.info(f"{self.name} scanning for unusual volume")
 
-        is_open = await self.fetcher.is_market_open()
-        if not is_open:
-            logger.debug(f"{self.name} - Market closed")
-            return
-
+        # Scan 24/7 - unusual volume can occur in pre-market and after-hours
+        # Remove market hours check to enable continuous scanning
+        
         signals_posted = 0
         
         for symbol in self.watchlist:
