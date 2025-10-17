@@ -104,9 +104,9 @@ for sector, tickers in SECTOR_WATCHLIST.items():
 # Remove duplicates (some stocks appear in multiple sectors)
 ALL_MEGA_LARGE_CAPS = list(set(ALL_MEGA_LARGE_CAPS))
 
-# Additional ETFs for sector exposure
+# Additional ETFs and indices for sector exposure
 SECTOR_ETFS = [
-    "SPY", "QQQ", "DIA", "IWM", "XLK", "XLV", "XLF", "XLY", "XLC", 
+    "SPY", "QQQ", "DIA", "IWM", "SPX", "XLK", "XLV", "XLF", "XLY", "XLC", 
     "XLP", "XLE", "XLI", "XLB", "XLRE", "XLU", "VTI", "VOO", "IVV"
 ]
 
