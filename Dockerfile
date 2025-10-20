@@ -30,9 +30,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV TZ=America/New_York
 
-# Health check
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import psutil; import sys; sys.exit(0 if any('main.py' in ' '.join(p.cmdline()) for p in psutil.process_iter(['cmdline'])) else 1)"
+# Health check - DISABLED to prevent Render restarts
+# The complex psutil check was causing false failures
+# HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+#     CMD python -c "import psutil; import sys; sys.exit(0 if any('main.py' in ' '.join(p.cmdline()) for p in psutil.process_iter(['cmdline'])) else 1)"
 
 # Run the bot
 CMD ["python", "-u", "main.py"]
