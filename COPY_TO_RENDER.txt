@@ -20,7 +20,7 @@ SWEEPS_WEBHOOK=https://discord.com/api/webhooks/1427361658761777287/vloziMHuypGr
 
 UNUSUAL_ACTIVITY_WEBHOOK=https://discord.com/api/webhooks/1427372929099894794/xyAqCfHmarR92mr22p6MttN-4c-kBC8rYL_MZJw61a252Z9WsHBFuSu2iQY0bKK0lls_
 
-STRAT_WEBHOOK=https://discord.com/api/webhooks/1427143775926353952/SGludMyVWxVwug_tdCiGNXeyjWqY1TlyGlIL24FBxfUn_xGn3lpeAPQMYjqW2_xJxAfW
+STRAT_WEBHOOK=https://discord.com/api/webhooks/1429696331202428959/2NdM5OlRS3hlO0f-VeLetMEIVreaQyNPV5WJzRN7i2P6ViCxI5Us2J1fx68JR-Ih21ZW
 
 DARKPOOL_WEBHOOK=https://discord.com/api/webhooks/1428112253697392652/C5WhN4ANtY3kbkgIweYmsZeHYFbhpGdoqQvm7_sk_00QL6zoP7qLOvmfDKyPhohHnKtp
 
