@@ -256,15 +256,19 @@ class ORAKLRunner:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
-        # Always start health check server for Render Web Service
-        port = os.getenv('PORT', '10000')  # Default to 10000 if not set
-        logger.info(f"Starting health check server on port {port}")
-        try:
-            from health_server import start_health_server
-            asyncio.create_task(start_health_server(int(port)))
-            logger.info("Health check server started successfully")
-        except Exception as e:
-            logger.warning(f"Could not start health server: {e}")
+        # Health server not needed for Background Workers
+        # Only start if PORT is explicitly set (for Web Service compatibility)
+        port = os.getenv('PORT')
+        if port:
+            logger.info(f"PORT detected ({port}), starting health check server")
+            try:
+                from health_server import start_health_server
+                asyncio.create_task(start_health_server(int(port)))
+                logger.info("Health check server started successfully")
+            except Exception as e:
+                logger.warning(f"Could not start health server: {e}")
+        else:
+            logger.info("Running as Background Worker - no health server needed")
         
         # Run the bot
         await self.run_bot()

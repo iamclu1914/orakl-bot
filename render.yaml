@@ -19,4 +19,3 @@ services:
       - key: POLYGON_API_KEY
         sync: false
     autoDeploy: true
-    healthCheckPath: /
