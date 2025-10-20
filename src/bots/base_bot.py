@@ -327,7 +327,19 @@ class BaseAutoBot(ABC):
                 'metrics': self._get_metrics_summary()
             }
         
-        # Calculate health indicators
+        # If the bot hasn't completed an initial scan yet, treat it as starting up
+        if self.metrics.scan_count == 0 or not self.metrics.last_scan_time:
+            return {
+                'healthy': True,
+                'status': 'starting',
+                'name': self.name,
+                'scan_interval': self.scan_interval,
+                'time_since_last_scan': None,
+                'consecutive_errors': self._consecutive_errors,
+                'metrics': self._get_metrics_summary()
+            }
+
+        # Calculate health indicators once scans are underway
         now = datetime.now()
         time_since_last_scan = (
             (now - self.metrics.last_scan_time).total_seconds()

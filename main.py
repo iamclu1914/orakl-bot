@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import signal
 import psutil
+from typing import Optional
 
 # Fix Windows console encoding for Unicode
 if sys.platform == 'win32':
@@ -73,6 +74,7 @@ class ORAKLRunner:
         """Run the ORAKL bot with bulletproof 24/7 operation"""
         restart_count = 0
         max_restarts = 999  # Essentially unlimited restarts for 24/7 operation
+        fetcher: Optional[DataFetcher] = None
 
         while self.running:
             try:
@@ -185,6 +187,14 @@ class ORAKLRunner:
                         logger.debug(f"Cache stats: {all_stats.get('market', {}).get('hit_rate', 0):.1%} hit rate")
                     except Exception as e:
                         logger.debug(f"Error logging metrics: {e}")
+
+                    if fetcher:
+                        try:
+                            await fetcher.close()
+                        except Exception as e:
+                            logger.debug(f"Error closing data fetcher: {e}")
+                        finally:
+                            fetcher = None
                 
                 except Exception as e:
                     logger.error(f"Cleanup error (non-fatal): {e}")
