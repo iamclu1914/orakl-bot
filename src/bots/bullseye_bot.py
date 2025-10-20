@@ -43,9 +43,9 @@ class BullseyeBot(BaseAutoBot):
         market_context = await MarketContext.get_market_context(self.fetcher)
         logger.info(f"{self.name} - Market: {market_context['regime']}, Risk: {market_context['risk_level']}")
         
-        # Adjust threshold based on market conditions
-        base_threshold = 65  # Base AI score threshold (lowered for better signal flow)
-        adjusted_threshold = MarketContext.adjust_signal_threshold(base_threshold, market_context)
+        # Adjust threshold based on market conditions (minimum 50%)
+        base_threshold = 50  # Base AI score threshold (50% minimum)
+        adjusted_threshold = max(50, MarketContext.adjust_signal_threshold(base_threshold, market_context))
         logger.debug(f"{self.name} - Adjusted threshold: {adjusted_threshold} (base: {base_threshold})")
         
         # Batch processing for efficiency
@@ -73,7 +73,7 @@ class BullseyeBot(BaseAutoBot):
             await self._post_signal(signal)
 
     async def _scan_intraday_momentum(self, symbol: str, market_context: Dict = None,
-                                     adjusted_threshold: int = 70) -> List[Dict]:
+                                     adjusted_threshold: int = 50) -> List[Dict]:
         """PRD Enhanced: Scan with relative volume, smart money, and directional conviction"""
         signals = []
 

@@ -101,15 +101,15 @@ class GoldenSweepsBot(BaseAutoBot):
                         # Apply volume and alignment boosts
                         sweep['enhanced_score'] = sweep['golden_score'] + volume_boost
 
-                        # Only include if meets enhanced criteria
-                        if sweep['enhanced_score'] >= self.MIN_SCORE:
+                        # Only include if meets enhanced criteria (minimum 50%)
+                        if sweep['enhanced_score'] >= max(50, self.MIN_SCORE):
                             enhanced_sweeps.append(sweep)
                             logger.debug(f"Enhanced {symbol}: Score {sweep['golden_score']}→{sweep['enhanced_score']} (Vol:{volume_ratio}x, Aligned:{alignment.get('aligned') if alignment else 'N/A'})")
 
                     except Exception as e:
                         logger.warning(f"Error enhancing signal for {symbol}: {e}")
-                        # Fall back to original signal if meets minimum
-                        if sweep['golden_score'] >= self.MIN_SCORE:
+                        # Fall back to original signal if meets minimum (50%)
+                        if sweep['golden_score'] >= max(50, self.MIN_SCORE):
                             enhanced_sweeps.append(sweep)
                 
                 # Post enhanced signals

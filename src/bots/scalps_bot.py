@@ -42,9 +42,9 @@ class ScalpsBot(BaseAutoBot):
         market_context = await MarketContext.get_market_context(self.fetcher)
         logger.info(f"{self.name} - Market: {market_context['regime']}, Bias: {market_context['trading_bias']}")
         
-        # Adjust threshold based on market conditions
-        base_threshold = 65  # Base scalp score threshold
-        adjusted_threshold = MarketContext.adjust_signal_threshold(base_threshold, market_context)
+        # Adjust threshold based on market conditions (minimum 50%)
+        base_threshold = 50  # Base scalp score threshold (50% minimum)
+        adjusted_threshold = max(50, MarketContext.adjust_signal_threshold(base_threshold, market_context))
         logger.debug(f"{self.name} - Adjusted threshold: {adjusted_threshold} (base: {base_threshold})")
         
         # Prioritize watchlist by recent activity
@@ -84,8 +84,8 @@ class ScalpsBot(BaseAutoBot):
             logger.error(f"Error prioritizing watchlist: {e}")
             return watchlist
 
-    async def _scan_strat_setup(self, symbol: str, market_context: Dict = None, 
-                               adjusted_threshold: int = 65) -> List[Dict]:
+    async def _scan_strat_setup(self, symbol: str, market_context: Dict = None,
+                               adjusted_threshold: int = 50) -> List[Dict]:
         """Scan for Strat patterns and quick scalp opportunities"""
         signals = []
 
@@ -496,8 +496,8 @@ class ScalpsBot(BaseAutoBot):
     def apply_quality_filters(self, signal: Dict) -> bool:
         """Apply quality filters to signals"""
         try:
-            # Minimum score threshold
-            if signal.get('scalp_score', 0) < 65:
+            # Minimum score threshold (50%)
+            if signal.get('scalp_score', 0) < 50:
                 return False
 
             # Minimum volume requirement

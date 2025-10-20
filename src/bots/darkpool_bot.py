@@ -105,7 +105,7 @@ class DarkpoolBot(BaseAutoBot):
                     size, dollar_value, avg_size, is_darkpool
                 )
 
-                if block_score >= 60:
+                if block_score >= 50:  # Minimum 50% confidence threshold
                     block = {
                         'ticker': symbol,
                         'current_price': current_price,

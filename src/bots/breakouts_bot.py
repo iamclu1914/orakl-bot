@@ -132,7 +132,7 @@ class BreakoutsBot(BaseAutoBot):
                 volume_surge, abs(price_change_pct), current_price, breakout_level
             )
 
-            if breakout_score >= 60:  # Lowered slightly to compensate for stricter entry criteria
+            if breakout_score >= 50:  # Minimum 50% confidence threshold
                 # Calculate next levels
                 if breakout_type == 'BULLISH':
                     next_target = resistance * 1.05  # 5% above resistance

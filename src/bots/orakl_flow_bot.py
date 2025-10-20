@@ -89,8 +89,8 @@ class TradyFlowBot(BaseAutoBot):
                     opt_type, strike, current_price, days_to_expiry
                 )
 
-                # High probability threshold
-                if prob_itm >= 65:
+                # High probability threshold (minimum 50%)
+                if prob_itm >= 50:
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,

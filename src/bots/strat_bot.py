@@ -665,6 +665,12 @@ class STRATPatternBot:
                     # Track pattern state
                     self.track_pattern_state(ticker, best_signal)
 
+                    # Check confidence threshold (minimum 50%)
+                    confidence = best_signal.get('confidence_score', 0)
+                    if confidence < 0.50:
+                        logger.debug(f"Pattern {best_signal['pattern']} for {ticker} below 50% confidence ({confidence:.1%}), skipping alert")
+                        continue
+
                     # Check if alert time is appropriate
                     if self.should_alert_pattern(best_signal['pattern'], best_signal):
                         # Check if already detected today

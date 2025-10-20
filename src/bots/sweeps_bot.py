@@ -100,12 +100,14 @@ class SweepsBot(BaseAutoBot):
                         # Apply boosts
                         sweep['enhanced_score'] = sweep['sweep_score'] + volume_boost
 
-                        if sweep['enhanced_score'] >= self.MIN_SCORE:
+                        # Require minimum 50% confidence
+                        if sweep['enhanced_score'] >= max(50, self.MIN_SCORE):
                             enhanced_sweeps.append(sweep)
 
                     except Exception as e:
                         logger.warning(f"Error enhancing signal for {symbol}: {e}")
-                        if sweep['sweep_score'] >= self.MIN_SCORE:
+                        # Require minimum 50% confidence even for fallback
+                        if sweep['sweep_score'] >= max(50, self.MIN_SCORE):
                             enhanced_sweeps.append(sweep)
 
                 # Post enhanced signals

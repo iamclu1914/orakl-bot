@@ -143,8 +143,8 @@ class UnusualVolumeBot(BaseAutoBot):
                 time_consistency
             )
 
-            # Only signal if score meets threshold
-            if volume_score < self.MIN_SCORE:
+            # Only signal if score meets threshold (minimum 50%)
+            if volume_score < max(50, self.MIN_SCORE):
                 return signals
 
             # Determine volume pattern
