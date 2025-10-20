@@ -101,11 +101,12 @@ class ORAKLRunner:
                 bot_task = asyncio.create_task(self.bot_manager.start_all())
                 logger.info("✓ Enhanced auto-posting bots started successfully")
                 
-                # Log bot status
+                # Log bot status with accurate reporting
                 status = self.bot_manager.get_bot_status()
                 logger.info(f"Active bots: {status['total_bots']}")
                 for bot_info in status['bots']:
-                    logger.info(f"  - {bot_info['name']}: {bot_info['running']} (Interval: {bot_info['scan_interval']}s)")
+                    status_emoji = "✓" if bot_info['running'] else "✗"
+                    logger.info(f"  {status_emoji} {bot_info['name']}: Scan interval {bot_info['scan_interval']}s")
 
                 # Start Discord bot if token is available
                 if Config.DISCORD_BOT_TOKEN and Config.DISCORD_BOT_TOKEN != 'your_discord_bot_token_here':

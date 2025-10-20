@@ -179,8 +179,14 @@ class BaseAutoBot(ABC):
     async def _cleanup(self):
         """Clean up resources"""
         if self.session and not self.session.closed:
-            await self.session.close()
-            self.session = None
+            try:
+                await self.session.close()
+                # Give connector time to close properly
+                await asyncio.sleep(0.25)
+            except Exception as e:
+                logger.warning(f"{self.name} error closing session: {e}")
+            finally:
+                self.session = None
     
     @abstractmethod
     async def scan_and_post(self):
@@ -328,11 +334,21 @@ class BaseAutoBot(ABC):
             if self.metrics.last_scan_time else float('inf')
         )
         
-        # Health criteria
+        # Health criteria - bot is healthy if:
+        # 1. Running and scans are happening on schedule
+        # 2. Not experiencing consecutive errors
+        # 3. Either has successful webhooks OR hasn't needed to send any yet
         scan_healthy = time_since_last_scan < self.scan_interval * 2
         error_healthy = self._consecutive_errors < 5
-        webhook_healthy = self.metrics.webhook_failure_count < self.metrics.webhook_success_count * 0.1
-        
+
+        # Webhook health: if we've sent signals, check success rate
+        # If no signals sent yet (e.g. market closed), that's still healthy
+        total_webhook_attempts = self.metrics.webhook_success_count + self.metrics.webhook_failure_count
+        if total_webhook_attempts > 0:
+            webhook_healthy = self.metrics.webhook_failure_count < self.metrics.webhook_success_count * 0.1
+        else:
+            webhook_healthy = True  # No signals yet is okay
+
         healthy = scan_healthy and error_healthy and webhook_healthy
         
         return {

@@ -39,7 +39,7 @@ class ORAKLBot(commands.Bot):
     async def on_ready(self):
         logger.info(f'ORAKL Bot connected as {self.user}')
         logger.info(f'Serving {len(self.guilds)} servers')
-        
+
         # Set status
         await self.change_presence(
             activity=discord.Activity(
@@ -47,7 +47,15 @@ class ORAKLBot(commands.Bot):
                 name="Options Flow | ok-commands"
             )
         )
-        
+
+        # Verify alert channel
+        channel = self.get_channel(Config.ALERT_CHANNEL_ID)
+        if not channel:
+            logger.error(f"Alert channel {Config.ALERT_CHANNEL_ID} not found - please verify ALERT_CHANNEL_ID in .env")
+            logger.error(f"Available channels: {[c.name for c in self.get_all_channels() if isinstance(c, discord.TextChannel)]}")
+        else:
+            logger.info(f"Alert channel configured: #{channel.name}")
+
         # Start auto-scanning
         self.auto_scan.start()
         self.status_update.start()
