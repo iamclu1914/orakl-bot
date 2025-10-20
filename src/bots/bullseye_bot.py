@@ -44,7 +44,7 @@ class BullseyeBot(BaseAutoBot):
         logger.info(f"{self.name} - Market: {market_context['regime']}, Risk: {market_context['risk_level']}")
         
         # Adjust threshold based on market conditions
-        base_threshold = 70  # Base AI score threshold
+        base_threshold = 65  # Base AI score threshold (lowered for better signal flow)
         adjusted_threshold = MarketContext.adjust_signal_threshold(base_threshold, market_context)
         logger.debug(f"{self.name} - Adjusted threshold: {adjusted_threshold} (base: {base_threshold})")
         
@@ -92,9 +92,9 @@ class BullseyeBot(BaseAutoBot):
             current_volume = trades['volume'].sum()
             volume_ratio = await self._calculate_relative_volume(symbol, current_volume)
 
-            # Require 3x minimum (PRD requirement)
-            if volume_ratio < 3.0:
-                logger.debug(f"{symbol}: Volume ratio {volume_ratio:.1f}x below 3x minimum")
+            # Require above-average volume (2x for strong institutional interest)
+            if volume_ratio < 2.0:
+                logger.debug(f"{symbol}: Volume ratio {volume_ratio:.1f}x below 2x minimum")
                 return signals
 
             # Filter for smart money only ($10k+ trades) (PRD Enhancement #2)
@@ -104,15 +104,15 @@ class BullseyeBot(BaseAutoBot):
                 logger.debug(f"{symbol}: No smart money trades detected")
                 return signals
 
-            # Calculate directional conviction (80/20 split) (PRD Enhancement #3)
+            # Calculate directional conviction (70/30 split for strong bias)
             call_premium = smart_trades[smart_trades['type'] == 'CALL']['premium'].sum()
             put_premium = smart_trades[smart_trades['type'] == 'PUT']['premium'].sum()
 
             conviction_data = self._calculate_directional_conviction(call_premium, put_premium)
 
-            # Require 80/20 split (PRD requirement)
+            # Require 70/30 split (strong directional bias)
             if not conviction_data['passes']:
-                logger.debug(f"{symbol}: Directional conviction {conviction_data['split']} below 80/20 minimum")
+                logger.debug(f"{symbol}: Directional conviction {conviction_data['split']} below 70/30 minimum")
                 return signals
 
             # Calculate real multi-timeframe momentum
@@ -396,7 +396,7 @@ class BullseyeBot(BaseAutoBot):
             return 1.0
 
     def _calculate_directional_conviction(self, call_premium: float, put_premium: float) -> Dict:
-        """PRD Enhancement: Require 80/20 directional split"""
+        """Calculate directional conviction - requires 70/30 split for strong bias"""
         total = call_premium + put_premium
 
         if total == 0:
@@ -405,15 +405,15 @@ class BullseyeBot(BaseAutoBot):
         call_pct = call_premium / total
         put_pct = put_premium / total
 
-        # Check for 80/20 split
-        if call_pct >= 0.80:
+        # Check for 70/30 split (strong directional bias)
+        if call_pct >= 0.70:
             return {
                 'conviction': call_pct,
                 'direction': 'BULLISH',
                 'split': f"{call_pct*100:.0f}/{put_pct*100:.0f}",
                 'passes': True
             }
-        elif put_pct >= 0.80:
+        elif put_pct >= 0.70:
             return {
                 'conviction': put_pct,
                 'direction': 'BEARISH',
