@@ -214,21 +214,9 @@ class STRATPatternBot:
     def should_alert_pattern(self, pattern_type: str, signal: Dict) -> bool:
         """Check if pattern should be alerted based on time windows"""
         now = datetime.now(self.est)
-        
-        if pattern_type == '3-2-2 Reversal':
-            # Alert only at 10:01 AM EST
-            return now.hour == 10 and now.minute <= 5
-        
-        elif pattern_type == '2-2 Reversal':
-            # Alert between 8:01 AM - 9:29 AM EST
-            # Must have pullback confirmed
-            return (now.hour == 8 or (now.hour == 9 and now.minute < 30)) and signal.get('pullback_confirmed', False)
-        
-        elif pattern_type == '1-3-1 Miyagi':
-            # Alert at 4:01 AM or 4:01 PM EST
-            return (now.hour in [4, 16] and now.minute <= 5)
-        
-        return False
+
+        # All STRAT alerts sent at 8:10 PM EST
+        return now.hour == 20 and now.minute >= 10 and now.minute <= 15
 
     def track_pattern_state(self, ticker: str, pattern: Dict):
         """Track patterns that need monitoring (e.g., 2-2 waiting for pullback)"""
@@ -702,22 +690,14 @@ class STRATPatternBot:
     async def get_next_scan_interval(self):
         """Calculate optimal scan interval based on current time"""
         now = datetime.now(self.est)
-        
-        # During critical alert windows, scan more frequently
-        if (now.hour == 3 and now.minute >= 55) or (now.hour == 4 and now.minute <= 5):  # 1-3-1 window
-            return 60  # 1 minute
-        elif now.hour == 7 and now.minute >= 55:  # Pre 2-2 window
-            return 60
-        elif now.hour == 8 or (now.hour == 9 and now.minute < 30):  # 2-2 window
-            return 120  # 2 minutes
-        elif now.hour == 9 and now.minute >= 55:  # Pre 3-2-2 window
-            return 60
-        elif now.hour == 10 and now.minute <= 5:  # 3-2-2 window
-            return 60
-        elif (now.hour == 15 and now.minute >= 55) or (now.hour == 16 and now.minute <= 5):  # PM 1-3-1
-            return 60
+
+        # Scan more frequently during alert window (8:00 PM - 8:15 PM EST)
+        if now.hour == 20 and now.minute >= 0 and now.minute <= 15:
+            return 60  # 1 minute during alert window
+        elif now.hour == 19 and now.minute >= 55:  # Pre-alert window
+            return 120  # 2 minutes before alert time
         else:
-            return 300  # Default 5 minutes
+            return 300  # Default 5 minutes throughout the day
 
     async def start(self):
         """Start the bot"""
