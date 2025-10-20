@@ -48,16 +48,8 @@ class ORAKLBot(commands.Bot):
             )
         )
 
-        # Verify alert channel
-        channel = self.get_channel(Config.ALERT_CHANNEL_ID)
-        if not channel:
-            logger.error(f"Alert channel {Config.ALERT_CHANNEL_ID} not found - please verify ALERT_CHANNEL_ID in .env")
-            logger.error(f"Available channels: {[c.name for c in self.get_all_channels() if isinstance(c, discord.TextChannel)]}")
-        else:
-            logger.info(f"Alert channel configured: #{channel.name}")
-
-        # Start auto-scanning
-        self.auto_scan.start()
+        # Auto-scanning disabled - using dedicated webhook bots instead
+        # self.auto_scan.start()
         self.status_update.start()
     
     @tasks.loop(minutes=Config.SCAN_INTERVAL_MINUTES)
