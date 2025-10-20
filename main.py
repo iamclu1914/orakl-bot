@@ -256,6 +256,13 @@ class ORAKLRunner:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         
+        # Start health check server if PORT is set (Render Web Service)
+        port = os.getenv('PORT')
+        if port:
+            logger.info(f"Starting health check server on port {port}")
+            from health_server import start_health_server
+            asyncio.create_task(start_health_server(int(port)))
+        
         # Run the bot
         await self.run_bot()
         
