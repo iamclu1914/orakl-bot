@@ -105,16 +105,26 @@ class ScalpsBot(BaseAutoBot):
             if not pattern:
                 return signals
 
+            # Calculate momentum indicators for confirmation (RSI required)
+            closes = [c['close'] for c in candles]
+            rsi = self._calculate_rsi(closes)
+
+            # RSI momentum alignment check (avoid overbought/oversold extremes)
+            rsi_aligned = self._check_rsi_alignment(rsi, pattern['direction'])
+            if not rsi_aligned:
+                logger.debug(f"{symbol}: RSI {rsi:.1f} not aligned with {pattern['direction']} pattern")
+                return signals
+
             # Get active options with volume
             trades = await self.fetcher.get_options_trades(symbol)
             if trades.empty:
                 return signals
 
-            # Filter for scalp-friendly options
+            # Filter for scalp-friendly options with improved liquidity requirements
             recent_trades = trades[
                 (trades['timestamp'] > datetime.now() - timedelta(minutes=15)) &
-                (trades['volume'] >= 30) &
-                (trades['premium'] >= 2000)
+                (trades['volume'] >= 75) &  # Increased for better liquidity
+                (trades['premium'] >= 5000)  # Increased to $5K for institutional quality
             ]
 
             if recent_trades.empty:
@@ -412,6 +422,43 @@ class ScalpsBot(BaseAutoBot):
         
         return None
 
+    def _calculate_rsi(self, closes: List[float], period: int = 14) -> float:
+        """Calculate Relative Strength Index (RSI)"""
+        if len(closes) < period + 1:
+            return 50.0  # Neutral if not enough data
+
+        # Calculate price changes
+        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+
+        # Separate gains and losses
+        gains = [d if d > 0 else 0 for d in deltas[-period:]]
+        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+
+        # Calculate average gain and loss
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+
+        if avg_loss == 0:
+            return 100.0  # All gains = overbought
+
+        # Calculate RS and RSI
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi
+
+    def _check_rsi_alignment(self, rsi: float, direction: str) -> bool:
+        """Check if RSI supports the pattern direction (avoid extremes)"""
+        # For bullish patterns: RSI should be 30-70 (avoid overbought)
+        if direction == 'bullish':
+            return 30 <= rsi <= 70
+
+        # For bearish patterns: RSI should be 30-70 (avoid oversold)
+        elif direction == 'bearish':
+            return 30 <= rsi <= 70
+
+        return False
+
     def _calculate_scalp_score(self, pattern: Dict, volume: int,
                               strike_distance: float, dte: int) -> int:
         """Calculate scalp opportunity score"""
@@ -445,6 +492,78 @@ class ScalpsBot(BaseAutoBot):
             score += 7
 
         return score
+
+    def apply_quality_filters(self, signal: Dict) -> bool:
+        """Apply quality filters to signals"""
+        try:
+            # Minimum score threshold
+            if signal.get('scalp_score', 0) < 65:
+                return False
+
+            # Minimum volume requirement
+            if signal.get('volume', 0) < 75:
+                return False
+
+            # Minimum premium requirement
+            if signal.get('premium', 0) < 5000:
+                return False
+
+            # Pattern strength requirement
+            if signal.get('pattern_strength', 0) < 70:
+                return False
+
+            # DTE range (0-7 days for scalps)
+            dte = signal.get('days_to_expiry', 0)
+            if dte < 0 or dte > 7:
+                return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Error in quality filter: {e}")
+            return False
+
+    def rank_signals(self, signals: List[Dict]) -> List[Dict]:
+        """Rank signals by priority and return top 5"""
+        try:
+            # Calculate priority score for each signal
+            for signal in signals:
+                priority = 0
+
+                # Scalp score (40%)
+                priority += signal.get('scalp_score', 0) * 0.4
+
+                # Pattern strength (30%)
+                priority += signal.get('pattern_strength', 0) * 0.3
+
+                # Volume factor (20%)
+                volume = signal.get('volume', 0)
+                if volume >= 300:
+                    priority += 20
+                elif volume >= 150:
+                    priority += 15
+                elif volume >= 75:
+                    priority += 10
+
+                # Risk/reward (10%)
+                rr1 = signal.get('risk_reward_1', 0)
+                if rr1 >= 3.0:
+                    priority += 10
+                elif rr1 >= 2.0:
+                    priority += 7
+                elif rr1 >= 1.5:
+                    priority += 5
+
+                signal['priority_score'] = priority
+
+            # Sort by priority (descending)
+            ranked = sorted(signals, key=lambda x: x.get('priority_score', 0), reverse=True)
+
+            # Return top 5
+            return ranked[:5]
+
+        except Exception as e:
+            logger.error(f"Error ranking signals: {e}")
+            return signals[:5]
 
     async def _post_signal(self, signal: Dict):
         """Post enhanced Scalps signal to Discord"""
