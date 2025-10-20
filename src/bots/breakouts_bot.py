@@ -67,16 +67,16 @@ class BreakoutsBot(BaseAutoBot):
             if not candles or len(candles) < 10:
                 return breakouts
 
-            # Calculate resistance and support levels
+            # Calculate resistance and support levels with pattern detection
             highs = [c['high'] for c in candles]
             lows = [c['low'] for c in candles]
             closes = [c['close'] for c in candles]
             volumes = [c['volume'] for c in candles]
 
-            # Recent resistance (highest high in last 10 days)
-            resistance = max(highs[-10:])
-            # Recent support (lowest low in last 10 days)
-            support = min(lows[-10:])
+            # Find resistance with multiple touches (pattern recognition)
+            resistance, resistance_touches = self._find_resistance_with_touches(highs[-10:])
+            # Find support with multiple touches
+            support, support_touches = self._find_support_with_touches(lows[-10:])
 
             # Average volume
             avg_volume = sum(volumes) / len(volumes)
@@ -85,9 +85,22 @@ class BreakoutsBot(BaseAutoBot):
             # Volume surge detection
             volume_surge = recent_volume / avg_volume if avg_volume > 0 else 1
 
+            # Calculate technical indicators for momentum
+            rsi = self._calculate_rsi(closes)
+            sma_20 = sum(closes[-20:]) / min(20, len(closes)) if len(closes) >= 5 else current_price
+            sma_50 = sum(closes) / len(closes) if len(closes) >= 10 else current_price
+
             # Price momentum
             prev_close = closes[-2] if len(closes) >= 2 else current_price
             price_change_pct = ((current_price - prev_close) / prev_close) * 100
+
+            # Trend confirmation (price above MAs = bullish, below = bearish)
+            above_sma20 = current_price > sma_20
+            above_sma50 = current_price > sma_50
+
+            # Volume pattern analysis (consolidation check)
+            recent_avg_volume = sum(volumes[-5:]) / 5 if len(volumes) >= 5 else avg_volume
+            volume_consolidation = recent_avg_volume < avg_volume * 0.9  # Decreasing volume before breakout
 
             # Breakout detection (more stringent criteria for quality)
             breakout_type = None
@@ -96,14 +109,20 @@ class BreakoutsBot(BaseAutoBot):
             # Bullish breakout (breaking above resistance with conviction)
             if current_price > resistance * 1.005:  # 0.5% above resistance (stronger break)
                 if volume_surge >= 2.0:  # Volume confirmation (institutional interest)
-                    breakout_type = 'BULLISH'
-                    breakout_level = resistance
+                    # Additional quality checks
+                    if resistance_touches >= 2:  # Multiple tests of resistance
+                        if above_sma20:  # Trending above 20-day MA
+                            breakout_type = 'BULLISH'
+                            breakout_level = resistance
 
             # Bearish breakdown (breaking below support with conviction)
             elif current_price < support * 0.995:  # 0.5% below support (stronger break)
                 if volume_surge >= 2.0:  # Volume confirmation (institutional interest)
-                    breakout_type = 'BEARISH'
-                    breakout_level = support
+                    # Additional quality checks
+                    if support_touches >= 2:  # Multiple tests of support
+                        if not above_sma20:  # Trending below 20-day MA
+                            breakout_type = 'BEARISH'
+                            breakout_level = support
 
             if not breakout_type:
                 return breakouts
@@ -296,3 +315,54 @@ class BreakoutsBot(BaseAutoBot):
 
         await self.post_to_discord(embed)
         logger.info(f"Posted Breakout: {breakout['ticker']} {breakout['breakout_type']} @ ${breakout['current_price']:.2f}")
+
+    def _find_resistance_with_touches(self, highs: List[float]) -> tuple:
+        """Find resistance level with multiple touches (pattern recognition)"""
+        if not highs or len(highs) < 3:
+            return (max(highs) if highs else 0, 0)
+
+        max_high = max(highs)
+        tolerance = max_high * 0.01  # 1% tolerance for "touching" resistance
+
+        # Count how many times price came within tolerance of max high
+        touches = sum(1 for h in highs if abs(h - max_high) <= tolerance)
+
+        return (max_high, touches)
+
+    def _find_support_with_touches(self, lows: List[float]) -> tuple:
+        """Find support level with multiple touches (pattern recognition)"""
+        if not lows or len(lows) < 3:
+            return (min(lows) if lows else 0, 0)
+
+        min_low = min(lows)
+        tolerance = min_low * 0.01  # 1% tolerance for "touching" support
+
+        # Count how many times price came within tolerance of min low
+        touches = sum(1 for l in lows if abs(l - min_low) <= tolerance)
+
+        return (min_low, touches)
+
+    def _calculate_rsi(self, closes: List[float], period: int = 14) -> float:
+        """Calculate Relative Strength Index (RSI)"""
+        if len(closes) < period + 1:
+            return 50.0  # Neutral if not enough data
+
+        # Calculate price changes
+        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+
+        # Separate gains and losses
+        gains = [d if d > 0 else 0 for d in deltas[-period:]]
+        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+
+        # Calculate average gain and loss
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+
+        if avg_loss == 0:
+            return 100.0  # All gains = overbought
+
+        # Calculate RS and RSI
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi
