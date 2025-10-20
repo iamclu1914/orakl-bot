@@ -89,19 +89,19 @@ class BreakoutsBot(BaseAutoBot):
             prev_close = closes[-2] if len(closes) >= 2 else current_price
             price_change_pct = ((current_price - prev_close) / prev_close) * 100
 
-            # Breakout detection
+            # Breakout detection (more stringent criteria for quality)
             breakout_type = None
             breakout_level = None
 
-            # Bullish breakout (breaking above resistance)
-            if current_price > resistance * 1.001:  # 0.1% above resistance
-                if volume_surge >= 1.5:  # Volume confirmation
+            # Bullish breakout (breaking above resistance with conviction)
+            if current_price > resistance * 1.005:  # 0.5% above resistance (stronger break)
+                if volume_surge >= 2.0:  # Volume confirmation (institutional interest)
                     breakout_type = 'BULLISH'
                     breakout_level = resistance
 
-            # Bearish breakdown (breaking below support)
-            elif current_price < support * 0.999:  # 0.1% below support
-                if volume_surge >= 1.5:
+            # Bearish breakdown (breaking below support with conviction)
+            elif current_price < support * 0.995:  # 0.5% below support (stronger break)
+                if volume_surge >= 2.0:  # Volume confirmation (institutional interest)
                     breakout_type = 'BEARISH'
                     breakout_level = support
 
@@ -113,7 +113,7 @@ class BreakoutsBot(BaseAutoBot):
                 volume_surge, abs(price_change_pct), current_price, breakout_level
             )
 
-            if breakout_score >= 65:
+            if breakout_score >= 60:  # Lowered slightly to compensate for stricter entry criteria
                 # Calculate next levels
                 if breakout_type == 'BULLISH':
                     next_target = resistance * 1.05  # 5% above resistance
