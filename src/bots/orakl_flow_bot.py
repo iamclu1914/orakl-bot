@@ -24,7 +24,7 @@ class TradyFlowBot(BaseAutoBot):
         self.signal_history = {}
 
     async def scan_and_post(self):
-        """Scan for repeat and dominant signals"""
+        """Scan for repeat and dominant signals using concurrent processing"""
         logger.info(f"{self.name} scanning {len(self.watchlist)} symbols")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
@@ -32,13 +32,8 @@ class TradyFlowBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        for symbol in self.watchlist:
-            try:
-                signals = await self._scan_symbol(symbol)
-                for signal in signals:
-                    await self._post_signal(signal)
-            except Exception as e:
-                logger.error(f"{self.name} error scanning {symbol}: {e}")
+        # Use base class concurrent implementation
+        await super().scan_and_post()
 
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         """Scan a symbol for repeat/dominant signals"""

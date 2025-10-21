@@ -149,9 +149,13 @@ class BaseAutoBot(ABC):
         """Perform a single scan with generous timeout"""
         try:
             # Add timeout to prevent hanging - be generous for API calls
-            # Adaptive timeout based on watchlist size
+            # Adaptive timeout based on watchlist size and concurrency
             watchlist_size = len(getattr(self, 'watchlist', [])) if hasattr(self, 'watchlist') else 100
-            timeout_duration = max(watchlist_size * 10, 600)  # 10s per stock or 10 min minimum
+            # With 20 concurrent requests, timeout can be much shorter
+            chunk_size = 20
+            num_chunks = (watchlist_size + chunk_size - 1) // chunk_size
+            # Allow 30s per chunk plus buffer
+            timeout_duration = max(num_chunks * 30 + 60, 300)  # 5 min minimum
             await asyncio.wait_for(
                 self.scan_and_post(),
                 timeout=timeout_duration
@@ -206,10 +210,57 @@ class BaseAutoBot(ABC):
             finally:
                 self.session = None
     
-    @abstractmethod
     async def scan_and_post(self):
-        """Scan for signals and post to Discord - must be implemented by subclasses"""
-        pass
+        """Default concurrent scanning implementation - can be overridden by subclasses"""
+        logger.info(f"{self.name} starting concurrent scan of {len(self.watchlist)} symbols")
+        
+        if not hasattr(self, '_scan_symbol'):
+            # Fallback to abstract method if not using new pattern
+            raise NotImplementedError("Either implement scan_and_post or _scan_symbol")
+        
+        # Process in chunks to avoid overwhelming the API
+        chunk_size = 20  # Process 20 symbols concurrently
+        all_signals = []
+        
+        for i in range(0, len(self.watchlist), chunk_size):
+            chunk = self.watchlist[i:i + chunk_size]
+            logger.debug(f"{self.name} processing chunk {i//chunk_size + 1}/{(len(self.watchlist) + chunk_size - 1)//chunk_size}")
+            
+            # Create tasks for this chunk
+            tasks = []
+            for symbol in chunk:
+                task = self._scan_symbol_safe(symbol)
+                tasks.append(task)
+            
+            # Process chunk concurrently
+            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Collect valid signals
+            for result in chunk_results:
+                if isinstance(result, list):
+                    all_signals.extend(result)
+                elif isinstance(result, Exception):
+                    logger.error(f"{self.name} scan error: {result}")
+            
+            # Small delay between chunks to avoid rate limits
+            if i + chunk_size < len(self.watchlist):
+                await asyncio.sleep(0.5)
+        
+        # Post signals
+        logger.info(f"{self.name} found {len(all_signals)} signals")
+        for signal in all_signals:
+            try:
+                await self._post_signal(signal)
+            except Exception as e:
+                logger.error(f"{self.name} error posting signal: {e}")
+    
+    async def _scan_symbol_safe(self, symbol: str):
+        """Safely scan a symbol with error handling"""
+        try:
+            return await self._scan_symbol(symbol)
+        except Exception as e:
+            logger.error(f"{self.name} error scanning {symbol}: {e}")
+            return []
 
     @exponential_backoff_retry(
         max_retries=3,

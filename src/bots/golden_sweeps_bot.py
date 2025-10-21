@@ -44,6 +44,52 @@ class GoldenSweepsBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
+        # Use base class concurrent implementation
+        await super().scan_and_post()
+    
+    async def _scan_symbol(self, symbol: str) -> List[Dict]:
+        """Scan a symbol for golden sweeps with enhancements"""
+        try:
+            sweeps = await self._scan_golden_sweeps(symbol)
+            
+            # Enhance signals with critical features
+            enhanced_sweeps = []
+            for sweep in sweeps:
+                try:
+                    # Volume Ratio Analysis
+                    volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
+                        symbol, sweep['volume']
+                    )
+                    sweep['volume_ratio'] = volume_ratio
+                    
+                    # Boost score for unusual volume
+                    volume_boost = 0
+                    if volume_ratio > 10:
+                        volume_boost = 0.20
+                    elif volume_ratio > 5:
+                        volume_boost = 0.10
+                    
+                    # Apply volume boost to score
+                    sweep['golden_score'] = min(
+                        sweep.get('golden_score', 50) + (volume_boost * 100),
+                        100
+                    )
+                    
+                    if sweep['golden_score'] >= Config.MIN_GOLDEN_SCORE:
+                        enhanced_sweeps.append(sweep)
+                except Exception as e:
+                    logger.error(f"Error enhancing sweep: {e}")
+                    # Include unenhanced sweep if it meets threshold
+                    if sweep.get('golden_score', 0) >= Config.MIN_GOLDEN_SCORE:
+                        enhanced_sweeps.append(sweep)
+            
+            # Return top 3 signals per symbol
+            return sorted(enhanced_sweeps, key=lambda x: x['golden_score'], reverse=True)[:3]
+        except Exception as e:
+            logger.error(f"Error scanning {symbol}: {e}")
+            return []
+        
+        # OLD SEQUENTIAL CODE - REMOVED
         signals_found = 0
         
         for symbol in self.watchlist:

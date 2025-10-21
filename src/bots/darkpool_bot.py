@@ -26,7 +26,7 @@ class DarkpoolBot(BaseAutoBot):
         self.MIN_BLOCK_SIZE = 10000  # Minimum 10k shares
 
     async def scan_and_post(self):
-        """Scan for large darkpool and block trades"""
+        """Scan for large darkpool and block trades using concurrent processing"""
         logger.info(f"{self.name} scanning for darkpool activity")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
@@ -34,13 +34,12 @@ class DarkpoolBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        for symbol in self.watchlist:
-            try:
-                blocks = await self._scan_block_trades(symbol)
-                for block in blocks:
-                    await self._post_signal(block)
-            except Exception as e:
-                logger.error(f"{self.name} error scanning {symbol}: {e}")
+        # Use base class concurrent implementation
+        await super().scan_and_post()
+    
+    async def _scan_symbol(self, symbol: str) -> List[Dict]:
+        """Scan a symbol for darkpool/block trades"""
+        return await self._scan_block_trades(symbol)
 
     async def _scan_block_trades(self, symbol: str) -> List[Dict]:
         """Scan for block trades and darkpool activity with enhanced context"""

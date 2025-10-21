@@ -44,6 +44,39 @@ class SweepsBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
+        # Use base class concurrent implementation
+        await super().scan_and_post()
+    
+    async def _scan_symbol(self, symbol: str) -> List[Dict]:
+        """Scan a symbol for large sweeps with enhancements"""
+        try:
+            sweeps = await self._scan_sweeps(symbol)
+            
+            # Enhance and filter signals
+            enhanced_sweeps = []
+            for sweep in sweeps:
+                try:
+                    # Volume Ratio Analysis
+                    volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
+                        symbol, sweep['volume']
+                    )
+                    sweep['volume_ratio'] = volume_ratio
+                    
+                    # Apply score adjustments
+                    if sweep.get('sweep_score', 0) >= Config.MIN_SWEEP_SCORE:
+                        enhanced_sweeps.append(sweep)
+                except Exception as e:
+                    logger.error(f"Error enhancing sweep: {e}")
+                    if sweep.get('sweep_score', 0) >= Config.MIN_SWEEP_SCORE:
+                        enhanced_sweeps.append(sweep)
+            
+            # Return top 3 signals per symbol
+            return sorted(enhanced_sweeps, key=lambda x: x.get('sweep_score', 0), reverse=True)[:3]
+        except Exception as e:
+            logger.error(f"Error scanning {symbol}: {e}")
+            return []
+        
+        # OLD SEQUENTIAL CODE - REMOVED
         signals_found = 0
         for symbol in self.watchlist:
             try:

@@ -26,7 +26,7 @@ class BreakoutsBot(BaseAutoBot):
         self.volume_history = {}
 
     async def scan_and_post(self):
-        """Scan for stock breakouts"""
+        """Scan for stock breakouts using concurrent processing"""
         logger.info(f"{self.name} scanning for breakouts")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
@@ -34,13 +34,12 @@ class BreakoutsBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        for symbol in self.watchlist:
-            try:
-                breakouts = await self._scan_breakout(symbol)
-                for breakout in breakouts:
-                    await self._post_signal(breakout)
-            except Exception as e:
-                logger.error(f"{self.name} error scanning {symbol}: {e}")
+        # Use base class concurrent implementation
+        await super().scan_and_post()
+    
+    async def _scan_symbol(self, symbol: str) -> List[Dict]:
+        """Scan a symbol for breakouts"""
+        return await self._scan_breakout(symbol)
 
     async def _scan_breakout(self, symbol: str) -> List[Dict]:
         """Scan for breakout patterns"""
