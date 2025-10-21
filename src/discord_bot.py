@@ -51,8 +51,9 @@ class ORAKLBot(commands.Bot):
             )
         )
         
-        # Start status update task
-        self.status_update.start()
+        # Start status update task (if not already running)
+        if not self.status_update.is_running():
+            self.status_update.start()
 
     async def on_message(self, message):
         """Auto-format TradingView STRAT alerts"""
@@ -62,8 +63,18 @@ class ORAKLBot(commands.Bot):
             
         try:
             # Only process messages in STRAT channel (from webhook ID)
-            strat_channel_id = int(Config.STRAT_WEBHOOK.split('/')[-2])
-            if message.channel.id != strat_channel_id:
+            # Safely parse the webhook URL
+            try:
+                webhook_parts = Config.STRAT_WEBHOOK.split('/')
+                if len(webhook_parts) >= 2:
+                    strat_channel_id = int(webhook_parts[-2])
+                    if message.channel.id != strat_channel_id:
+                        return
+                else:
+                    # Invalid webhook format, skip STRAT processing
+                    return
+            except (ValueError, IndexError):
+                # Can't parse channel ID from webhook, skip
                 return
                 
             # Check if message matches TradingView STRAT alert pattern
