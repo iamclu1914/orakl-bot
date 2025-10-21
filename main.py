@@ -99,9 +99,19 @@ class ORAKLRunner:
                     analyzer=analyzer
                 )
 
+                # Log memory before starting bots
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                logger.info(f"Memory usage before bot start: {memory_mb:.1f}MB")
+                
                 # Start auto-posting bots in background
                 bot_task = asyncio.create_task(self.bot_manager.start_all())
                 logger.info("✓ Enhanced auto-posting bots started successfully")
+                
+                # Log memory after starting bots
+                await asyncio.sleep(2)  # Give bots time to initialize
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                logger.info(f"Memory usage after bot start: {memory_mb:.1f}MB")
                 
                 # Log bot status with accurate reporting
                 status = self.bot_manager.get_bot_status()
@@ -123,6 +133,11 @@ class ORAKLRunner:
                     while self.running:
                         try:
                             await asyncio.sleep(60)
+                            
+                            # Log memory usage every 30 seconds
+                            process = psutil.Process()
+                            memory_mb = process.memory_info().rss / 1024 / 1024
+                            logger.info(f"Memory usage: {memory_mb:.1f}MB")
                             
                             # Log health status every 5 minutes
                             if int(asyncio.get_event_loop().time()) % 300 < 60:

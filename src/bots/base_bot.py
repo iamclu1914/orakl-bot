@@ -219,7 +219,7 @@ class BaseAutoBot(ABC):
             raise NotImplementedError("Either implement scan_and_post or _scan_symbol")
         
         # Process in chunks to avoid overwhelming the API
-        chunk_size = 20  # Process 20 symbols concurrently
+        chunk_size = 10  # Reduced from 20 to avoid memory issues on Render Starter plan
         all_signals = []
         
         for i in range(0, len(self.watchlist), chunk_size):
