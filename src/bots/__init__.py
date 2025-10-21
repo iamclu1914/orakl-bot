@@ -7,7 +7,6 @@ from .sweeps_bot import SweepsBot
 from .golden_sweeps_bot import GoldenSweepsBot
 from .darkpool_bot import DarkpoolBot
 from .breakouts_bot import BreakoutsBot
-from .unusual_volume_bot import UnusualVolumeBot
 
 __all__ = [
     'BaseAutoBot',
@@ -17,6 +16,5 @@ __all__ = [
     'SweepsBot',
     'GoldenSweepsBot',
     'DarkpoolBot',
-    'BreakoutsBot',
-    'UnusualVolumeBot'
+    'BreakoutsBot'
 ]
