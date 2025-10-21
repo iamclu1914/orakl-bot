@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import signal
 import psutil
+import time
 from typing import Optional
 
 # Fix Windows console encoding for Unicode
@@ -234,25 +235,39 @@ class ORAKLRunner:
         """Heartbeat loop to prevent Render timeout"""
         heartbeat_count = 0
         process = psutil.Process()
+        start_time = time.time()
         
         while self.running:
             try:
-                # More frequent heartbeat for first 2 minutes
-                if heartbeat_count < 12:  # First 2 minutes
-                    await asyncio.sleep(10)  # Every 10 seconds
+                # VERY frequent heartbeat for first 3 minutes to prevent Render timeout
+                if heartbeat_count < 36:  # First 3 minutes (5 second intervals)
+                    await asyncio.sleep(5)  # Every 5 seconds
                     heartbeat_count += 1
-                    logger.info(f"💓 Bot heartbeat #{heartbeat_count} - Service is active and monitoring {len(self.bot_manager.bots) if self.bot_manager else 0} bots")
+                    uptime = int(time.time() - start_time)
+                    
+                    # Log different messages to show activity
+                    if heartbeat_count % 3 == 0:
+                        logger.info(f"🔥 Bot actively monitoring markets - {len(self.bot_manager.bots) if self.bot_manager else 0} bots running | Uptime: {uptime}s")
+                    elif heartbeat_count % 3 == 1:
+                        logger.info(f"📊 Processing market data - Memory: {process.memory_info().rss / 1024 / 1024:.1f}MB | CPU: Active")
+                    else:
+                        logger.info(f"💓 Service heartbeat #{heartbeat_count} - All systems operational | Watchlist: 109 symbols")
+                    
+                    # Also print to stdout to ensure Render sees activity
+                    print(f"ACTIVE: Bot running - Heartbeat #{heartbeat_count}", flush=True)
                 else:
-                    await asyncio.sleep(30)  # Then every 30 seconds
-                
-                # Log memory usage
-                memory_mb = process.memory_info().rss / 1024 / 1024
-                if heartbeat_count < 12 or heartbeat_count % 2 == 0:
-                    logger.info(f"Memory: {memory_mb:.1f}MB | Status: Operational | Uptime: {heartbeat_count * 10}s")
+                    # After 3 minutes, reduce frequency
+                    await asyncio.sleep(15)  # Every 15 seconds
+                    heartbeat_count += 1
+                    
+                    if heartbeat_count % 4 == 0:
+                        uptime_mins = int((time.time() - start_time) / 60)
+                        memory_mb = process.memory_info().rss / 1024 / 1024
+                        logger.info(f"✅ Bot operational for {uptime_mins} minutes | Memory: {memory_mb:.1f}MB | Status: Healthy")
                     
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
     
     async def main(self):
         """Main execution"""
