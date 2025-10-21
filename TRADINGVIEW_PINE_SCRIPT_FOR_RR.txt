@@ -1,0 +1,44 @@
+// TradingView Pine Script Code for 2:1 R:R Calculation
+// Add this to your STRAT indicator in TradingView
+
+//@version=5
+indicator("STRAT 1-3 with 2:1 Targets", overlay=true)
+
+// Your existing STRAT detection code goes here...
+// For example, detecting the 1-3 pattern on 7HR timeframe
+
+// Get the range high and low from your 7HR bar
+rangeHigh = high  // Replace with your actual 7HR high logic
+rangeLow = low    // Replace with your actual 7HR low logic
+
+// Calculate the range
+range = rangeHigh - rangeLow
+
+// Calculate 2:1 R:R targets
+bullishTarget = rangeHigh + (range * 2)  // Entry at high, target is 2x the range above
+bearishTarget = rangeLow - (range * 2)   // Entry at low, target is 2x the range below
+
+// Plot for debugging (optional - you can see these on your chart)
+plot(bullishTarget, "Bullish Target", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(bearishTarget, "Bearish Target", color=color.red, linewidth=2, style=plot.style_linebr)
+
+// When your alert condition triggers, these will be available as:
+// {{plot_0}} = bullishTarget
+// {{plot_1}} = bearishTarget
+
+// Example alert condition (replace with your actual STRAT detection)
+alertcondition(your_strat_condition, "STRAT 1-3 Detected", "Alert!")
+
+
+// ========================================
+// COMPLETE EXAMPLE FOR WEBHOOK MESSAGE:
+// ========================================
+// In your TradingView Alert "Message" field, use the JSON from 
+// TRADINGVIEW_STRAT_7HR_WITH_RR_JSON.txt
+// 
+// The placeholders will automatically fill:
+// {{ticker}} = Stock symbol
+// {{high}} = Range high (entry for bullish)
+// {{low}} = Range low (entry for bearish)  
+// {{plot_0}} = Calculated bullish target (2:1 R:R)
+// {{plot_1}} = Calculated bearish target (2:1 R:R)

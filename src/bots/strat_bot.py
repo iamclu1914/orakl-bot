@@ -31,6 +31,7 @@ class STRATPatternBot:
         self.running = False  # Add for compatibility with BotManager.get_bot_status()
         self.est = pytz.timezone('America/New_York')
         self.pattern_states = {}  # Track patterns waiting for conditions
+        self.watchlist = None  # Will be set by BotManager
 
         logger.info(f"{self.name} initialized")
 
@@ -650,9 +651,9 @@ class STRATPatternBot:
 
         signals_found = []
         
-        # Use comprehensive mega/large cap watchlist for STRAT bot
-        watchlist = STRAT_COMPLETE_WATCHLIST
-        logger.info(f"Scanning {len(watchlist)} mega/large cap stocks across all sectors")
+        # Use watchlist from BotManager or fallback to complete list
+        watchlist = self.watchlist if self.watchlist else STRAT_COMPLETE_WATCHLIST
+        logger.info(f"Scanning {len(watchlist)} stocks from configured watchlist")
 
         for ticker in watchlist:
             try:

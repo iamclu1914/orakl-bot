@@ -52,7 +52,7 @@ class BaseAutoBot(ABC):
         self._health_check_task: Optional[asyncio.Task] = None
         self._error_history = BoundedDeque(maxlen=100, ttl_seconds=3600)
         self._consecutive_errors = 0
-        self._max_consecutive_errors = 10
+        self._max_consecutive_errors = 25  # Increased from 10
 
     async def start(self):
         """Start the bot with enhanced error handling and monitoring"""
@@ -103,8 +103,22 @@ class BaseAutoBot(ABC):
 
     async def _scan_loop(self):
         """Main scanning loop with error recovery"""
-        while self.running:
+        recovery_attempts = 0
+        while True:  # Keep running even if self.running becomes False
             try:
+                # Check if we need to restart
+                if not self.running and recovery_attempts < 3:
+                    recovery_attempts += 1
+                    logger.info(f"{self.name} attempting auto-recovery (attempt {recovery_attempts}/3)...")
+                    await asyncio.sleep(60)  # Wait 1 minute before recovery
+                    self._consecutive_errors = 0  # Reset error counter
+                    self.running = True  # Restart
+                    logger.info(f"{self.name} auto-recovery successful")
+                
+                if not self.running and recovery_attempts >= 3:
+                    logger.error(f"{self.name} failed to recover after 3 attempts, stopping permanently")
+                    break
+                    
                 scan_start = time.time()
                 
                 # Perform scan
@@ -116,8 +130,9 @@ class BaseAutoBot(ABC):
                 self.metrics.scan_count += 1
                 self.metrics.last_scan_time = datetime.now()
                 
-                # Reset error counter on success
+                # Reset error counter and recovery attempts on success
                 self._consecutive_errors = 0
+                recovery_attempts = 0
                 
                 # Wait for next scan
                 await asyncio.sleep(self.scan_interval)
@@ -134,7 +149,9 @@ class BaseAutoBot(ABC):
         """Perform a single scan with generous timeout"""
         try:
             # Add timeout to prevent hanging - be generous for API calls
-            timeout_duration = max(self.scan_interval * 2, 600)  # 2x interval or 10 min minimum
+            # Adaptive timeout based on watchlist size
+            watchlist_size = len(getattr(self, 'watchlist', [])) if hasattr(self, 'watchlist') else 100
+            timeout_duration = max(watchlist_size * 10, 600)  # 10s per stock or 10 min minimum
             await asyncio.wait_for(
                 self.scan_and_post(),
                 timeout=timeout_duration
@@ -162,6 +179,7 @@ class BaseAutoBot(ABC):
         if self._consecutive_errors >= self._max_consecutive_errors:
             logger.critical(f"{self.name} stopping due to {self._consecutive_errors} consecutive errors")
             self.running = False
+            # Note: Will be auto-restarted by health check or scan loop
     
     async def _health_check_loop(self):
         """Periodic health check loop"""
