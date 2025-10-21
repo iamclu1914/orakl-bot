@@ -151,9 +151,16 @@ class BotManager:
         # Start watchlist refresh task
         watchlist_refresh_task = asyncio.create_task(self._watchlist_refresh_loop())
 
-        # Start all bots concurrently
+        # Start all bots with staggered timing to reduce resource spike
         tasks = [watchlist_refresh_task]
-        for bot in self.bots:
+        
+        # Start bots with 5-second delays to prevent resource overload
+        for i, bot in enumerate(self.bots):
+            # Add delay between bot starts (except for first bot)
+            if i > 0:
+                await asyncio.sleep(5)
+                logger.info(f"Starting {bot.name} (bot {i+1}/{len(self.bots)})...")
+            
             task = asyncio.create_task(bot.start())
             tasks.append(task)
 

@@ -66,7 +66,18 @@ class ORAKLRunner:
     
     def signal_handler(self, signum, frame):
         """Handle shutdown signals"""
-        logger.info(f"Received signal {signum}, shutting down...")
+        signal_name = 'SIGTERM' if signum == 15 else f'signal {signum}'
+        logger.warning(f"⚠️ Received {signal_name}, initiating graceful shutdown...")
+        
+        # Log current memory usage and uptime
+        try:
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            uptime = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
+            logger.info(f"Shutdown stats - Memory: {memory_mb:.1f}MB, Uptime: {uptime}s")
+        except:
+            pass
+            
         self.running = False
         if self.bot:
             asyncio.create_task(self.bot.close())
@@ -272,6 +283,7 @@ class ORAKLRunner:
     async def main(self):
         """Main execution"""
         self.print_startup_banner()
+        self.start_time = time.time()
         
         # Check if already running
         if self.check_already_running():
