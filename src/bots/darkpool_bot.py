@@ -1,7 +1,7 @@
 """Darkpool Bot - Large darkpool and block trades tracker"""
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
@@ -43,25 +43,26 @@ class DarkpoolBot(BaseAutoBot):
                 logger.error(f"{self.name} error scanning {symbol}: {e}")
 
     async def _scan_block_trades(self, symbol: str) -> List[Dict]:
-        """Scan for block trades and darkpool activity"""
+        """Scan for block trades and darkpool activity with enhanced context"""
         blocks = []
 
         try:
-            # Get current price and market data
+            # --- ENHANCEMENT 1: Get historical context ---
             current_price = await self.fetcher.get_stock_price(symbol)
             if not current_price:
                 return blocks
+            
+            avg_30_day_volume = await self.fetcher.get_30_day_avg_volume(symbol)
+            financials = await self.fetcher.get_financials(symbol)
+            week_52_high = financials.get('52_week_high') if financials else None
+            week_52_low = financials.get('52_week_low') if financials else None
 
-            # Get recent trades (Polygon provides trade-level data)
-            # For block detection, we look for large single trades
+            # Get recent trades
             trades = await self.fetcher.get_stock_trades(symbol, limit=1000)
             if not trades:
                 return blocks
 
-            # Calculate average trade size
             avg_size = sum(t.get('size', 0) for t in trades) / len(trades) if trades else 0
-
-            # Filter for block-sized trades
             recent_cutoff = datetime.now() - timedelta(minutes=15)
 
             for trade in trades:
@@ -71,41 +72,34 @@ class DarkpoolBot(BaseAutoBot):
 
                 size = trade.get('size', 0)
                 price = trade.get('price', current_price)
-
-                # Block trade criteria:
-                # 1. Size > 10,000 shares
-                # 2. Size > 5x average trade size
-                # 3. Significant dollar value
-
                 dollar_value = size * price
+
                 is_block = (
                     size >= self.MIN_BLOCK_SIZE and
                     size >= (avg_size * 5) and
-                    dollar_value >= 100000  # $100k minimum
+                    dollar_value >= 100000
                 )
 
                 if not is_block:
                     continue
 
-                # Detect potential darkpool characteristics
-                # Darkpool trades often occur at specific exchanges
+                # --- ENHANCEMENT 2: Key level and directional bias analysis ---
+                key_level_info = self._check_key_levels(price, week_52_high, week_52_low)
+                directional_bias = self._infer_directional_bias(price, current_price)
+
                 exchange = trade.get('exchange', '')
                 conditions = trade.get('conditions', [])
-
-                # Common darkpool indicators
                 is_darkpool = any([
-                    'D' in str(exchange),  # Dark pool exchange
-                    'T' in conditions,  # Extended hours
-                    'I' in conditions,  # Odd lot
-                    size >= 50000,  # Very large size
+                    'D' in str(exchange), 'T' in conditions, 'I' in conditions, size >= 50000,
                 ])
 
-                # Calculate block score
+                # Calculate block score with enhanced context
                 block_score = self._calculate_block_score(
-                    size, dollar_value, avg_size, is_darkpool
+                    size, dollar_value, avg_30_day_volume, is_darkpool, 
+                    key_level_info is not None, directional_bias != "Neutral"
                 )
 
-                if block_score >= 50:  # Minimum 50% confidence threshold
+                if block_score >= 60:  # Higher threshold for enhanced signals
                     block = {
                         'ticker': symbol,
                         'current_price': current_price,
@@ -115,12 +109,14 @@ class DarkpoolBot(BaseAutoBot):
                         'timestamp': trade_time,
                         'exchange': exchange,
                         'is_darkpool': is_darkpool,
-                        'avg_size_multiple': size / avg_size if avg_size > 0 else 0,
                         'block_score': block_score,
-                        'conditions': conditions
+                        'conditions': conditions,
+                        # --- ENHANCEMENT 3: Add new data to signal ---
+                        'percent_of_avg_volume': (size / avg_30_day_volume) * 100 if avg_30_day_volume else 0,
+                        'key_level_info': key_level_info,
+                        'directional_bias': directional_bias,
                     }
 
-                    # Check if already posted
                     signal_key = f"{symbol}_{int(trade.get('timestamp', 0))}_{size}"
                     if signal_key not in self.signal_history:
                         blocks.append(block)
@@ -132,122 +128,112 @@ class DarkpoolBot(BaseAutoBot):
         return blocks
 
     def _calculate_block_score(self, size: int, dollar_value: float,
-                               avg_size: float, is_darkpool: bool) -> int:
-        """Calculate block trade significance score"""
+                               avg_30_day_volume: Optional[float], is_darkpool: bool,
+                               at_key_level: bool, has_bias: bool) -> int:
+        """Calculate ENHANCED block trade significance score"""
         score = 0
 
-        # Size significance (35%)
-        if size >= 100000:
-            score += 35
-        elif size >= 50000:
-            score += 30
-        elif size >= 25000:
-            score += 25
-        elif size >= 10000:
-            score += 20
-
-        # Dollar value (30%)
-        if dollar_value >= 5000000:  # $5M+
-            score += 30
-        elif dollar_value >= 2000000:  # $2M+
-            score += 25
-        elif dollar_value >= 1000000:  # $1M+
-            score += 20
-        elif dollar_value >= 500000:  # $500k+
-            score += 15
-
-        # Relative to average (20%)
-        if avg_size > 0:
-            multiple = size / avg_size
-            if multiple >= 20:
+        # --- ENHANCED SCORING ---
+        # 1. Percent of Daily Volume (40%) - MOST IMPORTANT METRIC
+        if avg_30_day_volume and avg_30_day_volume > 0:
+            percent_of_volume = (size / avg_30_day_volume) * 100
+            if percent_of_volume >= 10:  # 10%+ of daily volume in one trade
+                score += 40
+            elif percent_of_volume >= 5:   # 5%
+                score += 35
+            elif percent_of_volume >= 2:   # 2%
+                score += 30
+            elif percent_of_volume >= 1:   # 1%
+                score += 25
+            elif percent_of_volume >= 0.5: # 0.5%
                 score += 20
-            elif multiple >= 10:
-                score += 15
-            elif multiple >= 5:
-                score += 10
 
-        # Darkpool indicator (15%)
+        # 2. Dollar Value (25%)
+        if dollar_value >= 10_000_000: score += 25  # $10M+
+        elif dollar_value >= 5_000_000: score += 20 # $5M+
+        elif dollar_value >= 1_000_000: score += 15 # $1M+
+
+        # 3. Darkpool Indicator (15%)
         if is_darkpool:
             score += 15
 
-        return score
+        # 4. Key Level (10%)
+        if at_key_level:
+            score += 10
+        
+        # 5. Directional Bias (10%)
+        if has_bias:
+            score += 10
+
+        return min(score, 100)
+
+    def _check_key_levels(self, price: float, high_52w: Optional[float], low_52w: Optional[float]) -> Optional[str]:
+        """Check if a trade occurred near a 52-week high or low"""
+        if high_52w and (price / high_52w) >= 0.98: # Within 2% of 52w high
+            return f"Near 52-Week High (${high_52w:.2f})"
+        if low_52w and (price / low_52w) <= 1.02: # Within 2% of 52w low
+            return f"Near 52-Week Low (${low_52w:.2f})"
+        return None
+
+    def _infer_directional_bias(self, trade_price: float, market_price: float) -> str:
+        """Infer directional bias based on trade price vs market price"""
+        diff = (trade_price - market_price) / market_price
+        if diff >= 0.001:  # 0.1% above market price
+            return "Aggressive Buying"
+        if diff <= -0.001: # 0.1% below market price
+            return "Aggressive Selling"
+        return "Neutral"
 
     async def _post_signal(self, block: Dict):
-        """Post darkpool/block trade signal to Discord"""
+        """Post ENHANCED darkpool/block trade signal to Discord"""
 
-        # Color based on darkpool vs regular block
-        color = 0x9B30FF if block['is_darkpool'] else 0x4169E1  # Purple for darkpool, blue for block
+        color = 0x9B30FF if block['is_darkpool'] else 0x4169E1
         emoji = "🌑" if block['is_darkpool'] else "🧱"
-
         trade_type = "DARKPOOL" if block['is_darkpool'] else "BLOCK TRADE"
+        
+        # Set title based on bias
+        bias = block['directional_bias']
+        if bias == "Aggressive Buying":
+            title = f"{emoji} {block['ticker']} - Aggressive Buying Detected"
+            color = 0x00FF00 # Green
+        elif bias == "Aggressive Selling":
+            title = f"{emoji} {block['ticker']} - Aggressive Selling Detected"
+            color = 0xFF0000 # Red
+        else:
+            title = f"{emoji} {block['ticker']} - Large {trade_type}"
 
-        # Calculate premium/discount to current price
-        price_diff = ((block['block_price'] - block['current_price']) / block['current_price']) * 100
+        description = (
+            f"**{block['size']:,} shares** worth **${block['dollar_value']:,.0f}** traded.\n"
+            f"This represents **{block['percent_of_avg_volume']:.2f}%** of the 30-day average volume."
+        )
+
+        fields = [
+            {"name": "📈 Block Score", "value": f"**{block['block_score']}/100**", "inline": True},
+            {"name": "💵 Executed Price", "value": f"${block['block_price']:.2f}", "inline": True},
+            {"name": "📊 Market Price", "value": f"${block['current_price']:.2f}", "inline": True},
+        ]
+
+        # Add key level info if present
+        if block['key_level_info']:
+            fields.append({"name": "🎯 Key Level", "value": block['key_level_info'], "inline": False})
+            
+        # Add analysis note
+        analysis_note = f"A trade of this magnitude suggests significant institutional interest. The execution price was **{bias.lower()}**."
+        fields.append({"name": "💡 Analysis", "value": analysis_note, "inline": False})
+        
+        fields.append({
+            "name": "",
+            "value": "Please always do your own due diligence on top of these trade ideas.",
+            "inline": False
+        })
 
         embed = self.create_embed(
-            title=f"{emoji} {trade_type}: {block['ticker']}",
-            description=f"Large {'darkpool' if block['is_darkpool'] else 'block'} trade detected | Score: {block['block_score']}/100",
+            title=title,
+            description=description,
             color=color,
-            fields=[
-                {
-                    "name": "📊 Size",
-                    "value": f"**{block['size']:,} shares**",
-                    "inline": True
-                },
-                {
-                    "name": "💰 Dollar Value",
-                    "value": f"**${block['dollar_value']:,.0f}**",
-                    "inline": True
-                },
-                {
-                    "name": "📈 Block Score",
-                    "value": f"{block['block_score']}/100",
-                    "inline": True
-                },
-                {
-                    "name": "💵 Block Price",
-                    "value": f"${block['block_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📈 Current Price",
-                    "value": f"${block['current_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Price Diff",
-                    "value": f"{price_diff:+.2f}%",
-                    "inline": True
-                },
-                {
-                    "name": "🔢 Avg Size Multiple",
-                    "value": f"{block['avg_size_multiple']:.1f}x average",
-                    "inline": True
-                },
-                {
-                    "name": "🏢 Exchange",
-                    "value": block['exchange'] or "N/A",
-                    "inline": True
-                },
-                {
-                    "name": "⏰ Timestamp",
-                    "value": block['timestamp'].strftime("%H:%M:%S"),
-                    "inline": True
-                },
-                {
-                    "name": "💡 Analysis",
-                    "value": f"{'Darkpool activity suggests institutional positioning' if block['is_darkpool'] else 'Large block trade indicates significant position'}\n"
-                            f"Trade executed at {'premium' if price_diff > 0 else 'discount' if price_diff < 0 else 'market price'}",
-                    "inline": False
-                },
-                {
-                    "name": "",
-                    "value": "Please always do your own due diligence on top of these trade ideas.",
-                    "inline": False
-                }
-            ],
-            footer=f"{'Darkpool' if block['is_darkpool'] else 'Block Trade'} Bot | Institutional Activity Tracker"
+            fields=fields,
+            footer=f"{'Darkpool' if block['is_darkpool'] else 'Block Trade'} Bot | Enhanced Institutional Tracker"
         )
 
         await self.post_to_discord(embed)
-        logger.info(f"Posted {trade_type}: {block['ticker']} {block['size']:,} shares @ ${block['block_price']:.2f}")
+        logger.info(f"Posted ENHANCED {trade_type}: {block['ticker']} {block['size']:,} shares @ ${block['block_price']:.2f}")

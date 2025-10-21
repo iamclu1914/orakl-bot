@@ -326,6 +326,26 @@ class MarketDataCache:
         # Longer TTL for options chains
         ttl = 300 if self._is_market_hours() else 3600
         await self.cache.set(key, chain, ttl)
+
+    async def get_financials(self, symbol: str) -> Optional[Dict]:
+        """Get cached financials"""
+        key = f"financials:{symbol}"
+        return await self.cache.get(key)
+
+    async def set_financials(self, symbol: str, financials: Dict):
+        """Cache financials"""
+        key = f"financials:{symbol}"
+        await self.cache.set(key, financials, ttl_seconds=43200)  # 12 hours
+
+    async def get_avg_volume(self, symbol: str) -> Optional[float]:
+        """Get cached 30-day average volume"""
+        key = f"avg_volume:{symbol}"
+        return await self.cache.get(key)
+
+    async def set_avg_volume(self, symbol: str, avg_volume: float):
+        """Cache 30-day average volume"""
+        key = f"avg_volume:{symbol}"
+        await self.cache.set(key, avg_volume, ttl_seconds=14400)  # 4 hours
     
     def _is_market_hours(self) -> bool:
         """Check if market is currently open"""

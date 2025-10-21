@@ -13,8 +13,7 @@ from src.bots import (
     SweepsBot,
     GoldenSweepsBot,
     DarkpoolBot,
-    BreakoutsBot,
-    UnusualVolumeBot
+    BreakoutsBot
 )
 from src.bots.strat_bot import STRATPatternBot
 from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST
@@ -119,16 +118,6 @@ class BotManager:
         )
         self.bots.append(self.breakouts_bot)
         logger.info(f"  ✓ Breakouts Bot → Channel ID: {Config.BREAKOUTS_WEBHOOK.split('/')[-2]}")
-
-        # Unusual Activity Bot (Volume Surge Detection)
-        self.unusual_activity_bot = UnusualVolumeBot(
-            Config.UNUSUAL_ACTIVITY_WEBHOOK,
-            self.watchlist,
-            self.fetcher,
-            self.analyzer
-        )
-        self.bots.append(self.unusual_activity_bot)
-        logger.info(f"  ✓ Unusual Activity Bot → Channel ID: {Config.UNUSUAL_ACTIVITY_WEBHOOK.split('/')[-2]}")
 
         # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
         self.strat_bot = STRATPatternBot(self.fetcher)

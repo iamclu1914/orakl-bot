@@ -37,7 +37,6 @@ class Config:
     BREAKOUTS_WEBHOOK = os.getenv('BREAKOUTS_WEBHOOK', DISCORD_WEBHOOK_URL)
     DARKPOOL_WEBHOOK = os.getenv('DARKPOOL_WEBHOOK', DISCORD_WEBHOOK_URL)
     ORAKL_FLOW_WEBHOOK = os.getenv('ORAKL_FLOW_WEBHOOK', DISCORD_WEBHOOK_URL)
-    UNUSUAL_ACTIVITY_WEBHOOK = os.getenv('UNUSUAL_ACTIVITY_WEBHOOK', DISCORD_WEBHOOK_URL)
     STRAT_WEBHOOK = os.getenv('STRAT_WEBHOOK', DISCORD_WEBHOOK_URL)
     
     # Discord Settings
@@ -53,7 +52,6 @@ class Config:
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '120'))  # 2 minutes
     DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '240'))  # 4 minutes
     BREAKOUTS_INTERVAL = int(os.getenv('BREAKOUTS_INTERVAL', '300'))  # 5 minutes
-    UNUSUAL_VOLUME_INTERVAL = int(os.getenv('UNUSUAL_VOLUME_INTERVAL', '180'))  # 3 minutes
     STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '300'))  # 5 minutes
     
     # ORAKL Flow Settings
@@ -81,7 +79,6 @@ class Config:
     MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '70'))
     MIN_SCALP_SCORE = int(os.getenv('MIN_SCALP_SCORE', '65'))
     MIN_BREAKOUT_SCORE = int(os.getenv('MIN_BREAKOUT_SCORE', '65'))
-    MIN_UNUSUAL_VOLUME_SCORE = int(os.getenv('MIN_UNUSUAL_VOLUME_SCORE', '65'))
     
     # Watchlist Mode - Dynamic or Static
     WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC

@@ -143,30 +143,24 @@ class OptionsAnalyzer:
         }
         
     def calculate_probability_itm(self, option_type: str, strike: float, current_price: float,
-                                 days_to_expiry: int, volatility: float = 0.3) -> float:
-        """Calculate probability of option finishing in-the-money"""
+                                 days_to_expiry: int, implied_volatility: float = 0.3) -> float:
+        """Calculate probability of option finishing in-the-money using Black-Scholes"""
         if days_to_expiry <= 0:
-            # Option expired, check if ITM
             if option_type == 'CALL':
                 return 100.0 if current_price > strike else 0.0
             else:
                 return 100.0 if current_price < strike else 0.0
-                
-        # Calculate using Black-Scholes probability
-        time_to_expiry = days_to_expiry / 365.0
+
+        # Black-Scholes formula for probability
+        time_to_expiry_years = days_to_expiry / 365.25
+        d2 = (np.log(current_price / strike) + (0.01 - 0.5 * implied_volatility ** 2) * time_to_expiry_years) / (implied_volatility * np.sqrt(time_to_expiry_years))
         
-        # Calculate d2 (simplified, assuming 0 interest rate)
-        d2 = (np.log(current_price / strike) - 0.5 * volatility ** 2 * time_to_expiry) / \
-             (volatility * np.sqrt(time_to_expiry))
-             
         if option_type == 'CALL':
-            # Probability that stock price > strike at expiry
-            prob_itm = norm.cdf(d2) * 100
+            probability = norm.cdf(d2) * 100
         else:
-            # Probability that stock price < strike at expiry
-            prob_itm = norm.cdf(-d2) * 100
+            probability = (1 - norm.cdf(d2)) * 100
             
-        return round(prob_itm, 1)
+        return round(probability, 1)
         
     def identify_repeat_signals(self, symbol: str, strike: float, option_type: str,
                               expiration: str, premium: float) -> int:

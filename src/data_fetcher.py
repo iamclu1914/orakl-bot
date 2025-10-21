@@ -207,7 +207,67 @@ class DataFetcher:
             logger.error(f"Error fetching stock price for {symbol}: {e}")
             return None
         
-    async def get_options_chain(self, symbol: str, expiration_date: Optional[str] = None) -> pd.DataFrame:
+    @cached(cache_name='financials', ttl_seconds=43200)  # Cache for 12 hours
+    async def get_financials(self, symbol: str) -> Optional[Dict[str, float]]:
+        """Get key financials for a stock, like 52-week high/low"""
+        try:
+            cached_financials = await self.market_cache.get_financials(symbol)
+            if cached_financials:
+                return cached_financials
+
+            endpoint = f"/v3/reference/tickers/{symbol}"
+            data = await self._make_request(endpoint)
+
+            if data and 'results' in data:
+                results = data['results']
+                financials = {
+                    '52_week_high': results.get('fifty_two_week', {}).get('high'),
+                    '52_week_low': results.get('fifty_two_week', {}).get('low'),
+                }
+                
+                # Validate and cache
+                if financials['52_week_high'] and financials['52_week_low']:
+                    await self.market_cache.set_financials(symbol, financials)
+                    return financials
+            
+            logger.warning(f"No financial data available for {symbol}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching financials for {symbol}: {e}")
+            return None
+
+    @cached(cache_name='volume', ttl_seconds=14400)  # Cache for 4 hours
+    async def get_30_day_avg_volume(self, symbol: str) -> Optional[float]:
+        """Get 30-day average trading volume"""
+        try:
+            cached_volume = await self.market_cache.get_avg_volume(symbol)
+            if cached_volume:
+                return cached_volume
+
+            to_date = datetime.now().strftime('%Y-%m-%d')
+            from_date = (datetime.now() - timedelta(days=45)).strftime('%Y-%m-%d')
+            
+            endpoint = f"/v2/aggs/ticker/{symbol}/range/1/day/{from_date}/{to_date}"
+            params = {'adjusted': 'true', 'sort': 'desc', 'limit': 30}
+            
+            data = await self._make_request(endpoint, params)
+
+            if data and 'results' in data and len(data['results']) >= 20: # Ensure enough data
+                volumes = [bar.get('v', 0) for bar in data['results']]
+                avg_volume = sum(volumes) / len(volumes)
+                
+                await self.market_cache.set_avg_volume(symbol, avg_volume)
+                return avg_volume
+
+            logger.warning(f"Not enough daily volume data to calculate average for {symbol}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching 30-day avg volume for {symbol}: {e}")
+            return None
+        
+    async def get_options_chain(self, symbol: str, expiration_date: Optional[str] = None, 
+                              expiration_date_gte: Optional[str] = None,
+                              expiration_date_lte: Optional[str] = None) -> pd.DataFrame:
         """Get options chain for a symbol"""
         params = {
             'underlying_ticker': symbol,
@@ -217,6 +277,10 @@ class DataFetcher:
         
         if expiration_date:
             params['expiration_date'] = expiration_date
+        if expiration_date_gte:
+            params['expiration_date.gte'] = expiration_date_gte
+        if expiration_date_lte:
+            params['expiration_date.lte'] = expiration_date_lte
             
         endpoint = "/v3/reference/options/contracts"
         data = await self._make_request(endpoint, params)
