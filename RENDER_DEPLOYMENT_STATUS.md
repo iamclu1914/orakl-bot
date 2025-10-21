@@ -1,75 +1,55 @@
-# Render Deployment Status
+# Render Deployment Status - October 21, 2025
 
-## ✅ Fixed Missing Dependencies
+## Latest Update Pushed
+Enhanced heartbeat mechanism to prevent 1-minute SIGTERM shutdown.
 
-### Issue 1: Missing requirements.txt
-- **Error**: `/requirements.txt": not found`
-- **Fixed**: Created requirements.txt with all dependencies
+## What to Monitor in Render Logs
 
-### Issue 2: Missing scipy module
-- **Error**: `ModuleNotFoundError: No module named 'scipy'`
-- **Fixed**: Added scipy>=1.10.0 to requirements.txt
-
-## 📦 Complete Dependencies List
-
-Your requirements.txt now includes:
+### 1. Startup Sequence (First 30 seconds)
+Look for these messages:
 ```
-discord.py>=2.3.0          # Discord bot functionality
-aiohttp>=3.8.0            # Async HTTP requests
-python-dotenv>=1.0.0      # Environment variables
-pytz>=2023.3              # Timezone handling
-requests>=2.31.0          # HTTP requests
-pandas>=2.0.0             # Data analysis
-numpy>=1.24.0             # Numerical computing
-scipy>=1.10.0             # Statistical functions (NEW)
-discord-webhook>=1.3.0    # Discord webhooks
-matplotlib>=3.7.0         # Plotting
-seaborn>=0.12.0          # Statistical plots
-plotly>=5.15.0           # Interactive charts
-kaleido>=0.2.1           # Chart export
-pytest>=7.4.0            # Testing
-pytest-asyncio>=0.21.0   # Async testing
-pywin32>=306             # Windows specific
-psutil>=5.9.0            # System utilities
+Bot started - initializing...
+Starting bot manager...
+All bots started successfully
+ACTIVE: Bot running - Heartbeat #1
 ```
 
-## 🚀 Deployment Progress
-
-1. ✅ requirements.txt created and pushed
-2. ✅ scipy dependency added and pushed
-3. ⏳ Render should now be building successfully
-
-## 🔍 What to Check
-
-Monitor your Render dashboard for:
+### 2. Active Heartbeat (Every 5 seconds for first 3 minutes)
+You should see rapid heartbeat messages:
 ```
-==> Installing Python dependencies
-✓ Successfully installed scipy-1.10.0
-✓ Successfully installed all dependencies
-==> Build succeeded
-==> Starting service
+🔥 Bot actively monitoring markets - 8 bots running | Uptime: 5s
+ACTIVE: Bot running - Heartbeat #1
+📊 Processing market data - Memory: 193.1MB | CPU: Active
+ACTIVE: Bot running - Heartbeat #2
+💓 Service heartbeat #3 - All systems operational | Watchlist: 109 symbols
+ACTIVE: Bot running - Heartbeat #3
 ```
 
-## ⚠️ Final Steps After Deployment
+### 3. Critical Milestone - No SIGTERM at 1 minute
+If the bot passes the 60-second mark without receiving "signal 15" or "SIGTERM", the fix is working.
 
-**Don't forget to update your environment variables in Render:**
+### 4. Normal Operation (After 3 minutes)
+Heartbeat reduces to every 15 seconds, bot scans run on their schedules.
 
-1. Go to Render Dashboard → Your Service → Environment
-2. Update these variables:
-   - `DISCORD_WEBHOOK_URL` = Your new Spidey Bot webhook
-   - `STRAT_WEBHOOK` = Your new STRAT Alert webhook
-   - `STRAT_INTERVAL` = 300
+## If Still Shutting Down
 
-3. Save Changes → Auto-redeploy
+### Option 1: Increase Activity Further
+- We can make heartbeat every 2-3 seconds
+- Add more stdout activity
+- Create dummy HTTP requests
 
-## 🎯 Expected Result
+### Option 2: Switch to Web Service
+- Add proper HTTP health endpoint
+- Configure as Web Service instead of Background Worker
+- Already have `health_server.py` ready
 
-Once deployment completes, your bot should:
-- ✅ Start successfully
-- ✅ Connect to Discord webhooks
-- ✅ Begin scanning for signals
-- ✅ Post alerts when quality signals are found
+### Option 3: Contact Render Support
+- Show them the aggressive heartbeat logs
+- Ask about Background Worker timeout requirements
+- Request clarification on activity requirements
 
----
-
-*Last Updated: October 20, 2025*
+## Current Status
+- Code pushed to GitHub ✅
+- Auto-deploy should trigger on Render
+- Monitor logs for next deployment
+- Look for "ACTIVE:" messages in logs

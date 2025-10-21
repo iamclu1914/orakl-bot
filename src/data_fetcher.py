@@ -21,6 +21,7 @@ from src.utils.exceptions import (
 )
 from src.utils.validation import DataValidator, SafeCalculations
 from src.utils.cache import cached, cache_manager, MarketDataCache
+from src.utils.ticker_translation import translate_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,9 @@ class DataFetcher:
     @cached(cache_name='market', ttl_seconds=30)
     async def get_stock_price(self, symbol: str) -> Optional[float]:
         """Get current stock price with caching"""
+        # Translate ticker if needed (e.g., BLOCK -> SQ)
+        symbol = translate_ticker(symbol)
+        
         try:
             # Check cache first
             cached_price = await self.market_cache.get_stock_price(symbol)
@@ -210,6 +214,9 @@ class DataFetcher:
     @cached(cache_name='financials', ttl_seconds=43200)  # Cache for 12 hours
     async def get_financials(self, symbol: str) -> Optional[Dict[str, float]]:
         """Get key financials for a stock, like 52-week high/low from daily aggregates"""
+        # Translate ticker if needed
+        symbol = translate_ticker(symbol)
+        
         try:
             cached_financials = await self.market_cache.get_financials(symbol)
             if cached_financials:
@@ -303,6 +310,9 @@ class DataFetcher:
         
     async def get_stock_trades(self, symbol: str, limit: int = 1000) -> List[Dict]:
         """Get recent stock trades for block detection"""
+        # Translate ticker if needed
+        symbol = translate_ticker(symbol)
+        
         endpoint = f"/v3/trades/{symbol}"
         params = {
             'limit': limit,
