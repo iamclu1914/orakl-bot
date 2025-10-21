@@ -50,6 +50,9 @@ class ORAKLBot(commands.Bot):
                 name="Options Flow | ok-commands"
             )
         )
+        
+        # Start status update task
+        self.status_update.start()
 
     async def on_message(self, message):
         """Auto-format TradingView STRAT alerts"""
@@ -57,32 +60,31 @@ class ORAKLBot(commands.Bot):
         if message.author.bot:
             return
             
-        # Only process messages in STRAT channel (from webhook ID)
-        strat_channel_id = int(Config.STRAT_WEBHOOK.split('/')[-2])
-        if message.channel.id != strat_channel_id:
-            return
-            
-        # Check if message matches TradingView STRAT alert pattern
-        if self._is_strat_alert(message.content):
-            try:
-                # Parse and format the alert
-                formatted_embed = await self._format_strat_alert(message.content)
+        try:
+            # Only process messages in STRAT channel (from webhook ID)
+            strat_channel_id = int(Config.STRAT_WEBHOOK.split('/')[-2])
+            if message.channel.id != strat_channel_id:
+                return
                 
-                if formatted_embed:
-                    # Delete original message and post formatted version
-                    await message.delete()
-                    await message.channel.send(embed=formatted_embed)
-                    logger.info(f"Auto-formatted TradingView STRAT alert in {message.channel.name}")
+            # Check if message matches TradingView STRAT alert pattern
+            if self._is_strat_alert(message.content):
+                try:
+                    # Parse and format the alert
+                    formatted_embed = await self._format_strat_alert(message.content)
                     
-            except Exception as e:
-                logger.error(f"Error auto-formatting STRAT alert: {e}")
+                    if formatted_embed:
+                        # Delete original message and post formatted version
+                        await message.delete()
+                        await message.channel.send(embed=formatted_embed)
+                        logger.info(f"Auto-formatted TradingView STRAT alert")
+                        
+                except Exception as e:
+                    logger.error(f"Error auto-formatting STRAT alert: {e}")
+        except Exception as e:
+            logger.error(f"Error in on_message handler: {e}")
         
         # Process other commands
         await self.process_commands(message)
-
-        # Auto-scanning disabled - using dedicated webhook bots instead
-        # self.auto_scan.start()
-        self.status_update.start()
     
     @tasks.loop(minutes=Config.SCAN_INTERVAL_MINUTES)
     async def auto_scan(self):
