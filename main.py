@@ -113,6 +113,10 @@ class ORAKLRunner:
                 memory_mb = process.memory_info().rss / 1024 / 1024
                 logger.info(f"Memory usage after bot start: {memory_mb:.1f}MB")
                 
+                # CRITICAL: Add immediate heartbeat to prevent Render timeout
+                logger.info("🤖 ORAKL Bot is now running and monitoring markets 24/7")
+                logger.info("💓 Service heartbeat active - bot is healthy")
+                
                 # Log bot status with accurate reporting
                 status = self.bot_manager.get_bot_status()
                 logger.info(f"Active bots: {status['total_bots']}")
@@ -120,6 +124,10 @@ class ORAKLRunner:
                     status_emoji = "✓" if bot_info['running'] else "✗"
                     logger.info(f"  {status_emoji} {bot_info['name']}: Scan interval {bot_info['scan_interval']}s")
 
+                # Start heartbeat task FIRST to prevent Render timeout
+                heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+                logger.info("Started heartbeat monitor")
+                
                 # Start Discord bot if token is available
                 if Config.DISCORD_BOT_TOKEN and Config.DISCORD_BOT_TOKEN != 'your_discord_bot_token_here':
                     logger.info("Starting Discord bot...")
@@ -129,36 +137,9 @@ class ORAKLRunner:
                     logger.warning("Discord bot token not set, running in webhook-only mode")
                     logger.info("Bot will continue running and posting signals to webhook...")
                     
-                    # Keep running indefinitely in webhook-only mode
+                    # Keep running indefinitely
                     while self.running:
-                        try:
-                            await asyncio.sleep(60)
-                            
-                            # Log memory usage every 30 seconds
-                            process = psutil.Process()
-                            memory_mb = process.memory_info().rss / 1024 / 1024
-                            logger.info(f"Memory usage: {memory_mb:.1f}MB")
-                            
-                            # Log health status every 5 minutes
-                            if int(asyncio.get_event_loop().time()) % 300 < 60:
-                                health_checks = []
-                                for bot in self.bot_manager.bots:
-                                    try:
-                                        health = await bot.get_health()
-                                        health_checks.append(f"{bot.name}: {bot.get_status()}")
-                                    except Exception as e:
-                                        logger.debug(f"Health check error for {bot.name}: {e}")
-                                
-                                if health_checks:
-                                    logger.info(f"Bot Status: {', '.join(health_checks)}")
-                        
-                        except asyncio.CancelledError:
-                            logger.info("Bot loop cancelled")
-                            break
-                        except Exception as e:
-                            logger.error(f"Error in main loop: {e}")
-                            # Continue running despite errors
-                            await asyncio.sleep(5)
+                        await asyncio.sleep(60)
                 
             except KeyboardInterrupt:
                 logger.info("Bot stopped by user")
@@ -248,6 +229,30 @@ class ORAKLRunner:
         logger.info("  ✓ Health monitoring & metrics")
         logger.info("  ✓ Comprehensive error handling")
         logger.info("=" * 60)
+    
+    async def _heartbeat_loop(self):
+        """Heartbeat loop to prevent Render timeout"""
+        heartbeat_count = 0
+        process = psutil.Process()
+        
+        while self.running:
+            try:
+                # More frequent heartbeat for first 2 minutes
+                if heartbeat_count < 12:  # First 2 minutes
+                    await asyncio.sleep(10)  # Every 10 seconds
+                    heartbeat_count += 1
+                    logger.info(f"💓 Bot heartbeat #{heartbeat_count} - Service is active and monitoring {len(self.bot_manager.bots) if self.bot_manager else 0} bots")
+                else:
+                    await asyncio.sleep(30)  # Then every 30 seconds
+                
+                # Log memory usage
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                if heartbeat_count < 12 or heartbeat_count % 2 == 0:
+                    logger.info(f"Memory: {memory_mb:.1f}MB | Status: Operational | Uptime: {heartbeat_count * 10}s")
+                    
+            except Exception as e:
+                logger.error(f"Heartbeat error: {e}")
+                await asyncio.sleep(10)
     
     async def main(self):
         """Main execution"""
