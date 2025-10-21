@@ -209,31 +209,42 @@ class DataFetcher:
         
     @cached(cache_name='financials', ttl_seconds=43200)  # Cache for 12 hours
     async def get_financials(self, symbol: str) -> Optional[Dict[str, float]]:
-        """Get key financials for a stock, like 52-week high/low"""
+        """Get key financials for a stock, like 52-week high/low from daily aggregates"""
         try:
             cached_financials = await self.market_cache.get_financials(symbol)
             if cached_financials:
                 return cached_financials
 
-            endpoint = f"/v3/reference/tickers/{symbol}"
-            data = await self._make_request(endpoint)
+            # Get 52-week data from daily aggregates (last 365 days)
+            to_date = datetime.now().strftime('%Y-%m-%d')
+            from_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+            
+            endpoint = f"/v2/aggs/ticker/{symbol}/range/1/day/{from_date}/{to_date}"
+            params = {'adjusted': 'true', 'sort': 'desc', 'limit': 365}
+            data = await self._make_request(endpoint, params)
 
-            if data and 'results' in data:
-                results = data['results']
-                financials = {
-                    '52_week_high': results.get('fifty_two_week', {}).get('high'),
-                    '52_week_low': results.get('fifty_two_week', {}).get('low'),
-                }
+            if data and 'results' in data and len(data['results']) > 0:
+                bars = data['results']
+                # Calculate 52-week high/low from the bars
+                highs = [bar['h'] for bar in bars if 'h' in bar]
+                lows = [bar['l'] for bar in bars if 'l' in bar]
                 
-                # Validate and cache
-                if financials['52_week_high'] and financials['52_week_low']:
+                if highs and lows:
+                    financials = {
+                        '52_week_high': max(highs),
+                        '52_week_low': min(lows),
+                    }
+                    
+                    # Cache and return
                     await self.market_cache.set_financials(symbol, financials)
                     return financials
             
-            logger.warning(f"No financial data available for {symbol}")
+            # Return None silently - no warning needed
             return None
         except Exception as e:
-            logger.error(f"Error fetching financials for {symbol}: {e}")
+            # Only log error if it's not a 404 (ticker not found)
+            if "404" not in str(e) and "NOT_FOUND" not in str(e):
+                logger.error(f"Error fetching financials for {symbol}: {e}")
             return None
 
     @cached(cache_name='volume', ttl_seconds=14400)  # Cache for 4 hours

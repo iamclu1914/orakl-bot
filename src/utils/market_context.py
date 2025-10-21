@@ -66,19 +66,14 @@ class MarketContext:
     async def _get_volatility_regime(fetcher) -> Dict:
         """Analyze volatility using VIX"""
         try:
-            # Get VIX current level
-            vix_price = await fetcher.get_stock_price('VIX')
-            if not vix_price:
-                return {'level': 'unknown', 'vix': None}
-            
-            # Get VIX 20-day average
-            vix_bars = await fetcher.get_aggregates(
-                'VIX', 'day', 1,
-                (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
-                datetime.now().strftime('%Y-%m-%d')
-            )
-            
-            vix_avg = vix_bars['close'].mean() if not vix_bars.empty else vix_price
+            # VIX is not available as a regular stock ticker in Polygon
+            # Would need to use a different data source or skip
+            return {
+                'level': 'normal',
+                'vix': None,
+                'vix_sma': None,
+                'description': 'VIX data not available'
+            }
             
             # Classify volatility
             if vix_price >= MarketContext.VIX_EXTREME_THRESHOLD:

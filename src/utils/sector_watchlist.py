@@ -23,7 +23,7 @@ SECTOR_WATCHLIST = {
     
     "Financials": [
         # Mega caps
-        "BRK.B", "BRK.A", "JPM", "V", "MA", "BAC", "WFC",
+        "BRK-B", "BRK-A", "JPM", "V", "MA", "BAC", "WFC",
         # Large caps
         "GS", "MS", "AXP", "SPGI", "BLK", "C", "SCHW", "CB", "PGR", "BX",
         "CME", "ICE", "AON", "MMC", "PNC", "USB", "TFC", "TRV", "AIG", "MET",
