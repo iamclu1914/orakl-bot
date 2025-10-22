@@ -35,7 +35,7 @@ class OraklFlowBotKafka(KafkaConsumerBase):
         try:
             # Extract flow data
             ticker = data.get('ticker') or data.get('symbol')
-            if not ticker or ticker not in self.watchlist:
+            if not ticker:
                 return
 
             # Flow metrics

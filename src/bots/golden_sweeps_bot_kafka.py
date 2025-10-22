@@ -39,8 +39,10 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
         try:
             # Extract flow data (adjust keys based on your actual schema)
             ticker = data.get('ticker') or data.get('symbol')
-            if not ticker or ticker not in self.watchlist:
-                return  # Not in watchlist
+            if not ticker:
+                return  # No ticker found
+
+            # Monitor ALL tickers (removed watchlist filter)
 
             # Flow metrics (actual schema uses premiumValue, not premium)
             premium = data.get('premiumValue', 0) or data.get('premium', 0) or data.get('total_premium', 0)
