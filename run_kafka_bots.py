@@ -45,8 +45,8 @@ async def main():
     )
 
     logger.info("✅ Golden Sweeps bot initialized")
-    logger.info("🔌 Connecting to Kafka topics: raw-trades")
-    logger.info("⏳ Waiting for messages from Kafka stream...")
+    logger.info("🔌 Connecting to Kafka topics: processed-flows")
+    logger.info("⏳ Waiting for pre-aggregated flow messages...")
     logger.info("=" * 80)
 
     # Run bot

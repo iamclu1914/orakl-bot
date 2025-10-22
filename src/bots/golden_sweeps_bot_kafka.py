@@ -17,7 +17,7 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
     """Real-time Golden Sweeps detection from Kafka"""
 
     def __init__(self, webhook_url: str, watchlist: List[str], analyzer: OptionsAnalyzer):
-        super().__init__("Golden Sweeps Bot Kafka", topics=["raw-trades"])
+        super().__init__("Golden Sweeps Bot Kafka", topics=["processed-flows"])
 
         self.webhook_url = webhook_url
         self.watchlist = set(watchlist)  # Convert to set for O(1) lookup
@@ -35,123 +35,123 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
         self.session = None
 
     async def process_message(self, data: Dict, topic: str):
-        """Process options trade message from Kafka"""
+        """Process pre-aggregated flow message from Kafka processed-flows topic"""
         try:
-            # Skip non-options trades
-            if data.get('ev') != 'T':  # T = Trade
-                return
-
-            # Parse symbol (format: O:SPY250117C00600000)
-            symbol_full = data.get('sym', '')
-            if not symbol_full.startswith('O:'):
-                return  # Not an options trade
-
-            # Extract underlying ticker
-            ticker = self._extract_ticker(symbol_full)
+            # Extract flow data (adjust keys based on your actual schema)
+            ticker = data.get('ticker') or data.get('symbol')
             if not ticker or ticker not in self.watchlist:
                 return  # Not in watchlist
 
-            # Extract trade details
-            price = data.get('p', 0)  # Price
-            size = data.get('s', 0)  # Size (contracts)
-            timestamp = data.get('t', 0)  # Timestamp (ms)
-            exchange = data.get('x', 0)  # Exchange ID
-
-            # Calculate premium
-            premium = price * size * 100  # Options multiplier
+            # Flow metrics (pre-calculated in your pipeline)
+            premium = data.get('premium', 0) or data.get('total_premium', 0)
+            volume = data.get('volume', 0) or data.get('total_volume', 0)
 
             # Skip if below golden threshold
             if premium < self.MIN_PREMIUM:
                 return
 
-            # Parse contract details
-            option_type, strike, expiration = self._parse_contract(symbol_full)
-            if not option_type:
+            # Contract details
+            option_type = data.get('option_type') or data.get('type') or data.get('call_put')
+            if option_type:
+                option_type = option_type.upper()
+                if option_type not in ['CALL', 'PUT', 'CALLS', 'PUTS']:
+                    return  # Skip non-options flows
+                # Normalize to CALL/PUT
+                option_type = 'CALL' if 'CALL' in option_type else 'PUT'
+            else:
+                return  # No option type
+
+            strike = data.get('strike', 0) or data.get('strike_price', 0)
+            expiration = data.get('expiration') or data.get('exp_date') or data.get('expiry')
+            current_price = data.get('spot_price', 0) or data.get('underlying_price', 0) or data.get('current_price', 0)
+
+            # Flow metadata
+            num_fills = data.get('num_fills', 1) or data.get('trade_count', 1)
+            avg_price = data.get('avg_price', 0) or (premium / (volume * 100) if volume > 0 else 0)
+            timestamp = data.get('timestamp', 0) or data.get('t', 0)
+
+            # Flow classification
+            flow_type = data.get('flow_type') or data.get('signal_type')
+            is_sweep = data.get('is_sweep', False) or flow_type in ['SWEEP', 'GOLDEN_SWEEP', 'sweep', 'golden']
+
+            # Only process sweeps for Golden Sweeps bot
+            if not is_sweep:
                 return
 
-            # Create contract key for aggregation
-            contract_key = f"{ticker}_{option_type}_{strike}_{expiration}"
+            # Calculate days to expiry
+            if expiration:
+                # Handle different date formats
+                if isinstance(expiration, str):
+                    if len(expiration) == 8:  # YYYYMMDD
+                        exp_date = datetime.strptime(expiration, '%Y%m%d')
+                    elif len(expiration) == 6:  # YYMMDD
+                        exp_date = datetime.strptime(f"20{expiration}", '%Y%m%d')
+                    else:
+                        exp_date = datetime.fromisoformat(expiration.replace('Z', '+00:00'))
+                else:
+                    exp_date = datetime.fromtimestamp(expiration / 1000 if expiration > 1e10 else expiration)
 
-            # Initialize trade window
-            if contract_key not in self.trade_windows:
-                self.trade_windows[contract_key] = []
-
-            # Add trade to window
-            trade_time = datetime.fromtimestamp(timestamp / 1000)
-            self.trade_windows[contract_key].append({
-                'price': price,
-                'size': size,
-                'premium': premium,
-                'timestamp': trade_time,
-                'exchange': exchange
-            })
-
-            # Clean old trades (older than 60 seconds)
-            cutoff_time = datetime.now() - timedelta(seconds=self.window_size)
-            self.trade_windows[contract_key] = [
-                t for t in self.trade_windows[contract_key]
-                if t['timestamp'] > cutoff_time
-            ]
-
-            # Calculate aggregated metrics
-            total_premium = sum(t['premium'] for t in self.trade_windows[contract_key])
-            total_volume = sum(t['size'] for t in self.trade_windows[contract_key])
-            num_fills = len(self.trade_windows[contract_key])
-            avg_price = sum(t['price'] for t in self.trade_windows[contract_key]) / num_fills
-
-            # Check if meets golden sweep criteria
-            if total_premium >= self.MIN_PREMIUM and num_fills >= 3:
-                # Calculate days to expiry
-                exp_date = datetime.strptime(expiration, '%Y%m%d')
                 days_to_expiry = (exp_date - datetime.now()).days
+            else:
+                days_to_expiry = 30  # Default estimate
 
-                # Estimate current price (would ideally get from aggregated-metrics topic)
-                current_price = strike * (1.05 if option_type == 'CALL' else 0.95)
+            # Use pre-calculated metrics or calculate if needed
+            if current_price > 0 and strike > 0:
+                strike_distance = abs((strike - current_price) / current_price) * 100
 
                 # Calculate probability ITM
                 prob_itm = self.analyzer.calculate_probability_itm(
                     option_type, strike, current_price, days_to_expiry
                 )
+            else:
+                strike_distance = 5.0  # Default estimate
+                prob_itm = 0.5  # Default estimate
 
-                # Calculate golden score
-                strike_distance = abs((strike - current_price) / current_price) * 100
+            # Calculate or use pre-calculated golden score
+            golden_score = data.get('golden_score') or data.get('score')
+            if not golden_score:
                 golden_score = self._calculate_golden_score(
-                    total_premium, total_volume, strike_distance, days_to_expiry
+                    premium, volume, strike_distance, days_to_expiry
                 )
 
-                # Check minimum score
-                if golden_score >= self.MIN_SCORE:
-                    # Generate signal ID for deduplication
-                    signal_id = self.generate_signal_id(
-                        contract_key, int(timestamp), 'golden'
-                    )
+            # Check minimum score
+            if golden_score < self.MIN_SCORE:
+                return
 
-                    # Check if already alerted
-                    if self.is_duplicate_signal(signal_id):
-                        return
+            # Generate signal ID for deduplication
+            signal_id = self.generate_signal_id(
+                f"{ticker}_{option_type}_{strike}_{expiration}",
+                int(timestamp) if timestamp else int(datetime.now().timestamp() * 1000),
+                'golden'
+            )
 
-                    # Create sweep signal
-                    sweep = {
-                        'ticker': ticker,
-                        'type': option_type,
-                        'strike': strike,
-                        'expiration': expiration,
-                        'current_price': current_price,
-                        'days_to_expiry': days_to_expiry,
-                        'premium': total_premium,
-                        'volume': total_volume,
-                        'num_fills': num_fills,
-                        'avg_price': avg_price,
-                        'probability_itm': prob_itm,
-                        'golden_score': golden_score,
-                        'strike_distance': strike_distance
-                    }
+            # Check if already alerted
+            if self.is_duplicate_signal(signal_id):
+                return
 
-                    # Post to Discord
-                    await self._post_signal(sweep)
+            # Create sweep signal
+            sweep = {
+                'ticker': ticker,
+                'type': option_type,
+                'strike': strike,
+                'expiration': expiration,
+                'current_price': current_price,
+                'days_to_expiry': days_to_expiry,
+                'premium': premium,
+                'volume': volume,
+                'num_fills': num_fills,
+                'avg_price': avg_price,
+                'probability_itm': prob_itm,
+                'golden_score': int(golden_score),
+                'strike_distance': strike_distance
+            }
+
+            # Post to Discord
+            await self._post_signal(sweep)
 
         except Exception as e:
             logger.error(f"[{self.bot_name}] Error processing message: {e}")
+            logger.error(f"[{self.bot_name}] Message data: {data}")
 
     def _extract_ticker(self, symbol: str) -> str:
         """Extract underlying ticker from options symbol (O:SPY250117C00600000 -> SPY)"""
