@@ -42,16 +42,16 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
             if not ticker or ticker not in self.watchlist:
                 return  # Not in watchlist
 
-            # Flow metrics (pre-calculated in your pipeline)
-            premium = data.get('premium', 0) or data.get('total_premium', 0)
+            # Flow metrics (actual schema uses premiumValue, not premium)
+            premium = data.get('premiumValue', 0) or data.get('premium', 0) or data.get('total_premium', 0)
             volume = data.get('volume', 0) or data.get('total_volume', 0)
 
             # Skip if below golden threshold
             if premium < self.MIN_PREMIUM:
                 return
 
-            # Contract details
-            option_type = data.get('option_type') or data.get('type') or data.get('call_put')
+            # Contract details (actual schema uses 'type': 'put'/'call')
+            option_type = data.get('type') or data.get('option_type') or data.get('call_put')
             if option_type:
                 option_type = option_type.upper()
                 if option_type not in ['CALL', 'PUT', 'CALLS', 'PUTS']:
@@ -62,17 +62,22 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
                 return  # No option type
 
             strike = data.get('strike', 0) or data.get('strike_price', 0)
-            expiration = data.get('expiration') or data.get('exp_date') or data.get('expiry')
-            current_price = data.get('spot_price', 0) or data.get('underlying_price', 0) or data.get('current_price', 0)
+            # Actual schema uses 'exp' not 'expiration'
+            expiration = data.get('exp') or data.get('expiry') or data.get('expiration') or data.get('exp_date')
+            # Actual schema has underlyingPrice which is None for these messages
+            current_price = data.get('underlyingPrice') or data.get('spot_price', 0) or data.get('underlying_price', 0) or data.get('current_price', 0)
+
+            # Get price from the trade itself
+            trade_price = data.get('price', 0)
 
             # Flow metadata
             num_fills = data.get('num_fills', 1) or data.get('trade_count', 1)
-            avg_price = data.get('avg_price', 0) or (premium / (volume * 100) if volume > 0 else 0)
-            timestamp = data.get('timestamp', 0) or data.get('t', 0)
+            avg_price = data.get('avg_price', 0) or trade_price
+            timestamp = data.get('timestamp') or data.get('time') or data.get('t', '')
 
-            # Flow classification
-            flow_type = data.get('flow_type') or data.get('signal_type')
-            is_sweep = data.get('is_sweep', False) or flow_type in ['SWEEP', 'GOLDEN_SWEEP', 'sweep', 'golden']
+            # Flow classification (actual schema uses 'isSweep': False)
+            flow_type = data.get('flowType') or data.get('flow_type') or data.get('signal_type')
+            is_sweep = data.get('isSweep', False) or data.get('is_sweep', False) or flow_type in ['SWEEP', 'GOLDEN_SWEEP', 'sweep', 'golden', 'Sweep']
 
             # Only process sweeps for Golden Sweeps bot
             if not is_sweep:
@@ -82,7 +87,9 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
             if expiration:
                 # Handle different date formats
                 if isinstance(expiration, str):
-                    if len(expiration) == 8:  # YYYYMMDD
+                    if len(expiration) == 10 and '-' in expiration:  # YYYY-MM-DD
+                        exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                    elif len(expiration) == 8:  # YYYYMMDD
                         exp_date = datetime.strptime(expiration, '%Y%m%d')
                     elif len(expiration) == 6:  # YYMMDD
                         exp_date = datetime.strptime(f"20{expiration}", '%Y%m%d')
@@ -96,6 +103,11 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
                 days_to_expiry = 30  # Default estimate
 
             # Use pre-calculated metrics or calculate if needed
+            # If current_price is None/0, estimate from strike based on option moneyness
+            if not current_price or current_price <= 0:
+                # Estimate: assume ATM-ish trade
+                current_price = strike
+
             if current_price > 0 and strike > 0:
                 strike_distance = abs((strike - current_price) / current_price) * 100
 
