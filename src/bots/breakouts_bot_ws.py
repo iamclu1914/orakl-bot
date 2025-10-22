@@ -20,6 +20,7 @@ class BreakoutsBotWS(PolygonWebSocketBase):
         super().__init__("Breakouts Bot WS")
         self.webhook_url = webhook_url
         self.watchlist = watchlist
+        self.market_type = "stocks"  # Override to use stocks WebSocket
 
         # Thresholds
         self.MIN_SCORE = Config.MIN_BREAKOUT_SCORE  # 65
@@ -36,14 +37,14 @@ class BreakoutsBotWS(PolygonWebSocketBase):
         """Subscribe to 1-minute aggregates for watchlist"""
         await self.subscribe_aggregates(self.watchlist)
 
-    def on_message(self, msgs: List):
-        """Handle incoming 1-minute aggregate messages"""
+    async def on_message(self, msgs: List):
+        """Handle incoming 1-minute aggregate messages (must be async)"""
         for msg in msgs:
             if not hasattr(msg, 'close') or not hasattr(msg, 'volume'):
                 continue
 
             try:
-                asyncio.create_task(self.process_bar(msg))
+                await self.process_bar(msg)
             except Exception as e:
                 logger.error(f"[{self.bot_name}] Error processing bar: {e}")
 

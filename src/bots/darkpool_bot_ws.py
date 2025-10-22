@@ -20,6 +20,7 @@ class DarkpoolBotWS(PolygonWebSocketBase):
         super().__init__("Darkpool Bot WS")
         self.webhook_url = webhook_url
         self.watchlist = watchlist
+        self.market_type = "stocks"  # Override to use stocks WebSocket
 
         # Thresholds
         self.MIN_BLOCK_SIZE = Config.DARKPOOL_MIN_BLOCK_SIZE  # 10K shares
@@ -36,14 +37,14 @@ class DarkpoolBotWS(PolygonWebSocketBase):
         """Subscribe to stock trades for watchlist"""
         await self.subscribe_stock_trades(self.watchlist)
 
-    def on_message(self, msgs: List):
-        """Handle incoming stock trade messages"""
+    async def on_message(self, msgs: List):
+        """Handle incoming stock trade messages (must be async)"""
         for msg in msgs:
             if not hasattr(msg, 'price') or not hasattr(msg, 'size'):
                 continue
 
             try:
-                asyncio.create_task(self.process_trade(msg))
+                await self.process_trade(msg)
             except Exception as e:
                 logger.error(f"[{self.bot_name}] Error processing trade: {e}")
 

@@ -19,6 +19,7 @@ class PolygonWebSocketBase:
         self.bot_name = bot_name
         self.api_key = os.getenv('POLYGON_API_KEY')
         self.watchlist = os.getenv('WATCHLIST', 'SPY,QQQ').split(',')
+        self.market_type = "options"  # Default to options, override in stock bots
 
         # WebSocket client and state
         self.client = None
@@ -51,17 +52,20 @@ class PolygonWebSocketBase:
         try:
             logger.info(f"[{self.bot_name}] Connecting to Polygon WebSocket...")
 
+            from polygon.websocket.models import Feed, Market
+
+            # Use market_type attribute (options or stocks)
+            market = Market.Stocks if self.market_type == "stocks" else Market.Options
+
             self.client = WebSocketClient(
                 api_key=self.api_key,
-                feed='delayed',  # Use 'delayed' for free tier, 'realtime' for paid
-                market='options',  # Will be overridden in subclasses
+                feed=Feed.RealTime,  # Real-time for Options Advanced + Stocks Developer
+                market=market,
                 subscriptions=[]
             )
 
-            # Register message handler
-            self.client.on_message = self.on_message
-
-            await self.client.connect()
+            # Connect with async handler
+            await self.client.connect(self.on_message)
             self.connected = True
             logger.info(f"[{self.bot_name}] WebSocket connected successfully")
 
@@ -73,14 +77,18 @@ class PolygonWebSocketBase:
             await self.connect()
 
     async def subscribe_options_trades(self, symbols: List[str]):
-        """Subscribe to real-time options trades - subscribes to 'T' channel for all options"""
+        """Subscribe to real-time options trades using wildcards"""
         try:
-            # Subscribe to "T" channel which gets ALL options trades
-            # We'll filter by symbol in the message handler
-            await self.client.subscribe("T")
-            self.subscribed_symbols.add("T")
-            logger.info(f"[{self.bot_name}] Subscribed to options trades channel (T)")
-            logger.info(f"[{self.bot_name}] Will filter for {len(symbols)} symbols: {', '.join(symbols[:5])}...")
+            # Subscribe to options trades with wildcard for each symbol
+            # Format: T.O:SPY* (all SPY options contracts)
+            subscriptions = [f"T.O:{symbol.strip()}*" for symbol in symbols]
+
+            for sub in subscriptions:
+                await self.client.subscribe(sub)
+                self.subscribed_symbols.add(sub)
+
+            logger.info(f"[{self.bot_name}] Subscribed to {len(symbols)} symbols with options wildcards")
+            logger.info(f"[{self.bot_name}] Examples: {', '.join(subscriptions[:3])}...")
 
         except Exception as e:
             logger.error(f"[{self.bot_name}] Subscription failed: {e}")
@@ -109,9 +117,9 @@ class PolygonWebSocketBase:
         except Exception as e:
             logger.error(f"[{self.bot_name}] Subscription failed: {e}")
 
-    def on_message(self, msgs: List[WebSocketMessage]):
-        """Handle incoming WebSocket messages - override in subclasses"""
-        raise NotImplementedError("Subclasses must implement on_message()")
+    async def on_message(self, msgs: List):
+        """Handle incoming WebSocket messages - override in subclasses (must be async)"""
+        raise NotImplementedError("Subclasses must implement on_message() as async")
 
     def generate_signal_id(self, symbol: str, timestamp: int, trade_type: str) -> str:
         """Generate unique signal ID for deduplication"""
