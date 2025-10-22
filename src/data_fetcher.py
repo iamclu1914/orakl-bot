@@ -22,6 +22,7 @@ from src.utils.exceptions import (
 from src.utils.validation import DataValidator, SafeCalculations
 from src.utils.cache import cached, cache_manager, MarketDataCache
 from src.utils.ticker_translation import translate_ticker
+from src.utils.volume_cache import volume_cache
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class DataFetcher:
             
     async def _init_session(self):
         """Initialize aiohttp session with connection pooling"""
+        # Start volume cache cleanup task
+        await volume_cache.start_cleanup_task()
+
         if not self.session:
             # Configure connection pooling
             self.connector = aiohttp.TCPConnector(
@@ -81,6 +85,9 @@ class DataFetcher:
             
     async def _close_session(self):
         """Close aiohttp session and connector"""
+        # Stop volume cache cleanup task
+        await volume_cache.stop_cleanup_task()
+
         if self.session:
             await self.session.close()
             self.session = None
@@ -569,7 +576,252 @@ class DataFetcher:
                     })
                     
         return sorted(unusual, key=lambda x: x['premium'], reverse=True)
-        
+
+    async def get_option_chain_snapshot(
+        self,
+        underlying: str,
+        contract_type: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Get complete snapshot of all options contracts for an underlying ticker.
+
+        This is the PRIMARY METHOD for efficient options flow detection.
+
+        Endpoint: /v3/snapshot/options/{underlyingAsset}
+
+        Benefits:
+        - Returns ALL contracts in ONE API call (vs 50+ individual calls)
+        - Includes: volume, OI, last price, Greeks, bid/ask for each contract
+        - Perfect for flow detection via volume delta comparison
+
+        Args:
+            underlying: Underlying ticker symbol (e.g., 'AAPL', 'SPY')
+            contract_type: Filter by 'call' or 'put', None for both
+
+        Returns:
+            List of contract dictionaries with complete market data
+
+        Example response per contract:
+            {
+                'ticker': 'O:AAPL250117C00200000',
+                'day': {'volume': 1500, 'close': 5.25, 'open': 5.10, ...},
+                'open_interest': 10000,
+                'implied_volatility': 0.35,
+                'greeks': {'delta': 0.52, 'gamma': 0.03, ...},
+                'details': {'strike_price': 200.0, 'expiration_date': '2025-01-17', ...},
+                'underlying_asset': {'ticker': 'AAPL', 'price': 195.50, ...}
+            }
+        """
+        try:
+            endpoint = f"/v3/snapshot/options/{underlying}"
+            params = {}
+
+            if contract_type:
+                # Filter by contract type if specified
+                params['contract_type'] = contract_type.lower()
+
+            data = await self._make_request(endpoint, params)
+
+            if data and 'results' in data and len(data['results']) > 0:
+                logger.debug(
+                    f"Retrieved option chain snapshot for {underlying}: "
+                    f"{len(data['results'])} contracts"
+                )
+                return data['results']
+
+            logger.debug(f"No option contracts found for {underlying}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Error fetching option chain snapshot for {underlying}: {e}")
+            return []
+
+    async def detect_unusual_flow(
+        self,
+        underlying: str,
+        min_premium: float = 10000,
+        min_volume_delta: int = 10,
+        min_volume_ratio: float = 2.0
+    ) -> List[Dict]:
+        """
+        Detect unusual options flow by comparing volume deltas between snapshots.
+
+        This is the CORE FLOW DETECTION ALGORITHM for REST-based approach.
+
+        Algorithm:
+        1. Get current option chain snapshot from Polygon
+        2. Retrieve previous snapshot from volume cache
+        3. Calculate volume delta for each contract
+        4. Filter by premium threshold and unusual activity
+        5. Update cache with current snapshot
+        6. Return flow signals
+
+        Args:
+            underlying: Underlying ticker symbol
+            min_premium: Minimum premium threshold (default: $10K)
+            min_volume_delta: Minimum volume change (default: 10 contracts)
+            min_volume_ratio: Minimum volume vs OI ratio for unusual activity (default: 2.0x)
+
+        Returns:
+            List of flow dictionaries sorted by premium (descending)
+
+        Flow signal structure:
+            {
+                'ticker': 'O:AAPL250117C00200000',
+                'underlying': 'AAPL',
+                'type': 'CALL' or 'PUT',
+                'strike': 200.0,
+                'expiration': '2025-01-17',
+                'volume_delta': 150,  # Volume change since last snapshot
+                'total_volume': 1500,  # Current total volume
+                'open_interest': 10000,
+                'last_price': 5.25,
+                'premium': 78750.0,  # volume_delta * last_price * 100
+                'implied_volatility': 0.35,
+                'delta': 0.52,
+                'underlying_price': 195.50,
+                'timestamp': datetime(...)
+            }
+        """
+        try:
+            # Step 1: Get current snapshot from Polygon API
+            current_snapshot = await self.get_option_chain_snapshot(underlying)
+
+            if not current_snapshot:
+                logger.debug(f"No contracts found for {underlying}")
+                return []
+
+            # Step 2: Get previous snapshot from cache
+            previous_snapshot_dict = await volume_cache.get(underlying)
+
+            # Step 3: Calculate volume deltas and detect flow
+            flows = []
+            current_snapshot_dict = {}
+
+            for contract in current_snapshot:
+                try:
+                    # Extract contract data with validation
+                    ticker = contract.get('ticker', '')
+                    if not ticker:
+                        continue
+
+                    # Get day data (volume, price, etc.)
+                    day_data = contract.get('day', {})
+                    current_volume = day_data.get('volume', 0)
+                    last_price = day_data.get('close', 0)
+
+                    # Skip if no volume or price
+                    if current_volume == 0 or last_price == 0:
+                        continue
+
+                    # Store current volume for cache update
+                    current_snapshot_dict[ticker] = {
+                        'volume': current_volume,
+                        'timestamp': datetime.now()
+                    }
+
+                    # Calculate volume delta
+                    previous_volume = 0
+                    if previous_snapshot_dict and ticker in previous_snapshot_dict:
+                        previous_volume = previous_snapshot_dict[ticker].get('volume', 0)
+
+                    volume_delta = current_volume - previous_volume
+
+                    # Filter: Must have significant volume change
+                    if volume_delta < min_volume_delta:
+                        continue
+
+                    # Calculate premium for the delta volume
+                    premium = volume_delta * last_price * 100  # Options multiplier
+
+                    # Filter: Must meet premium threshold
+                    if premium < min_premium:
+                        continue
+
+                    # Get contract details
+                    details = contract.get('details', {})
+                    strike = details.get('strike_price', 0)
+                    expiration = details.get('expiration_date', '')
+                    contract_type = details.get('contract_type', '')
+
+                    # Get Greeks
+                    greeks = contract.get('greeks', {})
+                    delta = greeks.get('delta', 0)
+                    gamma = greeks.get('gamma', 0)
+                    theta = greeks.get('theta', 0)
+                    vega = greeks.get('vega', 0)
+
+                    # Get additional metrics
+                    open_interest = contract.get('open_interest', 0)
+                    implied_vol = contract.get('implied_volatility', 0)
+
+                    # Get underlying price
+                    underlying_asset = contract.get('underlying_asset', {})
+                    underlying_price = underlying_asset.get('price', 0)
+
+                    # Calculate volume/OI ratio for unusual activity detection
+                    vol_oi_ratio = 0
+                    if open_interest > 0:
+                        vol_oi_ratio = volume_delta / open_interest
+
+                    # Optional: Filter by volume/OI ratio for truly unusual activity
+                    # (Commented out to catch all flows above premium threshold)
+                    # if vol_oi_ratio < min_volume_ratio and open_interest > 100:
+                    #     continue
+
+                    # Determine option type
+                    option_type = 'CALL' if contract_type == 'call' or 'C' in ticker else 'PUT'
+
+                    # Create flow signal
+                    flow = {
+                        'ticker': ticker,
+                        'underlying': underlying,
+                        'type': option_type,
+                        'strike': DataValidator.validate_price(strike, 'strike'),
+                        'expiration': expiration,
+                        'volume_delta': volume_delta,
+                        'total_volume': current_volume,
+                        'open_interest': open_interest,
+                        'vol_oi_ratio': vol_oi_ratio,
+                        'last_price': DataValidator.validate_price(last_price, 'price'),
+                        'premium': premium,
+                        'implied_volatility': implied_vol,
+                        'delta': delta,
+                        'gamma': gamma,
+                        'theta': theta,
+                        'vega': vega,
+                        'underlying_price': underlying_price,
+                        'timestamp': datetime.now()
+                    }
+
+                    flows.append(flow)
+
+                except DataValidationException as e:
+                    logger.debug(f"Skipping invalid contract data: {e}")
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error processing contract {ticker}: {e}")
+                    continue
+
+            # Step 4: Update cache with current snapshot
+            if current_snapshot_dict:
+                await volume_cache.set(underlying, current_snapshot_dict)
+
+            # Step 5: Sort by premium (highest first) and return
+            flows_sorted = sorted(flows, key=lambda x: x['premium'], reverse=True)
+
+            if flows_sorted:
+                logger.info(
+                    f"Detected {len(flows_sorted)} flow signals for {underlying} "
+                    f"(top premium: ${flows_sorted[0]['premium']:,.0f})"
+                )
+
+            return flows_sorted
+
+        except Exception as e:
+            logger.error(f"Error detecting unusual flow for {underlying}: {e}")
+            return []
+
     async def get_market_hours(self, date: Optional[str] = None) -> Dict:
         """Check if market is open"""
         if not date:
