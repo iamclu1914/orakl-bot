@@ -4,10 +4,17 @@ Consumes real-time data from your Polygon → Kafka pipeline
 """
 import asyncio
 import os
+import logging
 from dotenv import load_dotenv
 from src.bots.golden_sweeps_bot_kafka import GoldenSweepsBotKafka
 from src.options_analyzer import OptionsAnalyzer
-from src.utils.logger import logger
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
