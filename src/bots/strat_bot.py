@@ -213,11 +213,37 @@ class STRATPatternBot:
         return confidence
 
     def should_alert_pattern(self, pattern_type: str, signal: Dict) -> bool:
-        """Check if pattern should be alerted based on time windows"""
-        now = datetime.now(self.est)
+        """
+        Check if pattern should be alerted based on pattern-specific time windows
 
-        # All STRAT alerts sent at 8:10 PM EST
-        return now.hour == 20 and now.minute >= 10 and now.minute <= 15
+        Pattern-specific alert times (EST):
+        - 1-3-1 Miyagi: 8:00 AM and 8:00 PM
+        - 2-2 Reversal: 4:00 AM and 8:00 AM
+        - 3-2-2 Reversal: 10:01 AM
+        """
+        now = datetime.now(self.est)
+        current_hour = now.hour
+        current_minute = now.minute
+
+        # 5-minute alert window for each scheduled time
+        alert_window = 5
+
+        if pattern_type == '1-3-1 Miyagi':
+            # Alert at 8:00 AM (08:00-08:05) and 8:00 PM (20:00-20:05)
+            return ((current_hour == 8 and current_minute < alert_window) or
+                    (current_hour == 20 and current_minute < alert_window))
+
+        elif pattern_type == '2-2 Reversal':
+            # Alert at 4:00 AM (04:00-04:05) and 8:00 AM (08:00-08:05)
+            return ((current_hour == 4 and current_minute < alert_window) or
+                    (current_hour == 8 and current_minute < alert_window))
+
+        elif pattern_type == '3-2-2 Reversal':
+            # Alert at 10:01 AM (10:01-10:06)
+            return (current_hour == 10 and current_minute >= 1 and current_minute < (1 + alert_window))
+
+        # Default: no alert (should not reach here with valid patterns)
+        return False
 
     def track_pattern_state(self, ticker: str, pattern: Dict):
         """Track patterns that need monitoring (e.g., 2-2 waiting for pullback)"""
