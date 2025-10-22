@@ -590,6 +590,16 @@ class STRATPatternBot:
     def send_alert(self, signal: Dict):
         """PRD Enhanced: Send Discord alert with confidence score"""
         try:
+            # Validate signal has all required fields with valid numbers
+            required_fields = ['entry', 'target', 'stop']
+            for field in required_fields:
+                if field not in signal or signal[field] is None:
+                    logger.error(f"Signal missing or null {field}: {signal}")
+                    return
+                if not isinstance(signal[field], (int, float)) or signal[field] <= 0:
+                    logger.error(f"Invalid {field} value: {signal[field]}")
+                    return
+
             webhook = DiscordWebhook(url=self.webhook_url, rate_limit_retry=True)
 
             color = 0x00FF00 if signal['direction'] == 'Bullish' else 0xFF0000
@@ -600,7 +610,7 @@ class STRATPatternBot:
                 color=color
             )
 
-            # Add core fields
+            # Add core fields with validated values
             embed.add_embed_field(name="📊 Timeframe", value=signal['timeframe'], inline=True)
             embed.add_embed_field(name="📍 Entry", value=f"${signal['entry']:.2f}", inline=True)
             embed.add_embed_field(name="🎯 Target", value=f"${signal['target']:.2f}", inline=True)
