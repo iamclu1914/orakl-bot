@@ -36,77 +36,106 @@ class TradyFlowBot(BaseAutoBot):
         await super().scan_and_post()
 
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
-        """Scan a symbol for repeat/dominant signals"""
+        """
+        Scan a symbol for repeat/dominant signals using efficient REST flow detection.
+
+        NEW APPROACH (REST):
+        - Uses detect_unusual_flow() for efficient volume delta detection
+        - Single API call per symbol (vs 50+ in old approach)
+        - Detects flows via volume changes between polling intervals
+        """
         signals = []
 
         try:
-            # Get current price
+            # Get current price for context
             current_price = await self.fetcher.get_stock_price(symbol)
             if not current_price:
                 return signals
 
-            # Get options trades
-            trades = await self.fetcher.get_options_trades(symbol)
-            if trades.empty:
+            # NEW: Use efficient flow detection (single API call)
+            flows = await self.fetcher.detect_unusual_flow(
+                underlying=symbol,
+                min_premium=Config.MIN_PREMIUM,  # $10K minimum
+                min_volume_delta=10  # At least 10 contracts of volume change
+            )
+
+            if not flows:
                 return signals
 
-            # Filter significant trades
-            significant = trades[
-                (trades['premium'] >= Config.MIN_PREMIUM) &
-                (trades['volume'] >= Config.MIN_VOLUME)
-            ]
+            # Process each flow signal
+            for flow in flows:
+                try:
+                    # Extract flow data
+                    contract_ticker = flow['ticker']
+                    opt_type = flow['type']
+                    strike = flow['strike']
+                    expiration = flow['expiration']
+                    premium = flow['premium']
+                    volume = flow['volume_delta']
 
-            # Group by contract
-            for (contract, opt_type, strike, expiration), group in significant.groupby(
-                ['contract', 'type', 'strike', 'expiration']
-            ):
-                total_premium = group['premium'].sum()
-                total_volume = group['volume'].sum()
+                    # Calculate days to expiry
+                    exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                    days_to_expiry = (exp_date - datetime.now()).days
 
-                # Check for repeat signals
-                repeat_count = self.analyzer.identify_repeat_signals(
-                    symbol, strike, opt_type, expiration, total_premium
-                )
+                    # Filter: Valid DTE range (1-45 days)
+                    if days_to_expiry <= 0 or days_to_expiry > 45:
+                        continue
 
-                # Must have at least 3 repeat signals
-                if repeat_count < 3:
-                    continue
+                    # Check for repeat signals
+                    repeat_count = self.analyzer.identify_repeat_signals(
+                        symbol, strike, opt_type, expiration, premium
+                    )
 
-                # Calculate days to expiry
-                exp_date = datetime.strptime(expiration, '%Y-%m-%d')
-                days_to_expiry = (exp_date - datetime.now()).days
+                    # Must have at least 3 repeat signals for ORAKL Flow
+                    if repeat_count < 3:
+                        continue
 
-                if days_to_expiry <= 0 or days_to_expiry > 45:
-                    continue
+                    # Calculate probability ITM
+                    prob_itm = self.analyzer.calculate_probability_itm(
+                        opt_type, strike, current_price, days_to_expiry
+                    )
 
-                # Calculate probability ITM
-                prob_itm = self.analyzer.calculate_probability_itm(
-                    opt_type, strike, current_price, days_to_expiry
-                )
+                    # High probability threshold (minimum 50%)
+                    if prob_itm < 50:
+                        continue
 
-                # High probability threshold (minimum 50%)
-                if prob_itm >= 50:
+                    # Create signal
                     signal = {
                         'ticker': symbol,
+                        'contract': contract_ticker,
                         'type': opt_type,
                         'strike': strike,
                         'expiration': expiration,
                         'current_price': current_price,
+                        'underlying_price': flow.get('underlying_price', current_price),
                         'days_to_expiry': days_to_expiry,
-                        'premium': total_premium,
-                        'volume': total_volume,
+                        'premium': premium,
+                        'volume': volume,
+                        'total_volume': flow.get('total_volume', volume),
+                        'open_interest': flow.get('open_interest', 0),
                         'repeat_count': repeat_count,
-                        'probability_itm': prob_itm
+                        'probability_itm': prob_itm,
+                        'implied_volatility': flow.get('implied_volatility', 0),
+                        'delta': flow.get('delta', 0)
                     }
 
-                    # Check if already posted
+                    # Check if already posted (deduplication)
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
                     if signal_key not in self.signal_history:
                         signals.append(signal)
                         self.signal_history[signal_key] = datetime.now()
+                        logger.info(
+                            f"ORAKL Flow detected: {symbol} {opt_type} ${strike} "
+                            f"(Premium: ${premium:,.0f}, Repeats: {repeat_count}, "
+                            f"ITM Prob: {prob_itm:.1f}%)"
+                        )
+
+                except Exception as e:
+                    logger.debug(f"Error processing flow for {symbol}: {e}")
+                    continue
 
         except Exception as e:
-            logger.error(f"Error scanning {symbol}: {e}")
+            logger.error(f"Error scanning {symbol} for ORAKL Flow: {e}")
 
         return signals
 

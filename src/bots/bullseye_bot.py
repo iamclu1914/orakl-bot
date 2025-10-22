@@ -51,83 +51,110 @@ class BullseyeBot(BaseAutoBot):
             await self._post_signal(signal)
 
     async def _scan_for_swing_trade(self, symbol: str, market_context: Dict) -> List[Dict]:
-        """Scan a single symbol for swing trade setups"""
+        """
+        Scan a single symbol for swing trade setups using efficient REST flow detection.
+
+        NEW APPROACH (REST):
+        - Uses detect_unusual_flow() with $5K premium threshold
+        - ATM filtering (delta 0.4-0.6 range)
+        - 7-60 day DTE range for swing trades
+        """
         signals = []
         try:
             current_price = await self.fetcher.get_stock_price(symbol)
-            if not current_price: return signals
+            if not current_price:
+                return signals
 
-            # 1. Focus on longer expirations (7-60 days)
-            from_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-            to_date = (datetime.now() + timedelta(days=60)).strftime('%Y-%m-%d')
-            
-            options_chain = await self.fetcher.get_options_chain(symbol, expiration_date_gte=from_date, expiration_date_lte=to_date)
-            if options_chain.empty: return signals
+            # NEW: Use efficient flow detection (single API call)
+            flows = await self.fetcher.detect_unusual_flow(
+                underlying=symbol,
+                min_premium=Config.BULLSEYE_MIN_PREMIUM,  # $5K minimum
+                min_volume_delta=10  # At least 10 contracts of volume change
+            )
 
-            # Analyze each contract in the chain
-            for _, contract in options_chain.iterrows():
-                # 2. Unusual Volume & Open Interest (VOI > 3)
-                volume = contract.get('day', {}).get('volume', 0)
-                open_interest = contract.get('open_interest', 0)
-                
-                if open_interest == 0 or volume < 100: continue
-                
-                voi_ratio = volume / open_interest
-                if voi_ratio < 3.0: continue
+            # Price Action Confirmation
+            momentum = await self._calculate_momentum(symbol)
+            if not momentum:
+                return signals
 
-                # 3. Significant Smart Money (>= $25k premium)
-                last_price = contract.get('day', {}).get('close', 0)
-                premium = volume * last_price * 100
-                if premium < 25000: continue
+            # Process each flow signal
+            for flow in flows:
+                # Extract flow data
+                opt_type = flow['type']
+                strike = flow['strike']
+                expiration = flow['expiration']
+                premium = flow['premium']
+                total_volume = flow['total_volume']
+                volume_delta = flow['volume_delta']
+                open_interest = flow.get('open_interest', 0)
+                delta = flow.get('delta', 0)
 
-                # 4. Price Action Confirmation
-                momentum = await self._calculate_momentum(symbol)
-                opt_type = contract.get('contract_type', '').upper()
-                
-                if not momentum or \
-                   (opt_type == 'CALL' and momentum['direction'] != 'bullish') or \
+                # Calculate DTE
+                exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                days_to_expiry = (exp_date - datetime.now()).days
+
+                # Filter 1: DTE range (7-60 days for swing trades)
+                if days_to_expiry < 7 or days_to_expiry > 60:
+                    continue
+
+                # Filter 2: VOI ratio (volume/OI > 3.0)
+                if open_interest == 0 or total_volume < 100:
+                    continue
+
+                voi_ratio = total_volume / open_interest
+                if voi_ratio < 3.0:
+                    continue
+
+                # Filter 3: ATM options only (delta 0.4-0.6 range)
+                if abs(delta) < 0.4 or abs(delta) > 0.6:
+                    continue
+
+                # Filter 4: Strike distance (within 15% of current price)
+                strike_distance = abs(strike - current_price) / current_price
+                if strike_distance > 0.15:
+                    continue
+
+                # Filter 5: Price action confirmation
+                if (opt_type == 'CALL' and momentum['direction'] != 'bullish') or \
                    (opt_type == 'PUT' and momentum['direction'] != 'bearish'):
                     continue
-                
-                # 5. Strike Price Sanity Check (near the money)
-                strike_price = contract.get('strike_price', 0)
-                strike_distance = abs(strike_price - current_price) / current_price
-                if strike_distance > 0.15: # Within 15% of current price
-                    continue
 
-                # If all checks pass, calculate score and create signal
-                days_to_expiry = (pd.to_datetime(contract['expiration_date']) - datetime.now()).days
-                
+                # Calculate Bullseye score
                 bullseye_score = self._calculate_bullseye_score(
                     voi_ratio, premium, momentum['strength'], days_to_expiry
                 )
 
-                if bullseye_score >= 70:
+                if bullseye_score >= Config.MIN_BULLSEYE_SCORE:
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
-                        'strike': strike_price,
-                        'expiration': contract['expiration_date'],
+                        'strike': strike,
+                        'expiration': expiration,
                         'current_price': current_price,
                         'days_to_expiry': days_to_expiry,
                         'premium': premium,
-                        'volume': volume,
+                        'volume': total_volume,
                         'open_interest': open_interest,
                         'voi_ratio': voi_ratio,
                         'momentum_strength': momentum['strength'],
+                        'momentum_direction': momentum['direction'],
                         'bullseye_score': bullseye_score,
-                        'market_context': market_context
+                        'market_context': market_context,
+                        'volume_delta': volume_delta,
+                        'delta': delta,
+                        'gamma': flow.get('gamma', 0),
+                        'vega': flow.get('vega', 0)
                     }
-                    
-                    signal_key = f"{symbol}_{opt_type}_{strike_price}_{contract['expiration_date']}"
+
+                    signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
                     if signal_key not in self.signal_history or \
-                       (datetime.now() - self.signal_history[signal_key]).total_seconds() > 3600 * 4: # Re-alert after 4 hours
+                       (datetime.now() - self.signal_history[signal_key]).total_seconds() > 3600 * 4:
                         signals.append(signal)
                         self.signal_history[signal_key] = datetime.now()
 
         except Exception as e:
             logger.error(f"Error scanning for swing trades on {symbol}: {e}")
-        
+
         return signals
 
     def _calculate_bullseye_score(self, voi_ratio: float, premium: float, momentum_strength: float, dte: int) -> int:

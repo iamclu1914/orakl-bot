@@ -48,10 +48,17 @@ class SweepsBot(BaseAutoBot):
         await super().scan_and_post()
     
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
-        """Scan a symbol for large sweeps with enhancements"""
+        """
+        Scan a symbol for large sweeps using efficient REST flow detection.
+
+        NEW APPROACH (REST):
+        - Uses detect_unusual_flow() with $50K premium threshold
+        - Volume delta analysis for sweep detection
+        - Enhanced with volume ratio and score boosting
+        """
         try:
             sweeps = await self._scan_sweeps(symbol)
-            
+
             # Enhance and filter signals
             enhanced_sweeps = []
             for sweep in sweeps:
@@ -61,164 +68,82 @@ class SweepsBot(BaseAutoBot):
                         symbol, sweep['volume']
                     )
                     sweep['volume_ratio'] = volume_ratio
-                    
-                    # Apply score adjustments
-                    if sweep.get('sweep_score', 0) >= Config.MIN_SWEEP_SCORE:
+
+                    # Boost score for unusual volume
+                    volume_boost = 0
+                    if volume_ratio >= 5.0:
+                        volume_boost = 25
+                    elif volume_ratio >= 3.0:
+                        volume_boost = 15
+                    elif volume_ratio >= 2.0:
+                        volume_boost = 10
+
+                    # Apply boost to base score
+                    sweep['sweep_score'] = min(
+                        sweep.get('sweep_score', 50) + volume_boost,
+                        100
+                    )
+
+                    # Filter by minimum score
+                    if sweep['sweep_score'] >= Config.MIN_SWEEP_SCORE:
                         enhanced_sweeps.append(sweep)
+
                 except Exception as e:
-                    logger.error(f"Error enhancing sweep: {e}")
+                    logger.debug(f"Error enhancing sweep: {e}")
+                    # Include unenhanced sweep if it meets threshold
                     if sweep.get('sweep_score', 0) >= Config.MIN_SWEEP_SCORE:
                         enhanced_sweeps.append(sweep)
-            
-            # Return top 3 signals per symbol
+
+            # Return top 3 signals per symbol sorted by score
             return sorted(enhanced_sweeps, key=lambda x: x.get('sweep_score', 0), reverse=True)[:3]
+
         except Exception as e:
-            logger.error(f"Error scanning {symbol}: {e}")
+            logger.error(f"Error scanning {symbol} for sweeps: {e}")
             return []
-        
-        # OLD SEQUENTIAL CODE - REMOVED
-        signals_found = 0
-        for symbol in self.watchlist:
-            try:
-                sweeps = await self._scan_sweeps(symbol)
-
-                # Enhance signals with critical features
-                enhanced_sweeps = []
-                for sweep in sweeps:
-                    try:
-                        # CRITICAL FEATURE #1: Volume Ratio Analysis
-                        volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
-                            symbol, sweep['volume']
-                        )
-                        sweep['volume_ratio'] = volume_ratio
-
-                        # Boost score for unusual volume
-                        volume_boost = 0
-                        if volume_ratio >= 5.0:
-                            volume_boost = 25
-                        elif volume_ratio >= 3.0:
-                            volume_boost = 15
-                        elif volume_ratio >= 2.0:
-                            volume_boost = 10
-
-                        # CRITICAL FEATURE #2: Price Action Alignment
-                        alignment = await self.enhanced_analyzer.check_price_action_alignment(
-                            symbol, sweep['type']
-                        )
-
-                        if alignment:
-                            sweep['price_aligned'] = alignment['aligned']
-                            sweep['momentum_strength'] = alignment['strength']
-                            sweep['alignment_confidence'] = alignment['confidence']
-
-                            if alignment['aligned']:
-                                volume_boost += 20
-                                if alignment['volume_confirmed']:
-                                    volume_boost += 10
-
-                        # CRITICAL FEATURE #3: Implied Move Calculator
-                        avg_price = sweep['premium'] / (sweep['volume'] * 100)
-                        implied = self.enhanced_analyzer.calculate_implied_move(
-                            sweep['current_price'],
-                            sweep['strike'],
-                            avg_price,
-                            sweep['days_to_expiry'],
-                            sweep['type']
-                        )
-                        sweep['breakeven'] = implied['breakeven']
-                        sweep['needed_move'] = implied['needed_move_pct']
-                        sweep['prob_profit'] = implied['prob_profit']
-                        sweep['risk_grade'] = implied['grade']
-
-                        # Apply boosts
-                        sweep['enhanced_score'] = sweep['sweep_score'] + volume_boost
-
-                        # Require minimum 50% confidence
-                        if sweep['enhanced_score'] >= max(50, self.MIN_SCORE):
-                            enhanced_sweeps.append(sweep)
-
-                    except Exception as e:
-                        logger.warning(f"Error enhancing signal for {symbol}: {e}")
-                        # Require minimum 50% confidence even for fallback
-                        if sweep['sweep_score'] >= max(50, self.MIN_SCORE):
-                            enhanced_sweeps.append(sweep)
-
-                # Post enhanced signals
-                for sweep in enhanced_sweeps:
-                    if await self._post_signal(sweep):
-                        signals_found += 1
-
-            except Exception as e:
-                error_info = handle_exception(e, logger)
-                logger.error(f"{self.name} error scanning {symbol}: {error_info['message']}")
-
-        if signals_found > 0:
-            signals_generated.inc(
-                value=signals_found,
-                labels={'bot': self.name, 'signal_type': 'sweep'}
-            )
 
     async def _scan_sweeps(self, symbol: str) -> List[Dict]:
-        """Scan for sweep orders"""
+        """
+        Scan for sweep orders using efficient flow detection.
+
+        NEW APPROACH (REST):
+        - Single API call via detect_unusual_flow()
+        - $50K+ premium threshold
+        - Volume delta indicates aggressive buying/selling
+        """
         sweeps = []
 
         try:
-            # Get current price
+            # Get current price for context
             current_price = await self.fetcher.get_stock_price(symbol)
             if not current_price:
                 return sweeps
 
-            # Get recent options trades
-            trades = await self.fetcher.get_options_trades(symbol)
-            if trades.empty:
-                return sweeps
+            # NEW: Use efficient flow detection (single API call)
+            flows = await self.fetcher.detect_unusual_flow(
+                underlying=symbol,
+                min_premium=self.MIN_SWEEP_PREMIUM,  # $50K minimum
+                min_volume_delta=10  # At least 10 contracts of volume change
+            )
 
-            # Filter recent high-value trades (last 10 minutes)
-            recent = trades[
-                (trades['timestamp'] > datetime.now() - timedelta(minutes=10)) &
-                (trades['premium'] >= self.MIN_SWEEP_PREMIUM)
-            ]
+            # Process each flow signal
+            for flow in flows:
+                # Extract flow data
+                opt_type = flow['type']
+                strike = flow['strike']
+                expiration = flow['expiration']
+                premium = flow['premium']
+                total_volume = flow['total_volume']
+                volume_delta = flow['volume_delta']
 
-            if recent.empty:
-                return sweeps
-
-            # Identify sweeps (aggressive fills at multiple price levels)
-            # Group by contract and look for rapid succession
-            for (contract, opt_type, strike, expiration), group in recent.groupby(
-                ['contract', 'type', 'strike', 'expiration']
-            ):
-                # Sort by timestamp
-                group = group.sort_values('timestamp')
-
-                # Check for sweep characteristics
-                total_premium = group['premium'].sum()
-                total_volume = group['volume'].sum()
-                num_trades = len(group)
-
-                # Sweep detection:
-                # 1. Multiple fills in quick succession (>2 trades in <5 minutes)
-                # 2. Large premium ($50k+)
-                # 3. Aggressive pricing (likely market orders)
-
-                time_span = (group['timestamp'].max() - group['timestamp'].min()).total_seconds()
-
-                is_sweep = (
-                    num_trades >= 2 and
-                    time_span <= 300 and  # Within 5 minutes
-                    total_premium >= self.MIN_SWEEP_PREMIUM
-                )
-
-                if not is_sweep:
-                    continue
-
-                # Calculate metrics
-                exp_date = pd.to_datetime(expiration)
+                # Calculate DTE
+                exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
 
-                if days_to_expiry < 0 or days_to_expiry > 90:
+                # Filter: Valid DTE range (1-90 days)
+                if days_to_expiry <= 0 or days_to_expiry > 90:
                     continue
 
-                # Probability ITM
+                # Calculate probability ITM
                 prob_itm = self.analyzer.calculate_probability_itm(
                     opt_type, strike, current_price, days_to_expiry
                 )
@@ -230,11 +155,13 @@ class SweepsBot(BaseAutoBot):
                 else:
                     moneyness = 'ITM' if strike > current_price else 'OTM' if strike < current_price else 'ATM'
 
-                # Calculate sweep score
+                # Calculate sweep score (estimate 3+ fills based on volume delta)
+                num_fills = max(3, int(volume_delta / 50))  # Estimate fills from volume
                 sweep_score = self._calculate_sweep_score(
-                    total_premium, total_volume, num_trades, abs(strike_distance)
+                    premium, total_volume, num_fills, abs(strike_distance)
                 )
 
+                # Create sweep signal
                 sweep = {
                     'ticker': symbol,
                     'symbol': symbol,
@@ -243,19 +170,23 @@ class SweepsBot(BaseAutoBot):
                     'expiration': expiration,
                     'current_price': current_price,
                     'days_to_expiry': days_to_expiry,
-                    'premium': total_premium,
+                    'premium': premium,
                     'volume': total_volume,
-                    'num_fills': num_trades,
+                    'num_fills': num_fills,
                     'moneyness': moneyness,
                     'strike_distance': strike_distance,
                     'probability_itm': prob_itm,
                     'sweep_score': sweep_score,
-                    'time_span': time_span
+                    'time_span': 0,  # Not available in REST (was time between trades)
+                    'volume_delta': volume_delta,
+                    'delta': flow.get('delta', 0),
+                    'gamma': flow.get('gamma', 0),
+                    'vega': flow.get('vega', 0)
                 }
 
                 # CRITICAL FEATURE #4: Smart Deduplication
                 signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
-                dedup_result = self.deduplicator.should_alert(signal_key, total_premium)
+                dedup_result = self.deduplicator.should_alert(signal_key, premium)
 
                 if dedup_result['should_alert']:
                     sweep['alert_type'] = dedup_result['type']

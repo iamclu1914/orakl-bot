@@ -87,7 +87,14 @@ class ScalpsBot(BaseAutoBot):
 
     async def _scan_strat_setup(self, symbol: str, market_context: Dict = None,
                                adjusted_threshold: int = 50) -> List[Dict]:
-        """Scan for Strat patterns and quick scalp opportunities"""
+        """
+        Scan for Strat patterns and quick scalp opportunities using efficient REST flow detection.
+
+        NEW APPROACH (REST):
+        - Uses detect_unusual_flow() with $2K premium threshold
+        - DTE ≤7 days filter for scalps
+        - Pattern and momentum confirmation
+        """
         signals = []
 
         try:
@@ -116,36 +123,32 @@ class ScalpsBot(BaseAutoBot):
                 logger.debug(f"{symbol}: RSI {rsi:.1f} not aligned with {pattern['direction']} pattern")
                 return signals
 
-            # Get active options with volume
-            trades = await self.fetcher.get_options_trades(symbol)
-            if trades.empty:
-                return signals
+            # NEW: Use efficient flow detection (single API call)
+            flows = await self.fetcher.detect_unusual_flow(
+                underlying=symbol,
+                min_premium=Config.SCALPS_MIN_PREMIUM,  # $2K minimum
+                min_volume_delta=10  # At least 10 contracts of volume change
+            )
 
-            # Filter for scalp-friendly options with improved liquidity requirements
-            recent_trades = trades[
-                (trades['timestamp'] > datetime.now() - timedelta(minutes=15)) &
-                (trades['volume'] >= 75) &  # Increased for better liquidity
-                (trades['premium'] >= 5000)  # Increased to $5K for institutional quality
-            ]
+            # Process each flow signal
+            for flow in flows:
+                # Extract flow data
+                opt_type = flow['type']
+                strike = flow['strike']
+                expiration = flow['expiration']
+                premium = flow['premium']
+                total_volume = flow['total_volume']
+                volume_delta = flow['volume_delta']
 
-            if recent_trades.empty:
-                return signals
-
-            # Group by contract
-            for (contract, opt_type, strike, expiration), group in recent_trades.groupby(
-                ['contract', 'type', 'strike', 'expiration']
-            ):
-                exp_date = pd.to_datetime(expiration)
+                # Calculate DTE
+                exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
 
-                # Prefer 0-7 DTE for scalps
+                # Filter 1: DTE ≤7 days for scalps
                 if days_to_expiry < 0 or days_to_expiry > 7:
                     continue
 
-                total_volume = group['volume'].sum()
-                total_premium = group['premium'].sum()
-
-                # Check pattern alignment
+                # Filter 2: Pattern alignment
                 pattern_aligned = (
                     (pattern['direction'] == 'bullish' and opt_type == 'CALL') or
                     (pattern['direction'] == 'bearish' and opt_type == 'PUT')
@@ -154,12 +157,12 @@ class ScalpsBot(BaseAutoBot):
                 if not pattern_aligned:
                     continue
 
-                # Strike proximity check
+                # Filter 3: Strike proximity (within 3% for scalps)
                 strike_distance = abs(strike - current_price) / current_price * 100
-                if strike_distance > 3:  # Within 3% for scalps
+                if strike_distance > 3:
                     continue
 
-                # Volume intensity check
+                # Filter 4: Volume intensity check
                 if total_volume < 50:
                     continue
 
@@ -169,15 +172,15 @@ class ScalpsBot(BaseAutoBot):
                 )
 
                 if scalp_score >= adjusted_threshold:
-                    # Get average price for exit calculations
-                    avg_price = group['price'].mean()
-                    
+                    # Calculate average price from premium and volume
+                    avg_price = premium / (total_volume * 100) if total_volume > 0 else 0
+
                     # Calculate exit strategies
                     exits = ExitStrategies.calculate_exits(
-                        'scalp', avg_price, current_price, opt_type, 
+                        'scalp', avg_price, current_price, opt_type,
                         atr=current_price * 0.02, dte=days_to_expiry
                     )
-                    
+
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
@@ -186,7 +189,7 @@ class ScalpsBot(BaseAutoBot):
                         'current_price': current_price,
                         'days_to_expiry': days_to_expiry,
                         'volume': total_volume,
-                        'premium': total_premium,
+                        'premium': premium,
                         'pattern': pattern['name'],
                         'pattern_direction': pattern['direction'],
                         'pattern_strength': pattern['strength'],
@@ -200,7 +203,11 @@ class ScalpsBot(BaseAutoBot):
                         'risk_reward_1': exits['risk_reward_1'],
                         'risk_reward_2': exits['risk_reward_2'],
                         'exit_strategy': exits,
-                        'market_context': market_context
+                        'market_context': market_context,
+                        'volume_delta': volume_delta,
+                        'delta': flow.get('delta', 0),
+                        'gamma': flow.get('gamma', 0),
+                        'rsi': rsi
                     }
 
                     # Check if already posted
