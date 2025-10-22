@@ -648,13 +648,12 @@ class STRATPatternBot:
         embed.add_embed_field(name="", value=disclaimer, inline=False)
 
     async def scan(self):
-        """PRD Enhanced: Scan with best signal selection"""
+        """PRD Enhanced: Scan with best signal selection - 24/7 monitoring"""
         logger.info(f"{self.name} scan started")
-        
-        # STRAT bot scans 24/7 but only on trading days (weekdays, excluding holidays)
-        if not MarketHours.is_trading_day():
-            logger.debug(f"{self.name} - Not a trading day (weekend/holiday), skipping scan")
-            return
+
+        # STRAT patterns work on any timeframe, so scan 24/7 including weekends
+        # This allows detection of patterns forming outside regular market hours
+        # Note: Actual trading signals should still be validated during market hours
 
         signals_found = []
         

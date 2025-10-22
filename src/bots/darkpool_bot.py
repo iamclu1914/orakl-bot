@@ -34,8 +34,9 @@ class DarkpoolBot(BaseAutoBot):
         """Scan for large darkpool and block trades using concurrent processing"""
         logger.info(f"{self.name} scanning for darkpool activity")
 
-        # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
-        if not MarketHours.is_market_open():
+        # Scan during regular hours AND after-hours (9:30 AM - 8:00 PM EST, Monday-Friday)
+        # Institutional darkpool activity often continues after market close
+        if not MarketHours.is_market_open() and not MarketHours.is_extended_hours():
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
