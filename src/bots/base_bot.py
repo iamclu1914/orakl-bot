@@ -595,6 +595,94 @@ class BaseAutoBot(ABC):
             # On error, be conservative and reject
             return False
     
+    def calculate_score(self, metrics: Dict[str, tuple], max_score: int = 100) -> int:
+        """
+        Generic scoring system for bot signals with configurable tiers
+
+        Args:
+            metrics: Dictionary of metric configurations
+                    Format: {'metric_name': (value, [(threshold1, points1), (threshold2, points2), ...])}
+                    Example: {'premium': (1500000, [(10000000, 50), (5000000, 45), (2500000, 40)])}
+            max_score: Maximum possible score (default 100)
+
+        Returns:
+            Integer score (0-max_score)
+
+        Example:
+            score = self.calculate_score({
+                'premium': (total_premium, [
+                    (10000000, 50),  # $10M+ → 50 points
+                    (5000000, 45),   # $5M+ → 45 points
+                    (2500000, 40),   # $2.5M+ → 40 points
+                    (1000000, 35)    # $1M+ → 35 points
+                ]),
+                'volume': (total_volume, [
+                    (2000, 20),  # 2000+ → 20 points
+                    (1000, 17),  # 1000+ → 17 points
+                    (500, 14)    # 500+ → 14 points
+                ])
+            })
+        """
+        score = 0
+
+        for metric_name, config in metrics.items():
+            value, tiers = config
+
+            # Find matching tier (highest threshold met)
+            for threshold, points in tiers:
+                if value >= threshold:
+                    score += points
+                    break  # Only award points for highest tier met
+
+        return min(score, max_score)
+
+    def create_signal_embed_with_disclaimer(self, title: str, description: str, color: int,
+                                           fields: List[Dict], footer: str,
+                                           disclaimer: str = "Please always do your own due diligence on top of these trade ideas.") -> Dict:
+        """
+        Create signal embed with automatic disclaimer field appended
+
+        This is a convenience wrapper around create_embed() that automatically adds
+        the standard disclaimer field at the end.
+
+        Args:
+            title: Embed title
+            description: Embed description
+            color: Hex color code (e.g., 0xFFD700 for gold)
+            fields: List of field dictionaries
+            footer: Footer text
+            disclaimer: Disclaimer text (default: standard due diligence message)
+
+        Returns:
+            Discord embed dictionary
+
+        Example:
+            embed = self.create_signal_embed_with_disclaimer(
+                title=f"🏆 {ticker} - Signal",
+                description="High conviction trade",
+                color=0xFFD700,
+                fields=[
+                    {"name": "Ticker", "value": ticker, "inline": True},
+                    {"name": "Price", "value": f"${price:.2f}", "inline": True}
+                ],
+                footer="Bot Name | Signal Type"
+            )
+        """
+        # Add disclaimer field
+        fields_with_disclaimer = fields + [{
+            "name": "",
+            "value": disclaimer,
+            "inline": False
+        }]
+
+        return self.create_embed(
+            title=title,
+            description=description,
+            color=color,
+            fields=fields_with_disclaimer,
+            footer=footer
+        )
+
     def rank_signals(self, signals: List[Dict]) -> List[Dict]:
         """
         Rank signals by quality and urgency

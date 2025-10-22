@@ -88,90 +88,6 @@ class GoldenSweepsBot(BaseAutoBot):
         except Exception as e:
             logger.error(f"Error scanning {symbol}: {e}")
             return []
-        
-        # OLD SEQUENTIAL CODE - REMOVED
-        signals_found = 0
-        
-        for symbol in self.watchlist:
-            try:
-                sweeps = await self._scan_golden_sweeps(symbol)
-                
-                # Enhance signals with NEW critical features
-                enhanced_sweeps = []
-                for sweep in sweeps:
-                    try:
-                        # CRITICAL FEATURE #1: Volume Ratio Analysis
-                        volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
-                            symbol, sweep['volume']
-                        )
-                        sweep['volume_ratio'] = volume_ratio
-
-                        # Boost score for unusual volume
-                        volume_boost = 0
-                        if volume_ratio >= 5.0:  # 5x average
-                            volume_boost = 25
-                        elif volume_ratio >= 3.0:  # 3x average
-                            volume_boost = 15
-                        elif volume_ratio >= 2.0:  # 2x average
-                            volume_boost = 10
-
-                        # CRITICAL FEATURE #2: Price Action Alignment
-                        alignment = await self.enhanced_analyzer.check_price_action_alignment(
-                            symbol, sweep['type']
-                        )
-
-                        if alignment:
-                            sweep['price_aligned'] = alignment['aligned']
-                            sweep['momentum_strength'] = alignment['strength']
-                            sweep['alignment_confidence'] = alignment['confidence']
-
-                            # Boost score for alignment
-                            if alignment['aligned']:
-                                volume_boost += 20  # Flow matches stock movement
-                                if alignment['volume_confirmed']:
-                                    volume_boost += 10  # Volume confirms direction
-
-                        # CRITICAL FEATURE #3: Implied Move Calculator
-                        implied = self.enhanced_analyzer.calculate_implied_move(
-                            sweep['current_price'],
-                            sweep['strike'],
-                            sweep['avg_price'],
-                            sweep['days_to_expiry'],
-                            sweep['type']
-                        )
-                        sweep['breakeven'] = implied['breakeven']
-                        sweep['needed_move'] = implied['needed_move_pct']
-                        sweep['prob_profit'] = implied['prob_profit']
-                        sweep['risk_grade'] = implied['grade']
-
-                        # Apply volume and alignment boosts
-                        sweep['enhanced_score'] = sweep['golden_score'] + volume_boost
-
-                        # Only include if meets enhanced criteria (minimum 50%)
-                        if sweep['enhanced_score'] >= max(50, self.MIN_SCORE):
-                            enhanced_sweeps.append(sweep)
-                            logger.debug(f"Enhanced {symbol}: Score {sweep['golden_score']}→{sweep['enhanced_score']} (Vol:{volume_ratio}x, Aligned:{alignment.get('aligned') if alignment else 'N/A'})")
-
-                    except Exception as e:
-                        logger.warning(f"Error enhancing signal for {symbol}: {e}")
-                        # Fall back to original signal if meets minimum (50%)
-                        if sweep['golden_score'] >= max(50, self.MIN_SCORE):
-                            enhanced_sweeps.append(sweep)
-                
-                # Post enhanced signals
-                for sweep in enhanced_sweeps:
-                    if await self._post_signal(sweep):
-                        signals_found += 1
-                        
-            except Exception as e:
-                error_info = handle_exception(e, logger)
-                logger.error(f"{self.name} error scanning {symbol}: {error_info['message']}")
-        
-        if signals_found > 0:
-            signals_generated.inc(
-                value=signals_found,
-                labels={'bot': self.name, 'signal_type': 'golden_sweep'}
-            )
 
     async def _scan_golden_sweeps(self, symbol: str) -> List[Dict]:
         """Scan for 1M+ premium sweeps"""
@@ -354,30 +270,23 @@ class GoldenSweepsBot(BaseAutoBot):
 
     def _calculate_golden_score(self, premium: float, volume: int,
                                 strike_distance: float, dte: int) -> int:
-        """Calculate golden sweep score (0-100)"""
-        score = 0
+        """Calculate golden sweep score (0-100) using generic scoring system"""
+        score = self.calculate_score({
+            'premium': (premium, [
+                (10000000, 50),  # $10M+ → 50 points (50%)
+                (5000000, 45),   # $5M+ → 45 points
+                (2500000, 40),   # $2.5M+ → 40 points
+                (1000000, 35)    # $1M+ → 35 points
+            ]),
+            'volume': (volume, [
+                (2000, 20),  # 2000+ → 20 points (20%)
+                (1000, 17),  # 1000+ → 17 points
+                (500, 14),   # 500+ → 14 points
+                (0, 10)      # Default → 10 points
+            ])
+        })
 
-        # Premium magnitude (50%)
-        if premium >= 10000000:  # $10M+
-            score += 50
-        elif premium >= 5000000:  # $5M+
-            score += 45
-        elif premium >= 2500000:  # $2.5M+
-            score += 40
-        elif premium >= 1000000:  # $1M+
-            score += 35
-
-        # Volume (20%)
-        if volume >= 2000:
-            score += 20
-        elif volume >= 1000:
-            score += 17
-        elif volume >= 500:
-            score += 14
-        else:
-            score += 10
-
-        # Strike proximity (15%)
+        # Strike proximity (15%) - lower distance = higher score
         if strike_distance <= 3:
             score += 15
         elif strike_distance <= 7:
@@ -386,7 +295,7 @@ class GoldenSweepsBot(BaseAutoBot):
             score += 8
 
         # DTE factor (15%)
-        if 7 <= dte <= 45:  # Sweet spot for golden sweeps
+        if 7 <= dte <= 45:
             score += 15
         elif dte <= 90:
             score += 10
@@ -419,153 +328,29 @@ class GoldenSweepsBot(BaseAutoBot):
         # Format details string (contracts @ avg_price)
         details = f"{sweep['volume']:,} @ {sweep['avg_price']:.2f}"
 
-        embed = self.create_embed(
+        embed = self.create_signal_embed_with_disclaimer(
             title=f"🏆 {sweep['ticker']} - Golden Sweep Detected",
             description="",
             color=color,
             fields=[
-                {
-                    "name": "Date",
-                    "value": date_str,
-                    "inline": True
-                },
-                {
-                    "name": "Time",
-                    "value": time_str,
-                    "inline": True
-                },
-                {
-                    "name": "Ticker",
-                    "value": sweep['ticker'],
-                    "inline": True
-                },
-                {
-                    "name": "Exp",
-                    "value": exp_str,
-                    "inline": True
-                },
-                {
-                    "name": "Strike",
-                    "value": f"{sweep['strike']:.0f}",
-                    "inline": True
-                },
-                {
-                    "name": "C/P",
-                    "value": sweep['type'] + "S",
-                    "inline": True
-                },
-                {
-                    "name": "Spot",
-                    "value": f"{sweep['current_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "Details",
-                    "value": details,
-                    "inline": True
-                },
-                {
-                    "name": "Type",
-                    "value": "SWEEP",
-                    "inline": True
-                },
-                {
-                    "name": "Prem",
-                    "value": f"${premium_millions:.1f}M",
-                    "inline": True
-                },
-                {
-                    "name": "Algo Score",
-                    "value": str(int(final_score)),
-                    "inline": True
-                },
-                {
-                    "name": "Sect",
-                    "value": sector,
-                    "inline": True
-                }
-            ]
+                {"name": "Date", "value": date_str, "inline": True},
+                {"name": "Time", "value": time_str, "inline": True},
+                {"name": "Ticker", "value": sweep['ticker'], "inline": True},
+                {"name": "Exp", "value": exp_str, "inline": True},
+                {"name": "Strike", "value": f"{sweep['strike']:.0f}", "inline": True},
+                {"name": "C/P", "value": sweep['type'] + "S", "inline": True},
+                {"name": "Spot", "value": f"{sweep['current_price']:.2f}", "inline": True},
+                {"name": "Details", "value": details, "inline": True},
+                {"name": "Type", "value": "SWEEP", "inline": True},
+                {"name": "Prem", "value": f"${premium_millions:.1f}M", "inline": True},
+                {"name": "Algo Score", "value": str(int(final_score)), "inline": True},
+                {"name": "Sect", "value": sector, "inline": True}
+            ],
+            footer="ORAKL Bot - Golden Sweeps"
         )
-
-        # Add disclaimer
-        embed['fields'].append({
-            "name": "",
-            "value": "Please always do your own due diligence on top of these trade ideas.",
-            "inline": False
-        })
-
-        embed['footer'] = "ORAKL Bot - Golden Sweeps"
 
         success = await self.post_to_discord(embed)
         if success:
             logger.info(f"🚨 GOLDEN SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${premium_millions:.1f}M Score:{int(final_score)}")
 
-        return success
-
-        # Removed old enhanced fields code below
-        if False and volume_ratio >= 2.0:
-            embed['fields'].append({
-                "name": "📊 Volume Analysis",
-                "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)",
-                "inline": False
-            })
-
-        if False and price_aligned:
-            momentum_str = sweep.get('momentum_strength', 0)
-            embed['fields'].append({
-                "name": "✅ Price Action Confirmed",
-                "value": f"Options flow aligned with stock movement ({momentum_str:+.2f}%)",
-                "inline": False
-            })
-
-        # Add implied move analysis
-        if 'needed_move' in sweep:
-            embed['fields'].append({
-                "name": "🎯 Break-Even Analysis",
-                "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%",
-                "inline": False
-            })
-
-        # Add accumulation warning
-        if alert_type == 'ACCUMULATION':
-            embed['fields'].append({
-                "name": "🔥 ACCUMULATION ALERT 🔥",
-                "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}",
-                "inline": False
-            })
-        else:
-            embed['fields'].append({
-                "name": "🚨 ALERT",
-                "value": f"**MASSIVE CONVICTION: ${premium_millions:.2f}M position opened**",
-                "inline": False
-            })
-
-        embed['footer'] = "Golden Sweeps Bot | Enhanced with Volume & Price Analysis"
-        
-        # Add market context if available
-        if regime != 'unknown' or trend != 'unknown':
-            context_value = []
-            if regime != 'unknown':
-                context_value.append(f"Regime: {regime.replace('_', ' ').title()}")
-            if trend != 'unknown':
-                context_value.append(f"Trend: {trend.replace('_', ' ').title()}")
-            
-            embed['fields'].insert(-1, {
-                "name": "🌐 Market Context",
-                "value": " | ".join(context_value),
-                "inline": False
-            })
-        
-        # Add notes if available
-        if notes:
-            embed['fields'].append({
-                "name": "📝 Analysis Notes",
-                "value": "\n".join(f"• {note}" for note in notes[:3]),  # Limit to 3 notes
-                "inline": False
-            })
-
-        success = await self.post_to_discord(embed)
-        if success:
-            logger.info(f"🚨 GOLDEN SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${premium_millions:.2f}M Score:{int(final_score)}")
-        
         return success

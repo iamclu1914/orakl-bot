@@ -6,6 +6,7 @@ from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.utils.market_hours import MarketHours
+from src.utils.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class BreakoutsBot(BaseAutoBot):
             volume_surge = recent_volume / avg_volume if avg_volume > 0 else 1
 
             # Calculate technical indicators for momentum
-            rsi = self._calculate_rsi(closes)
+            rsi = TechnicalIndicators.calculate_rsi(closes)
             sma_20 = sum(closes[-20:]) / min(20, len(closes)) if len(closes) >= 5 else current_price
             sma_50 = sum(closes) / len(closes) if len(closes) >= 10 else current_price
 
@@ -190,41 +191,29 @@ class BreakoutsBot(BaseAutoBot):
 
     def _calculate_breakout_score(self, volume_surge: float, price_change: float,
                                   current_price: float, breakout_level: float) -> int:
-        """Calculate breakout strength score"""
-        score = 0
-
-        # Volume confirmation (40%)
-        if volume_surge >= 5.0:
-            score += 40
-        elif volume_surge >= 3.0:
-            score += 35
-        elif volume_surge >= 2.0:
-            score += 30
-        elif volume_surge >= 1.5:
-            score += 25
-
-        # Price momentum (30%)
-        if abs(price_change) >= 5.0:
-            score += 30
-        elif abs(price_change) >= 3.0:
-            score += 25
-        elif abs(price_change) >= 2.0:
-            score += 20
-        elif abs(price_change) >= 1.0:
-            score += 15
-
-        # Distance from breakout level (30%)
+        """Calculate breakout strength score using generic scoring system"""
         distance = abs((current_price - breakout_level) / breakout_level) * 100
-        if distance >= 2.0:
-            score += 30
-        elif distance >= 1.0:
-            score += 25
-        elif distance >= 0.5:
-            score += 20
-        elif distance >= 0.1:
-            score += 15
 
-        return score
+        return self.calculate_score({
+            'volume_surge': (volume_surge, [
+                (5.0, 40),  # 5x+ → 40 points (40%)
+                (3.0, 35),  # 3x+ → 35 points
+                (2.0, 30),  # 2x+ → 30 points
+                (1.5, 25)   # 1.5x+ → 25 points
+            ]),
+            'price_momentum': (abs(price_change), [
+                (5.0, 30),  # 5%+ → 30 points (30%)
+                (3.0, 25),  # 3%+ → 25 points
+                (2.0, 20),  # 2%+ → 20 points
+                (1.0, 15)   # 1%+ → 15 points
+            ]),
+            'distance': (distance, [
+                (2.0, 30),  # 2%+ → 30 points (30%)
+                (1.0, 25),  # 1%+ → 25 points
+                (0.5, 20),  # 0.5%+ → 20 points
+                (0.1, 15)   # 0.1%+ → 15 points
+            ])
+        })
 
     async def _post_signal(self, breakout: Dict):
         """Post breakout signal to Discord"""
@@ -233,81 +222,24 @@ class BreakoutsBot(BaseAutoBot):
 
         direction = "UP" if breakout['breakout_type'] == 'BULLISH' else "DOWN"
 
-        embed = self.create_embed(
+        embed = self.create_signal_embed_with_disclaimer(
             title=f"{emoji} BREAKOUT: {breakout['ticker']} {direction}",
             description=f"**{breakout['breakout_type']} Breakout** | Score: {breakout['breakout_score']}/100",
             color=color,
             fields=[
-                {
-                    "name": "💵 Current Price",
-                    "value": f"${breakout['current_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📈 Change",
-                    "value": f"{breakout['price_change_pct']:+.2f}%",
-                    "inline": True
-                },
-                {
-                    "name": "💪 Breakout Score",
-                    "value": f"**{breakout['breakout_score']}/100**",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Breakout Level",
-                    "value": f"${breakout['breakout_level']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Resistance",
-                    "value": f"${breakout['resistance']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📉 Support",
-                    "value": f"${breakout['support']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Volume Surge",
-                    "value": f"**{breakout['volume_surge']:.2f}x**",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Volume",
-                    "value": f"{breakout['recent_volume']:,.0f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Avg Volume",
-                    "value": f"{breakout['avg_volume']:,.0f}",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Next Target",
-                    "value": f"${breakout['next_target']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "🛑 Stop Loss",
-                    "value": f"${breakout['stop_loss']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📍 Pattern",
-                    "value": f"{'Resistance' if breakout['breakout_type'] == 'BULLISH' else 'Support'} Breakout",
-                    "inline": True
-                },
-                {
-                    "name": "💡 Analysis",
-                    "value": f"Strong {'upward' if breakout['breakout_type'] == 'BULLISH' else 'downward'} momentum with {breakout['volume_surge']:.1f}x volume confirmation",
-                    "inline": False
-                },
-                {
-                    "name": "",
-                    "value": "Please always do your own due diligence on top of these trade ideas.",
-                    "inline": False
-                }
+                {"name": "💵 Current Price", "value": f"${breakout['current_price']:.2f}", "inline": True},
+                {"name": "📈 Change", "value": f"{breakout['price_change_pct']:+.2f}%", "inline": True},
+                {"name": "💪 Breakout Score", "value": f"**{breakout['breakout_score']}/100**", "inline": True},
+                {"name": "🎯 Breakout Level", "value": f"${breakout['breakout_level']:.2f}", "inline": True},
+                {"name": "📊 Resistance", "value": f"${breakout['resistance']:.2f}", "inline": True},
+                {"name": "📉 Support", "value": f"${breakout['support']:.2f}", "inline": True},
+                {"name": "📊 Volume Surge", "value": f"**{breakout['volume_surge']:.2f}x**", "inline": True},
+                {"name": "📊 Volume", "value": f"{breakout['recent_volume']:,.0f}", "inline": True},
+                {"name": "📊 Avg Volume", "value": f"{breakout['avg_volume']:,.0f}", "inline": True},
+                {"name": "🎯 Next Target", "value": f"${breakout['next_target']:.2f}", "inline": True},
+                {"name": "🛑 Stop Loss", "value": f"${breakout['stop_loss']:.2f}", "inline": True},
+                {"name": "📍 Pattern", "value": f"{'Resistance' if breakout['breakout_type'] == 'BULLISH' else 'Support'} Breakout", "inline": True},
+                {"name": "💡 Analysis", "value": f"Strong {'upward' if breakout['breakout_type'] == 'BULLISH' else 'downward'} momentum with {breakout['volume_surge']:.1f}x volume confirmation", "inline": False}
             ],
             footer="Breakouts Bot | Technical Breakout Scanner"
         )
@@ -340,28 +272,3 @@ class BreakoutsBot(BaseAutoBot):
         touches = sum(1 for l in lows if abs(l - min_low) <= tolerance)
 
         return (min_low, touches)
-
-    def _calculate_rsi(self, closes: List[float], period: int = 14) -> float:
-        """Calculate Relative Strength Index (RSI)"""
-        if len(closes) < period + 1:
-            return 50.0  # Neutral if not enough data
-
-        # Calculate price changes
-        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-
-        # Separate gains and losses
-        gains = [d if d > 0 else 0 for d in deltas[-period:]]
-        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-
-        # Calculate average gain and loss
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-
-        if avg_loss == 0:
-            return 100.0  # All gains = overbought
-
-        # Calculate RS and RSI
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi

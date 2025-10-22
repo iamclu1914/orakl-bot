@@ -131,29 +131,32 @@ class BullseyeBot(BaseAutoBot):
         return signals
 
     def _calculate_bullseye_score(self, voi_ratio: float, premium: float, momentum_strength: float, dte: int) -> int:
-        """Calculate the Bullseye Score for a swing trade"""
-        score = 0
-        
-        # VOI Ratio (35%)
-        if voi_ratio >= 10: score += 35
-        elif voi_ratio >= 5: score += 30
-        elif voi_ratio >= 3: score += 25
-        
-        # Premium Size (30%)
-        if premium >= 250000: score += 30
-        elif premium >= 100000: score += 25
-        elif premium >= 50000: score += 20
-        elif premium >= 25000: score += 15
-        
-        # Price Action Confirmation (20%)
-        if momentum_strength >= 0.7: score += 20
-        elif momentum_strength >= 0.5: score += 15
-        elif momentum_strength >= 0.3: score += 10
-        
-        # DTE Sweet Spot (15%)
-        if 21 <= dte <= 45: score += 15
-        elif 7 <= dte <= 60: score += 10
-        
+        """Calculate the Bullseye Score for a swing trade using generic scoring"""
+        score = self.calculate_score({
+            'voi_ratio': (voi_ratio, [
+                (10, 35),  # 10x+ → 35 points (35%)
+                (5, 30),   # 5x+ → 30 points
+                (3, 25)    # 3x+ → 25 points
+            ]),
+            'premium': (premium, [
+                (250000, 30),  # $250k+ → 30 points (30%)
+                (100000, 25),  # $100k+ → 25 points
+                (50000, 20),   # $50k+ → 20 points
+                (25000, 15)    # $25k+ → 15 points
+            ]),
+            'momentum': (momentum_strength, [
+                (0.7, 20),  # 70%+ → 20 points (20%)
+                (0.5, 15),  # 50%+ → 15 points
+                (0.3, 10)   # 30%+ → 10 points
+            ])
+        })
+
+        # DTE sweet spot (15%)
+        if 21 <= dte <= 45:
+            score += 15
+        elif 7 <= dte <= 60:
+            score += 10
+
         return min(score, 100)
 
     async def _calculate_momentum(self, symbol: str) -> Optional[Dict]:
@@ -198,24 +201,17 @@ class BullseyeBot(BaseAutoBot):
         title = f"🎯 Bullseye Swing Idea: {signal['ticker']} {signal['type']}"
         description = f"**Bullseye Score: {signal['bullseye_score']}/100**"
 
+        # Build fields
         fields = [
             {"name": "Contract", "value": f"${signal['strike']} {signal['type']} expiring {signal['expiration']}", "inline": False},
-            {"name": "Thesis", "value": (
-                f"Detected **${signal['premium']:,.0f}** in premium on this contract, which is **{signal['voi_ratio']:.1f}x** its open interest. "
-                f"This unusual activity, combined with a **{signal['market_context']['regime']} market** and **{signal['momentum_strength']:.2f} {('bullish' if signal['type'] == 'CALL' else 'bearish')} momentum**, "
-                f"suggests a potential multi-day move."
-            ), "inline": False},
+            {"name": "Thesis", "value": f"Detected **${signal['premium']:,.0f}** in premium on this contract, which is **{signal['voi_ratio']:.1f}x** its open interest. This unusual activity, combined with a **{signal['market_context']['regime']} market** and **{signal['momentum_strength']:.2f} {('bullish' if signal['type'] == 'CALL' else 'bearish')} momentum**, suggests a potential multi-day move.", "inline": False},
             {"name": "Current Stock Price", "value": f"${signal['current_price']:.2f}", "inline": True},
             {"name": "Days to Expiration", "value": f"{signal['days_to_expiry']} days", "inline": True},
+            {"name": "Management", "value": "This is a swing trade idea. Consider a timeframe of several days to weeks. Always use your own risk management.", "inline": False}
         ]
-        
-        fields.append({
-            "name": "Management",
-            "value": "This is a swing trade idea. Consider a timeframe of several days to weeks. Always use your own risk management.",
-            "inline": False
-        })
 
-        embed = self.create_embed(
+        # Create embed with auto-disclaimer
+        embed = self.create_signal_embed_with_disclaimer(
             title=title,
             description=description,
             color=color,

@@ -11,6 +11,7 @@ from src.config import Config
 from src.utils.market_hours import MarketHours
 from src.utils.market_context import MarketContext
 from src.utils.exit_strategies import ExitStrategies
+from src.utils.technical_indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class ScalpsBot(BaseAutoBot):
 
             # Calculate momentum indicators for confirmation (RSI required)
             closes = [c['close'] for c in candles]
-            rsi = self._calculate_rsi(closes)
+            rsi = TechnicalIndicators.calculate_rsi(closes)
 
             # RSI momentum alignment check (avoid overbought/oversold extremes)
             rsi_aligned = self._check_rsi_alignment(rsi, pattern['direction'])
@@ -422,31 +423,6 @@ class ScalpsBot(BaseAutoBot):
         
         return None
 
-    def _calculate_rsi(self, closes: List[float], period: int = 14) -> float:
-        """Calculate Relative Strength Index (RSI)"""
-        if len(closes) < period + 1:
-            return 50.0  # Neutral if not enough data
-
-        # Calculate price changes
-        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-
-        # Separate gains and losses
-        gains = [d if d > 0 else 0 for d in deltas[-period:]]
-        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
-
-        # Calculate average gain and loss
-        avg_gain = sum(gains) / period
-        avg_loss = sum(losses) / period
-
-        if avg_loss == 0:
-            return 100.0  # All gains = overbought
-
-        # Calculate RS and RSI
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi
-
     def _check_rsi_alignment(self, rsi: float, direction: str) -> bool:
         """Check if RSI supports the pattern direction (avoid extremes)"""
         # For bullish patterns: RSI should be 30-70 (avoid overbought)
@@ -461,21 +437,19 @@ class ScalpsBot(BaseAutoBot):
 
     def _calculate_scalp_score(self, pattern: Dict, volume: int,
                               strike_distance: float, dte: int) -> int:
-        """Calculate scalp opportunity score"""
-        score = 0
+        """Calculate scalp opportunity score using generic scoring"""
+        # Pattern strength (40% of score)
+        score = int(pattern['strength'] * 0.4)
 
-        # Pattern strength (40%)
-        score += int(pattern['strength'] * 0.4)
-
-        # Volume (30%)
-        if volume >= 300:
-            score += 30
-        elif volume >= 150:
-            score += 25
-        elif volume >= 75:
-            score += 20
-        else:
-            score += 15
+        # Add remaining metrics via generic scoring
+        score += self.calculate_score({
+            'volume': (volume, [
+                (300, 30),  # 300+ → 30 points (30%)
+                (150, 25),  # 150+ → 25 points
+                (75, 20),   # 75+ → 20 points
+                (0, 15)     # Default → 15 points
+            ])
+        })
 
         # Strike proximity (20%)
         if strike_distance <= 0.5:
@@ -576,89 +550,30 @@ class ScalpsBot(BaseAutoBot):
         market = signal.get('market_context', {})
         market_status = f"{market.get('momentum', {}).get('direction', 'neutral').title()}, {market.get('volatility', {}).get('level', 'normal').title()} VIX"
 
-        embed = self.create_embed(
+        # Build fields
+        fields = [
+            {"name": "📊 Contract", "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE", "inline": True},
+            {"name": "⚡ Score", "value": f"**{signal['scalp_score']}/100**", "inline": True},
+            {"name": "🎯 Priority", "value": f"{signal.get('priority_score', 0):.0f}", "inline": True},
+            {"name": "💵 Entry Zone", "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}", "inline": True},
+            {"name": "🛑 Stop Loss", "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})", "inline": True},
+            {"name": "✅ Target 1", "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})", "inline": True},
+            {"name": "🎯 Target 2", "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})", "inline": True},
+            {"name": "📊 R:R Ratios", "value": f"T1: {signal['risk_reward_1']:.1f}:1\nT2: {signal['risk_reward_2']:.1f}:1", "inline": True},
+            {"name": "📈 Pattern", "value": f"{signal['pattern']} ({signal['pattern_strength']})", "inline": True},
+            {"name": "💰 Volume/Premium", "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}", "inline": True},
+            {"name": "📍 Distance", "value": f"{signal['strike_distance']:.1f}%", "inline": True},
+            {"name": "🌍 Market", "value": market_status, "inline": True},
+            {"name": "📋 Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False},
+            {"name": "⚠️ Management", "value": signal['exit_strategy']['management'], "inline": False}
+        ]
+
+        # Create embed with auto-disclaimer
+        embed = self.create_signal_embed_with_disclaimer(
             title=f"⚡ Scalp: {signal['ticker']}",
             description=f"{signal['pattern']} | Quick {signal['type']} Setup\n**Priority: {priority_level}**",
             color=color,
-            fields=[
-                {
-                    "name": "📊 Contract",
-                    "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE",
-                    "inline": True
-                },
-                {
-                    "name": "⚡ Score",
-                    "value": f"**{signal['scalp_score']}/100**",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Priority",
-                    "value": f"{signal.get('priority_score', 0):.0f}",
-                    "inline": True
-                },
-                {
-                    "name": "💵 Entry Zone",
-                    "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "🛑 Stop Loss",
-                    "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})",
-                    "inline": True
-                },
-                {
-                    "name": "✅ Target 1",
-                    "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Target 2",
-                    "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})",
-                    "inline": True
-                },
-                {
-                    "name": "📊 R:R Ratios",
-                    "value": f"T1: {signal['risk_reward_1']:.1f}:1\nT2: {signal['risk_reward_2']:.1f}:1",
-                    "inline": True
-                },
-                {
-                    "name": "📈 Pattern",
-                    "value": f"{signal['pattern']} ({signal['pattern_strength']})",
-                    "inline": True
-                },
-                {
-                    "name": "💰 Volume/Premium",
-                    "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}",
-                    "inline": True
-                },
-                {
-                    "name": "📍 Distance",
-                    "value": f"{signal['strike_distance']:.1f}%",
-                    "inline": True
-                },
-                {
-                    "name": "🌍 Market",
-                    "value": market_status,
-                    "inline": True
-                },
-                {
-                    "name": "📋 Exit Plan",
-                    "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n"
-                           f"• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n"
-                           f"• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}",
-                    "inline": False
-                },
-                {
-                    "name": "⚠️ Management",
-                    "value": signal['exit_strategy']['management'],
-                    "inline": False
-                },
-                {
-                    "name": "",
-                    "value": "Please always do your own due diligence on top of these trade ideas.",
-                    "inline": False
-                }
-            ],
+            fields=fields,
             footer=f"Scalps Bot | Pattern: {signal['pattern']} | Score: {signal['scalp_score']}"
         )
 

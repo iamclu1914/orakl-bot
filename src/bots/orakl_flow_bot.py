@@ -115,57 +115,24 @@ class TradyFlowBot(BaseAutoBot):
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
         emoji = "🟢" if signal['type'] == 'CALL' else "🔴"
 
-        embed = self.create_embed(
+        # Build fields
+        fields = [
+            {"name": "📊 Contract", "value": f"{signal['type']} ${signal['strike']}\nExp: {signal['expiration']}", "inline": True},
+            {"name": "🎲 Probability ITM", "value": f"**{signal['probability_itm']:.1f}%**", "inline": True},
+            {"name": "💰 Premium Flow", "value": f"${signal['premium']:,.0f}", "inline": True},
+            {"name": "📈 Current Price", "value": f"${signal['current_price']:.2f}", "inline": True},
+            {"name": "📊 Volume", "value": f"{signal['volume']:,}", "inline": True},
+            {"name": "🔄 Repeat Signals", "value": f"{signal['repeat_count']} detected", "inline": True},
+            {"name": "🎯 Target", "value": f"{'Break above' if signal['type'] == 'CALL' else 'Break below'} ${signal['strike']:.2f}", "inline": False},
+            {"name": "⏰ Days to Expiry", "value": f"{signal['days_to_expiry']} days", "inline": True}
+        ]
+
+        # Create embed with auto-disclaimer
+        embed = self.create_signal_embed_with_disclaimer(
             title=f"{emoji} Orakl Flow: {signal['ticker']}",
             description=f"Repeat dominant {signal['type']} signal detected",
             color=color,
-            fields=[
-                {
-                    "name": "📊 Contract",
-                    "value": f"{signal['type']} ${signal['strike']}\nExp: {signal['expiration']}",
-                    "inline": True
-                },
-                {
-                    "name": "🎲 Probability ITM",
-                    "value": f"**{signal['probability_itm']:.1f}%**",
-                    "inline": True
-                },
-                {
-                    "name": "💰 Premium Flow",
-                    "value": f"${signal['premium']:,.0f}",
-                    "inline": True
-                },
-                {
-                    "name": "📈 Current Price",
-                    "value": f"${signal['current_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Volume",
-                    "value": f"{signal['volume']:,}",
-                    "inline": True
-                },
-                {
-                    "name": "🔄 Repeat Signals",
-                    "value": f"{signal['repeat_count']} detected",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Target",
-                    "value": f"{'Break above' if signal['type'] == 'CALL' else 'Break below'} ${signal['strike']:.2f}",
-                    "inline": False
-                },
-                {
-                    "name": "⏰ Days to Expiry",
-                    "value": f"{signal['days_to_expiry']} days",
-                    "inline": True
-                },
-                {
-                    "name": "",
-                    "value": "Please always do your own due diligence on top of these trade ideas.",
-                    "inline": False
-                }
-            ],
+            fields=fields,
             footer="Orakl Flow Bot | High ITM Success Rate"
         )
 

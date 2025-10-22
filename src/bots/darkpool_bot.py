@@ -17,13 +17,18 @@ class DarkpoolBot(BaseAutoBot):
     relative to market cap and average volume
     """
 
+    # Configuration constants
+    MIN_BLOCK_SIZE = 10000  # Minimum 10k shares for block trade detection
+    KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
+    DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.001  # 0.1% threshold for aggressive buying/selling
+    MIN_DOLLAR_VALUE = 100000  # Minimum $100k trade value
+
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=240)  # 4 minutes
         self.watchlist = watchlist
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_BLOCK_SIZE = 10000  # Minimum 10k shares
 
     async def scan_and_post(self):
         """Scan for large darkpool and block trades using concurrent processing"""
@@ -76,7 +81,7 @@ class DarkpoolBot(BaseAutoBot):
                 is_block = (
                     size >= self.MIN_BLOCK_SIZE and
                     size >= (avg_size * 5) and
-                    dollar_value >= 100000
+                    dollar_value >= self.MIN_DOLLAR_VALUE
                 )
 
                 if not is_block:
@@ -129,38 +134,36 @@ class DarkpoolBot(BaseAutoBot):
     def _calculate_block_score(self, size: int, dollar_value: float,
                                avg_30_day_volume: Optional[float], is_darkpool: bool,
                                at_key_level: bool, has_bias: bool) -> int:
-        """Calculate ENHANCED block trade significance score"""
-        score = 0
-
-        # --- ENHANCED SCORING ---
-        # 1. Percent of Daily Volume (40%) - MOST IMPORTANT METRIC
+        """Calculate ENHANCED block trade significance score using generic scoring"""
+        # Calculate percent of volume
+        percent_of_volume = 0
         if avg_30_day_volume and avg_30_day_volume > 0:
             percent_of_volume = (size / avg_30_day_volume) * 100
-            if percent_of_volume >= 10:  # 10%+ of daily volume in one trade
-                score += 40
-            elif percent_of_volume >= 5:   # 5%
-                score += 35
-            elif percent_of_volume >= 2:   # 2%
-                score += 30
-            elif percent_of_volume >= 1:   # 1%
-                score += 25
-            elif percent_of_volume >= 0.5: # 0.5%
-                score += 20
 
-        # 2. Dollar Value (25%)
-        if dollar_value >= 10_000_000: score += 25  # $10M+
-        elif dollar_value >= 5_000_000: score += 20 # $5M+
-        elif dollar_value >= 1_000_000: score += 15 # $1M+
+        score = self.calculate_score({
+            'volume_percent': (percent_of_volume, [
+                (10.0, 40),  # 10%+ of daily volume → 40 points (40%)
+                (5.0, 35),   # 5%+ → 35 points
+                (2.0, 30),   # 2%+ → 30 points
+                (1.0, 25),   # 1%+ → 25 points
+                (0.5, 20)    # 0.5%+ → 20 points
+            ]),
+            'dollar_value': (dollar_value, [
+                (10000000, 25),  # $10M+ → 25 points (25%)
+                (5000000, 20),   # $5M+ → 20 points
+                (1000000, 15)    # $1M+ → 15 points
+            ])
+        })
 
-        # 3. Darkpool Indicator (15%)
+        # Darkpool indicator (15%)
         if is_darkpool:
             score += 15
 
-        # 4. Key Level (10%)
+        # Key level (10%)
         if at_key_level:
             score += 10
-        
-        # 5. Directional Bias (10%)
+
+        # Directional bias (10%)
         if has_bias:
             score += 10
 
@@ -168,18 +171,19 @@ class DarkpoolBot(BaseAutoBot):
 
     def _check_key_levels(self, price: float, high_52w: Optional[float], low_52w: Optional[float]) -> Optional[str]:
         """Check if a trade occurred near a 52-week high or low"""
-        if high_52w and (price / high_52w) >= 0.98: # Within 2% of 52w high
+        tolerance = 1 - self.KEY_LEVEL_TOLERANCE_PCT
+        if high_52w and (price / high_52w) >= tolerance:
             return f"Near 52-Week High (${high_52w:.2f})"
-        if low_52w and (price / low_52w) <= 1.02: # Within 2% of 52w low
+        if low_52w and (price / low_52w) <= (2 - tolerance):
             return f"Near 52-Week Low (${low_52w:.2f})"
         return None
 
     def _infer_directional_bias(self, trade_price: float, market_price: float) -> str:
         """Infer directional bias based on trade price vs market price"""
         diff = (trade_price - market_price) / market_price
-        if diff >= 0.001:  # 0.1% above market price
+        if diff >= self.DIRECTIONAL_BIAS_THRESHOLD_PCT:
             return "Aggressive Buying"
-        if diff <= -0.001: # 0.1% below market price
+        if diff <= -self.DIRECTIONAL_BIAS_THRESHOLD_PCT:
             return "Aggressive Selling"
         return "Neutral"
 
@@ -206,6 +210,7 @@ class DarkpoolBot(BaseAutoBot):
             f"This represents **{block['percent_of_avg_volume']:.2f}%** of the 30-day average volume."
         )
 
+        # Build base fields
         fields = [
             {"name": "📈 Block Score", "value": f"**{block['block_score']}/100**", "inline": True},
             {"name": "💵 Executed Price", "value": f"${block['block_price']:.2f}", "inline": True},
@@ -215,18 +220,13 @@ class DarkpoolBot(BaseAutoBot):
         # Add key level info if present
         if block['key_level_info']:
             fields.append({"name": "🎯 Key Level", "value": block['key_level_info'], "inline": False})
-            
+
         # Add analysis note
         analysis_note = f"A trade of this magnitude suggests significant institutional interest. The execution price was **{bias.lower()}**."
         fields.append({"name": "💡 Analysis", "value": analysis_note, "inline": False})
-        
-        fields.append({
-            "name": "",
-            "value": "Please always do your own due diligence on top of these trade ideas.",
-            "inline": False
-        })
 
-        embed = self.create_embed(
+        # Create embed with auto-disclaimer
+        embed = self.create_signal_embed_with_disclaimer(
             title=title,
             description=description,
             color=color,

@@ -269,38 +269,28 @@ class SweepsBot(BaseAutoBot):
 
     def _calculate_sweep_score(self, premium: float, volume: int,
                                num_fills: int, strike_distance: float) -> int:
-        """Calculate sweep conviction score"""
-        score = 0
+        """Calculate sweep conviction score using generic scoring system"""
+        score = self.calculate_score({
+            'premium': (premium, [
+                (500000, 40),  # $500k+ → 40 points (40%)
+                (250000, 35),  # $250k+ → 35 points
+                (100000, 30),  # $100k+ → 30 points
+                (50000, 25)    # $50k+ → 25 points
+            ]),
+            'volume': (volume, [
+                (1000, 25),  # 1000+ → 25 points (25%)
+                (500, 20),   # 500+ → 20 points
+                (250, 15),   # 250+ → 15 points
+                (100, 10)    # 100+ → 10 points
+            ]),
+            'fills': (num_fills, [
+                (5, 20),  # 5+ fills → 20 points (20%)
+                (3, 15),  # 3+ fills → 15 points
+                (2, 10)   # 2+ fills → 10 points
+            ])
+        })
 
-        # Premium size (40%)
-        if premium >= 500000:
-            score += 40
-        elif premium >= 250000:
-            score += 35
-        elif premium >= 100000:
-            score += 30
-        elif premium >= 50000:
-            score += 25
-
-        # Volume (25%)
-        if volume >= 1000:
-            score += 25
-        elif volume >= 500:
-            score += 20
-        elif volume >= 250:
-            score += 15
-        elif volume >= 100:
-            score += 10
-
-        # Number of fills (20%)
-        if num_fills >= 5:
-            score += 20
-        elif num_fills >= 3:
-            score += 15
-        elif num_fills >= 2:
-            score += 10
-
-        # Strike proximity (15%)
+        # Strike proximity (15%) - lower distance = higher score
         if strike_distance <= 2:
             score += 15
         elif strike_distance <= 5:
@@ -348,115 +338,47 @@ class SweepsBot(BaseAutoBot):
         if confidence != 'N/A':
             description_parts.append(confidence)
 
-        embed = self.create_embed(
-            title=f"{emoji} SWEEP: {sweep['ticker']}",
-            description=" | ".join(description_parts),
-            color=color,
-            fields=[
-                {
-                    "name": "📊 Contract",
-                    "value": f"{sweep['type']} ${sweep['strike']}\nExp: {sweep['expiration']}",
-                    "inline": True
-                },
-                {
-                    "name": "💰 Premium",
-                    "value": f"**${sweep['premium']:,.0f}**",
-                    "inline": True
-                },
-                {
-                    "name": "🔥 Sweep Score",
-                    "value": f"**{sweep['sweep_score']}/100**",
-                    "inline": True
-                },
-                {
-                    "name": "📈 Current Price",
-                    "value": f"${sweep['current_price']:.2f}",
-                    "inline": True
-                },
-                {
-                    "name": "📊 Volume",
-                    "value": f"{sweep['volume']:,} contracts",
-                    "inline": True
-                },
-                {
-                    "name": "⚡ Fills",
-                    "value": f"{sweep['num_fills']} rapid fills",
-                    "inline": True
-                },
-                {
-                    "name": "🎯 Strike",
-                    "value": f"${sweep['strike']:.2f} ({sweep['moneyness']})",
-                    "inline": True
-                },
-                {
-                    "name": "📍 Distance",
-                    "value": f"{sweep['strike_distance']:+.2f}%",
-                    "inline": True
-                },
-                {
-                    "name": "⏰ DTE",
-                    "value": f"{sweep['days_to_expiry']} days",
-                    "inline": True
-                },
-                {
-                    "name": "🎲 Probability ITM",
-                    "value": f"{sweep['probability_itm']:.1f}%",
-                    "inline": True
-                },
-                {
-                    "name": "⏱️ Time Span",
-                    "value": f"{int(sweep['time_span'])}s sweep",
-                    "inline": True
-                },
-            ]
-        )
+        # Build base fields
+        fields = [
+            {"name": "📊 Contract", "value": f"{sweep['type']} ${sweep['strike']}\nExp: {sweep['expiration']}", "inline": True},
+            {"name": "💰 Premium", "value": f"**${sweep['premium']:,.0f}**", "inline": True},
+            {"name": "🔥 Sweep Score", "value": f"**{sweep['sweep_score']}/100**", "inline": True},
+            {"name": "📈 Current Price", "value": f"${sweep['current_price']:.2f}", "inline": True},
+            {"name": "📊 Volume", "value": f"{sweep['volume']:,} contracts", "inline": True},
+            {"name": "⚡ Fills", "value": f"{sweep['num_fills']} rapid fills", "inline": True},
+            {"name": "🎯 Strike", "value": f"${sweep['strike']:.2f} ({sweep['moneyness']})", "inline": True},
+            {"name": "📍 Distance", "value": f"{sweep['strike_distance']:+.2f}%", "inline": True},
+            {"name": "⏰ DTE", "value": f"{sweep['days_to_expiry']} days", "inline": True},
+            {"name": "🎲 Probability ITM", "value": f"{sweep['probability_itm']:.1f}%", "inline": True},
+            {"name": "⏱️ Time Span", "value": f"{int(sweep['time_span'])}s sweep", "inline": True}
+        ]
 
         # Add enhanced analysis fields
         if volume_ratio >= 2.0:
-            embed['fields'].append({
-                "name": "📊 Volume Analysis",
-                "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)",
-                "inline": False
-            })
+            fields.append({"name": "📊 Volume Analysis", "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)", "inline": False})
 
         if price_aligned:
             momentum_str = sweep.get('momentum_strength', 0)
-            embed['fields'].append({
-                "name": "✅ Price Action Confirmed",
-                "value": f"Options flow aligned with stock movement ({momentum_str:+.2f}%)",
-                "inline": False
-            })
+            fields.append({"name": "✅ Price Action Confirmed", "value": f"Options flow aligned with stock movement ({momentum_str:+.2f}%)", "inline": False})
 
         # Add implied move analysis
         if 'needed_move' in sweep:
-            embed['fields'].append({
-                "name": "🎯 Break-Even Analysis",
-                "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%",
-                "inline": False
-            })
+            fields.append({"name": "🎯 Break-Even Analysis", "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%", "inline": False})
 
         # Add accumulation warning or insight
         if alert_type == 'ACCUMULATION':
-            embed['fields'].append({
-                "name": "🔥 ACCUMULATION ALERT 🔥",
-                "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}",
-                "inline": False
-            })
+            fields.append({"name": "🔥 ACCUMULATION ALERT 🔥", "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}", "inline": False})
         else:
-            embed['fields'].append({
-                "name": "💡 Insight",
-                "value": f"Large sweep shows conviction - {sweep['num_fills']} fills in {int(sweep['time_span'])}s",
-                "inline": False
-            })
+            fields.append({"name": "💡 Insight", "value": f"Large sweep shows conviction - {sweep['num_fills']} fills in {int(sweep['time_span'])}s", "inline": False})
 
-        # Add disclaimer
-        embed['fields'].append({
-            "name": "",
-            "value": "Please always do your own due diligence on top of these trade ideas.",
-            "inline": False
-        })
-
-        embed['footer'] = "Sweeps Bot | Enhanced with Volume & Price Analysis"
+        # Create embed with auto-disclaimer
+        embed = self.create_signal_embed_with_disclaimer(
+            title=f"{emoji} SWEEP: {sweep['ticker']}",
+            description=" | ".join(description_parts),
+            color=color,
+            fields=fields,
+            footer="Sweeps Bot | Enhanced with Volume & Price Analysis"
+        )
 
         success = await self.post_to_discord(embed)
         if success:
