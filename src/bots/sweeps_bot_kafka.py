@@ -65,13 +65,8 @@ class SweepsBotKafka(KafkaConsumerBase):
             avg_price = data.get('avg_price', 0) or (premium / (volume * 100) if volume > 0 else 0)
             timestamp = data.get('timestamp', 0) or data.get('t', 0)
 
-            # Flow classification
-            flow_type = data.get('flow_type') or data.get('signal_type')
-            is_sweep = data.get('isSweep', False) or data.get('is_sweep', False) or flow_type in ['SWEEP', 'GOLDEN_SWEEP', 'sweep', 'golden']
-
-            # Only process sweeps
-            if not is_sweep:
-                return
+            # Sweeps bot processes ALL $50K+ premium flows
+            # Premium threshold is the primary filter (not isSweep flag)
 
             # Calculate days to expiry
             if expiration:

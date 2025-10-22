@@ -81,9 +81,8 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
             flow_type = data.get('flowType') or data.get('flow_type') or data.get('signal_type')
             is_sweep = data.get('isSweep', False) or data.get('is_sweep', False) or flow_type in ['SWEEP', 'GOLDEN_SWEEP', 'sweep', 'golden', 'Sweep']
 
-            # Only process sweeps for Golden Sweeps bot
-            if not is_sweep:
-                return
+            # Golden Sweeps processes ALL $1M+ premium flows (not just sweeps)
+            # The premium threshold is the primary filter
 
             # Calculate days to expiry
             if expiration:
