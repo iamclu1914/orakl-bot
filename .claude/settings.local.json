@@ -18,7 +18,8 @@
       "Bash(curl:*)",
       "Bash(cat:*)",
       "Bash(taskkill:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []
