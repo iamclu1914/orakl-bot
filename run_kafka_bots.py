@@ -7,6 +7,10 @@ import os
 import logging
 from dotenv import load_dotenv
 from src.bots.golden_sweeps_bot_kafka import GoldenSweepsBotKafka
+from src.bots.sweeps_bot_kafka import SweepsBotKafka
+from src.bots.bullseye_bot_kafka import BullseyeBotKafka
+from src.bots.scalps_bot_kafka import ScalpsBotKafka
+from src.bots.orakl_flow_bot_kafka import OraklFlowBotKafka
 from src.options_analyzer import OptionsAnalyzer
 
 # Configure logging
@@ -37,21 +41,56 @@ async def main():
     # Initialize shared analyzer
     analyzer = OptionsAnalyzer()
 
-    # Initialize Kafka consumer bot (Golden Sweeps for now)
+    # Initialize all options bots (all consume from processed-flows)
     golden_sweeps_bot = GoldenSweepsBotKafka(
         webhook_url=os.getenv('GOLDEN_SWEEPS_WEBHOOK'),
         watchlist=watchlist,
         analyzer=analyzer
     )
 
-    logger.info("✅ Golden Sweeps bot initialized")
-    logger.info("🔌 Connecting to Kafka topics: processed-flows")
+    sweeps_bot = SweepsBotKafka(
+        webhook_url=os.getenv('SWEEPS_WEBHOOK'),
+        watchlist=watchlist,
+        analyzer=analyzer
+    )
+
+    bullseye_bot = BullseyeBotKafka(
+        webhook_url=os.getenv('BULLSEYE_WEBHOOK'),
+        watchlist=watchlist,
+        analyzer=analyzer
+    )
+
+    scalps_bot = ScalpsBotKafka(
+        webhook_url=os.getenv('SCALPS_WEBHOOK'),
+        watchlist=watchlist,
+        analyzer=analyzer
+    )
+
+    orakl_flow_bot = OraklFlowBotKafka(
+        webhook_url=os.getenv('ORAKL_FLOW_WEBHOOK'),
+        watchlist=watchlist,
+        analyzer=analyzer
+    )
+
+    logger.info("✅ All 5 options bots initialized")
+    logger.info("   - Golden Sweeps ($1M+)")
+    logger.info("   - Sweeps ($50K+)")
+    logger.info("   - Bullseye (ATM)")
+    logger.info("   - Scalps (0-7 DTE)")
+    logger.info("   - ORAKL Flow (General)")
+    logger.info("🔌 Connecting to Kafka topic: processed-flows")
     logger.info("⏳ Waiting for pre-aggregated flow messages...")
     logger.info("=" * 80)
 
-    # Run bot
+    # Run all bots concurrently
     try:
-        await golden_sweeps_bot.run()
+        await asyncio.gather(
+            golden_sweeps_bot.run(),
+            sweeps_bot.run(),
+            bullseye_bot.run(),
+            scalps_bot.run(),
+            orakl_flow_bot.run()
+        )
     except KeyboardInterrupt:
         logger.info("\n🛑 Shutting down Kafka consumers...")
     except Exception as e:
