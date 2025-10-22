@@ -600,6 +600,7 @@ class STRATPatternBot:
                 color=color
             )
 
+            # Add core fields
             embed.add_embed_field(name="📊 Timeframe", value=signal['timeframe'], inline=True)
             embed.add_embed_field(name="📍 Entry", value=f"${signal['entry']:.2f}", inline=True)
             embed.add_embed_field(name="🎯 Target", value=f"${signal['target']:.2f}", inline=True)
@@ -612,21 +613,13 @@ class STRATPatternBot:
 
             # PRD Enhancement: Display confidence score
             if 'confidence_score' in signal:
-                embed.add_embed_field(
-                    name="🎲 Confidence",
-                    value=f"{signal['confidence_score']*100:.0f}%",
-                    inline=True
-                )
+                embed.add_embed_field(name="🎲 Confidence", value=f"{signal['confidence_score']*100:.0f}%", inline=True)
 
             if 'setup' in signal:
                 embed.add_embed_field(name="⚙️ Setup", value=signal['setup'], inline=False)
 
-            # Add disclaimer
-            embed.add_embed_field(
-                name="",
-                value="Please always do your own due diligence on top of these trade ideas.",
-                inline=False
-            )
+            # Auto-append disclaimer
+            self._add_disclaimer(embed)
 
             embed.set_footer(text=f"STRAT Pattern Scanner • {datetime.now(self.est).strftime('%Y-%m-%d %H:%M:%S EST')}")
             embed.set_timestamp()
@@ -639,6 +632,10 @@ class STRATPatternBot:
 
         except Exception as e:
             logger.error(f"Failed to send alert: {e}")
+
+    def _add_disclaimer(self, embed: DiscordEmbed, disclaimer: str = "Please always do your own due diligence on top of these trade ideas."):
+        """Add disclaimer field to embed - single source of truth"""
+        embed.add_embed_field(name="", value=disclaimer, inline=False)
 
     async def scan(self):
         """PRD Enhanced: Scan with best signal selection"""
