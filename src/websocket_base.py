@@ -73,16 +73,14 @@ class PolygonWebSocketBase:
             await self.connect()
 
     async def subscribe_options_trades(self, symbols: List[str]):
-        """Subscribe to real-time options trades for given symbols"""
+        """Subscribe to real-time options trades - subscribes to 'T' channel for all options"""
         try:
-            # Convert stock symbols to options wildcard subscriptions
-            # Example: 'SPY' -> 'O:SPY*' (all SPY options contracts)
-            option_patterns = [f"O:{symbol.strip()}*" for symbol in symbols]
-
-            for pattern in option_patterns:
-                await self.client.subscribe(pattern)
-                self.subscribed_symbols.add(pattern)
-                logger.info(f"[{self.bot_name}] Subscribed to options trades: {pattern}")
+            # Subscribe to "T" channel which gets ALL options trades
+            # We'll filter by symbol in the message handler
+            await self.client.subscribe("T")
+            self.subscribed_symbols.add("T")
+            logger.info(f"[{self.bot_name}] Subscribed to options trades channel (T)")
+            logger.info(f"[{self.bot_name}] Will filter for {len(symbols)} symbols: {', '.join(symbols[:5])}...")
 
         except Exception as e:
             logger.error(f"[{self.bot_name}] Subscription failed: {e}")
