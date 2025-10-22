@@ -40,7 +40,7 @@ class BullseyeBotKafka(KafkaConsumerBase):
                 return
 
             # Flow metrics
-            premium = data.get('premium', 0) or data.get('total_premium', 0)
+            premium = data.get('premiumValue', 0) or data.get('premium', 0) or data.get('total_premium', 0)
             volume = data.get('volume', 0) or data.get('total_volume', 0)
 
             # Skip if below threshold
@@ -48,7 +48,7 @@ class BullseyeBotKafka(KafkaConsumerBase):
                 return
 
             # Contract details
-            option_type = data.get('option_type') or data.get('type') or data.get('call_put')
+            option_type = data.get('type') or data.get('option_type') or data.get('call_put')
             if option_type:
                 option_type = option_type.upper()
                 if option_type not in ['CALL', 'PUT', 'CALLS', 'PUTS']:
@@ -58,7 +58,7 @@ class BullseyeBotKafka(KafkaConsumerBase):
                 return
 
             strike = data.get('strike', 0) or data.get('strike_price', 0)
-            expiration = data.get('expiration') or data.get('exp_date') or data.get('expiry')
+            expiration = data.get('exp') or data.get('expiry') or data.get('expiration') or data.get('exp_date')
             current_price = data.get('spot_price', 0) or data.get('underlying_price', 0) or data.get('current_price', 0)
 
             # Flow metadata
