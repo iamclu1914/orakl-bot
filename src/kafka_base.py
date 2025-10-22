@@ -5,12 +5,14 @@ Consumes from your existing Polygon → Kafka pipeline
 import asyncio
 import json
 import os
+import logging
 from typing import List, Set, Dict
 from datetime import datetime
 import pytz
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError
-from src.utils.logger import logger
+
+logger = logging.getLogger(__name__)
 
 
 class KafkaConsumerBase:

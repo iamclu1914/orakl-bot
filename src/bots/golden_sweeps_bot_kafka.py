@@ -2,14 +2,15 @@
 Golden Sweeps Bot - Kafka Consumer Version
 Consumes $1M+ premium sweeps from Kafka raw-trades topic
 """
+import logging
+import aiohttp
 from datetime import datetime, timedelta
 from typing import Dict, List
 from src.kafka_base import KafkaConsumerBase
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
-from src.utils.logger import logger
-from src.utils.discord_poster import DiscordPoster
-from discord_webhook import DiscordEmbed
+
+logger = logging.getLogger(__name__)
 
 
 class GoldenSweepsBotKafka(KafkaConsumerBase):
@@ -30,8 +31,8 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
         self.trade_windows: Dict[str, List[Dict]] = {}
         self.window_size = 60  # seconds
 
-        # Discord poster
-        self.discord = DiscordPoster(webhook_url, "Golden Sweeps Bot Kafka")
+        # aiohttp session for Discord posting
+        self.session = None
 
     async def process_message(self, data: Dict, topic: str):
         """Process options trade message from Kafka"""
@@ -242,6 +243,10 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
     async def _post_signal(self, sweep: Dict):
         """Post golden sweep signal to Discord"""
         try:
+            # Create session if needed
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+
             color = 0xFFD700  # Gold
 
             now = datetime.now()
@@ -250,33 +255,31 @@ class GoldenSweepsBotKafka(KafkaConsumerBase):
             premium_millions = sweep['premium'] / 1000000
             details = f"{sweep['volume']:,} @ {sweep['avg_price']:.2f}"
 
-            embed = DiscordEmbed(
-                title=f"🏆 {sweep['ticker']} - Golden Sweep (KAFKA REAL-TIME)",
-                color=color
-            )
+            embed = {
+                "title": f"🏆 {sweep['ticker']} - Golden Sweep (KAFKA REAL-TIME)",
+                "color": color,
+                "fields": [
+                    {"name": "Date", "value": date_str, "inline": True},
+                    {"name": "Time", "value": time_str, "inline": True},
+                    {"name": "Ticker", "value": sweep['ticker'], "inline": True},
+                    {"name": "Exp", "value": sweep['expiration'], "inline": True},
+                    {"name": "Strike", "value": f"{sweep['strike']:.0f}", "inline": True},
+                    {"name": "C/P", "value": sweep['type'] + "S", "inline": True},
+                    {"name": "Spot", "value": f"{sweep['current_price']:.2f}", "inline": True},
+                    {"name": "Details", "value": details, "inline": True},
+                    {"name": "Type", "value": "SWEEP", "inline": True},
+                    {"name": "Prem", "value": f"${premium_millions:.1f}M", "inline": True},
+                    {"name": "Algo Score", "value": str(int(sweep['golden_score'])), "inline": True},
+                    {"name": "Source", "value": "Kafka", "inline": True},
+                    {"name": "", "value": "Please always do your own due diligence on top of these trade ideas.", "inline": False}
+                ],
+                "footer": {"text": "ORAKL Bot - Golden Sweeps (Kafka Stream)"}
+            }
 
-            embed.add_embed_field(name="Date", value=date_str, inline=True)
-            embed.add_embed_field(name="Time", value=time_str, inline=True)
-            embed.add_embed_field(name="Ticker", value=sweep['ticker'], inline=True)
-            embed.add_embed_field(name="Exp", value=sweep['expiration'], inline=True)
-            embed.add_embed_field(name="Strike", value=f"{sweep['strike']:.0f}", inline=True)
-            embed.add_embed_field(name="C/P", value=sweep['type'] + "S", inline=True)
-            embed.add_embed_field(name="Spot", value=f"{sweep['current_price']:.2f}", inline=True)
-            embed.add_embed_field(name="Details", value=details, inline=True)
-            embed.add_embed_field(name="Type", value="SWEEP", inline=True)
-            embed.add_embed_field(name="Prem", value=f"${premium_millions:.1f}M", inline=True)
-            embed.add_embed_field(name="Algo Score", value=str(int(sweep['golden_score'])), inline=True)
-            embed.add_embed_field(name="Source", value="Kafka", inline=True)
+            payload = {"embeds": [embed], "username": "ORAKL Golden Sweeps"}
 
-            embed.add_embed_field(
-                name="",
-                value="Please always do your own due diligence on top of these trade ideas.",
-                inline=False
-            )
-
-            embed.set_footer(text="ORAKL Bot - Golden Sweeps (Kafka Stream)")
-
-            success = await self.discord.post_embed(embed)
+            async with self.session.post(self.webhook_url, json=payload) as response:
+                success = response.status == 204
 
             if success:
                 logger.info(f"🚨 GOLDEN SWEEP (KAFKA): {sweep['ticker']} {sweep['type']} "
