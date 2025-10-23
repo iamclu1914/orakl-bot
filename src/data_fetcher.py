@@ -747,12 +747,13 @@ class DataFetcher:
 
             # Handle cache format - be defensive about old cache data
             if cache_data is not None and isinstance(cache_data, dict):
-                # New format: {'last_scan_ns': timestamp}
-                last_scan_timestamp_ns = cache_data.get('last_scan_ns')
-
-                # If old format (per-contract dict with ticker keys), treat as first scan
-                if last_scan_timestamp_ns is None:
-                    logger.info(f"🔄 {underlying}: Detected old cache format, treating as first scan")
+                # Check for our scan metadata
+                scan_meta = cache_data.get('_scan_meta', {})
+                if scan_meta and isinstance(scan_meta, dict):
+                    last_scan_timestamp_ns = scan_meta.get('last_scan_ns')
+                else:
+                    # Old format or no scan meta, treat as first scan
+                    logger.info(f"🔄 {underlying}: No scan metadata found, treating as first scan")
 
             # Current timestamp in nanoseconds
             current_timestamp_ns = int(datetime.now().timestamp() * 1_000_000_000)
@@ -899,7 +900,15 @@ class DataFetcher:
                     continue
 
             # Step 6: Update cache with current scan timestamp
-            await volume_cache.set(underlying, {'last_scan_ns': current_timestamp_ns})
+            # Store timestamp in a format compatible with volume_cache structure
+            # Using special key '_scan_meta' to avoid conflict with contract tickers
+            timestamp_data = {
+                '_scan_meta': {
+                    'last_scan_ns': current_timestamp_ns,
+                    'timestamp': datetime.now()
+                }
+            }
+            await volume_cache.set(underlying, timestamp_data)
 
             # Step 7: Sort by premium (highest first) and return
             flows_sorted = sorted(flows, key=lambda x: x['premium'], reverse=True)
