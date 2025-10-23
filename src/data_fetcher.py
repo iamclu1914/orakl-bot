@@ -675,7 +675,8 @@ class DataFetcher:
 
             data = await self._make_request(endpoint, params)
 
-            if data and 'results' in data:
+            # Defensive check: ensure data is a dict before checking for 'results'
+            if data and isinstance(data, dict) and 'results' in data:
                 return data.get('results', [])
 
             return []
