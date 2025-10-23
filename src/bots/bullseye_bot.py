@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 import pandas as pd
 import asyncio
 import numpy as np
+from scipy.stats import norm
 from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
@@ -88,6 +89,9 @@ class BullseyeBot(BaseAutoBot):
                 volume_delta = flow['volume_delta']
                 open_interest = flow.get('open_interest', 0)
                 delta = flow.get('delta', 0)
+                bid = flow.get('bid', 0)
+                ask = flow.get('ask', 0)
+                implied_volatility = flow.get('implied_volatility', 0)
 
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -97,7 +101,19 @@ class BullseyeBot(BaseAutoBot):
                 if days_to_expiry < 7 or days_to_expiry > 60:
                     continue
 
-                # Filter 2: VOI ratio (volume/OI > 3.0)
+                # Filter 2: Liquidity guards (NEW - Phase 1)
+                # Minimum open interest ≥ 500
+                if open_interest < 500:
+                    continue
+
+                # Bid-ask spread ≤ 5% (spread / mid-price)
+                if bid > 0 and ask > 0:
+                    mid_price = (bid + ask) / 2
+                    spread_pct = ((ask - bid) / mid_price) * 100 if mid_price > 0 else 100
+                    if spread_pct > 5.0:
+                        continue
+
+                # Filter 3: VOI ratio (volume/OI > 3.0)
                 if open_interest == 0 or total_volume < 100:
                     continue
 
@@ -105,23 +121,61 @@ class BullseyeBot(BaseAutoBot):
                 if voi_ratio < 3.0:
                     continue
 
-                # Filter 3: ATM options only (delta 0.4-0.6 range)
+                # Filter 4: ATM options only (delta 0.4-0.6 range)
                 if abs(delta) < 0.4 or abs(delta) > 0.6:
                     continue
 
-                # Filter 4: Strike distance (within 15% of current price)
+                # Filter 5: Strike distance (within 15% of current price)
                 strike_distance = abs(strike - current_price) / current_price
                 if strike_distance > 0.15:
                     continue
 
-                # Filter 5: Price action confirmation
+                # Filter 6: ITM Probability (NEW - Phase 1)
+                # Calculate P(ITM) using Black-Scholes d2
+                T_years = days_to_expiry / 365.0
+                itm_probability = self._calculate_itm_probability(
+                    S=current_price,
+                    K=strike,
+                    T=T_years,
+                    IV=implied_volatility,
+                    opt_type=opt_type
+                )
+
+                # Require P(ITM) ≥ 35%
+                if itm_probability < 0.35:
+                    continue
+
+                # Filter 7: 5-Day Expected Move (NEW - Phase 1)
+                # Strike must be within 5-day expected move
+                em5 = self._calculate_expected_move(
+                    S=current_price,
+                    IV=implied_volatility,
+                    days=5
+                )
+
+                strike_diff = abs(strike - current_price)
+                if strike_diff > em5:
+                    continue
+
+                # Filter 8: Price action confirmation
                 if (opt_type == 'CALL' and momentum['direction'] != 'bullish') or \
                    (opt_type == 'PUT' and momentum['direction'] != 'bearish'):
                     continue
 
-                # Calculate Bullseye score
-                bullseye_score = self._calculate_bullseye_score(
-                    voi_ratio, premium, momentum['strength'], days_to_expiry
+                # Calculate liquidity quality score (0-1)
+                liquidity_score = self._calculate_liquidity_score(
+                    open_interest=open_interest,
+                    spread_pct=spread_pct if bid > 0 and ask > 0 else 5.0
+                )
+
+                # Calculate Bullseye score with new factors
+                bullseye_score = self._calculate_bullseye_score_v2(
+                    voi_ratio=voi_ratio,
+                    premium=premium,
+                    momentum_strength=momentum['strength'],
+                    days_to_expiry=days_to_expiry,
+                    itm_probability=itm_probability,
+                    liquidity_score=liquidity_score
                 )
 
                 if bullseye_score >= Config.MIN_BULLSEYE_SCORE:
@@ -143,7 +197,12 @@ class BullseyeBot(BaseAutoBot):
                         'volume_delta': volume_delta,
                         'delta': delta,
                         'gamma': flow.get('gamma', 0),
-                        'vega': flow.get('vega', 0)
+                        'vega': flow.get('vega', 0),
+                        'itm_probability': itm_probability,
+                        'expected_move_5d': em5,
+                        'liquidity_score': liquidity_score,
+                        'bid_ask_spread_pct': spread_pct if bid > 0 and ask > 0 else None,
+                        'implied_volatility': implied_volatility
                     }
 
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
@@ -157,8 +216,118 @@ class BullseyeBot(BaseAutoBot):
 
         return signals
 
+    def _calculate_liquidity_score(self, open_interest: int, spread_pct: float) -> float:
+        """
+        Calculate liquidity quality score (0-1).
+
+        Args:
+            open_interest: Contract open interest
+            spread_pct: Bid-ask spread as percentage
+
+        Returns:
+            Score between 0.0 and 1.0
+        """
+        try:
+            # OI score (50% weight)
+            if open_interest >= 5000:
+                oi_score = 1.0
+            elif open_interest >= 2000:
+                oi_score = 0.8
+            elif open_interest >= 1000:
+                oi_score = 0.6
+            elif open_interest >= 500:
+                oi_score = 0.4
+            else:
+                oi_score = 0.0
+
+            # Spread score (50% weight)
+            if spread_pct <= 1.0:
+                spread_score = 1.0
+            elif spread_pct <= 2.0:
+                spread_score = 0.8
+            elif spread_pct <= 3.5:
+                spread_score = 0.6
+            elif spread_pct <= 5.0:
+                spread_score = 0.4
+            else:
+                spread_score = 0.0
+
+            return (oi_score * 0.5) + (spread_score * 0.5)
+        except Exception as e:
+            logger.error(f"Error calculating liquidity score: {e}")
+            return 0.0
+
+    def _calculate_bullseye_score_v2(self, voi_ratio: float, premium: float,
+                                     momentum_strength: float, days_to_expiry: int,
+                                     itm_probability: float, liquidity_score: float) -> int:
+        """
+        Calculate the Bullseye Score v2 with Phase 1 enhancements.
+
+        Updated Weights:
+        - VOI Ratio: 30% (reduced from 35%)
+        - Premium: 25% (reduced from 30%)
+        - Momentum: 15% (reduced from 20%)
+        - ITM Probability: 15% (NEW)
+        - DTE Sweet Spot: 10% (reduced from 15%)
+        - Liquidity Quality: 5% (NEW)
+
+        Returns:
+            Score between 0-100
+        """
+        score = 0
+
+        # VOI Ratio (30%)
+        if voi_ratio >= 10:
+            score += 30
+        elif voi_ratio >= 5:
+            score += 25
+        elif voi_ratio >= 3:
+            score += 20
+
+        # Premium (25%)
+        if premium >= 250000:
+            score += 25
+        elif premium >= 100000:
+            score += 20
+        elif premium >= 50000:
+            score += 15
+        elif premium >= 25000:
+            score += 10
+
+        # Momentum (15%)
+        if momentum_strength >= 0.7:
+            score += 15
+        elif momentum_strength >= 0.5:
+            score += 10
+        elif momentum_strength >= 0.3:
+            score += 5
+
+        # ITM Probability (15% - NEW)
+        if itm_probability >= 0.60:
+            score += 15
+        elif itm_probability >= 0.50:
+            score += 12
+        elif itm_probability >= 0.40:
+            score += 9
+        elif itm_probability >= 0.35:
+            score += 6
+
+        # DTE Sweet Spot (10%)
+        if 21 <= days_to_expiry <= 45:
+            score += 10
+        elif 7 <= days_to_expiry <= 60:
+            score += 6
+
+        # Liquidity Quality (5% - NEW)
+        score += int(liquidity_score * 5)
+
+        return min(score, 100)
+
     def _calculate_bullseye_score(self, voi_ratio: float, premium: float, momentum_strength: float, dte: int) -> int:
-        """Calculate the Bullseye Score for a swing trade using generic scoring"""
+        """
+        DEPRECATED: Legacy scoring function for backwards compatibility.
+        Use _calculate_bullseye_score_v2() instead.
+        """
         score = self.calculate_score({
             'voi_ratio': (voi_ratio, [
                 (10, 35),  # 10x+ → 35 points (35%)
@@ -185,6 +354,65 @@ class BullseyeBot(BaseAutoBot):
             score += 10
 
         return min(score, 100)
+
+    def _calculate_itm_probability(self, S: float, K: float, T: float, IV: float, opt_type: str) -> float:
+        """
+        Calculate probability of option finishing ITM using Black-Scholes d2.
+
+        Args:
+            S: Current stock price
+            K: Strike price
+            T: Time to expiration in years
+            IV: Implied volatility (annualized, e.g., 0.30 for 30%)
+            opt_type: 'CALL' or 'PUT'
+
+        Returns:
+            Probability between 0.0 and 1.0
+        """
+        try:
+            if T <= 0 or IV <= 0:
+                return 0.0
+
+            # Black-Scholes d2 calculation (risk-neutral probability of ITM)
+            # d2 = (ln(S/K) + (r - 0.5*σ²)*T) / (σ*sqrt(T))
+            # For options pricing, we assume r≈0 for simplicity (risk-free rate)
+            r = 0.0
+
+            d2 = (np.log(S / K) + (r - 0.5 * IV**2) * T) / (IV * np.sqrt(T))
+
+            if opt_type == 'CALL':
+                # P(S_T > K) = N(d2)
+                return norm.cdf(d2)
+            else:  # PUT
+                # P(S_T < K) = N(-d2)
+                return norm.cdf(-d2)
+
+        except Exception as e:
+            logger.error(f"Error calculating ITM probability: {e}")
+            return 0.0
+
+    def _calculate_expected_move(self, S: float, IV: float, days: int) -> float:
+        """
+        Calculate expected move over N days.
+
+        EM_N = S * IV * sqrt(N/365)
+
+        Args:
+            S: Current stock price
+            IV: Implied volatility (annualized)
+            days: Number of days
+
+        Returns:
+            Expected move in dollars
+        """
+        try:
+            if IV <= 0 or days <= 0:
+                return 0.0
+
+            return S * IV * np.sqrt(days / 365.0)
+        except Exception as e:
+            logger.error(f"Error calculating expected move: {e}")
+            return 0.0
 
     async def _calculate_momentum(self, symbol: str) -> Optional[Dict]:
         """Calculate daily/4-hour momentum for swing trades"""
@@ -222,20 +450,42 @@ class BullseyeBot(BaseAutoBot):
             return None
 
     async def _post_signal(self, signal: Dict):
-        """Post the new Bullseye swing trade signal"""
+        """Post the new Bullseye swing trade signal with Phase 1 enhancements"""
         color = 0x007bff  # Professional Blue
 
         title = f"🎯 Bullseye Swing Idea: {signal['ticker']} {signal['type']}"
         description = f"**Bullseye Score: {signal['bullseye_score']}/100**"
 
+        # Enhanced thesis with ITM probability
+        itm_pct = signal['itm_probability'] * 100
+        liquidity_quality = "Excellent" if signal['liquidity_score'] >= 0.8 else \
+                           "Good" if signal['liquidity_score'] >= 0.6 else \
+                           "Fair" if signal['liquidity_score'] >= 0.4 else "Moderate"
+
+        thesis = (
+            f"Detected **${signal['premium']:,.0f}** in premium on this contract "
+            f"(**{signal['voi_ratio']:.1f}x** open interest). "
+            f"Black-Scholes model indicates **{itm_pct:.1f}% probability of finishing ITM**. "
+            f"Combined with **{signal['momentum_strength']:.2f} {('bullish' if signal['type'] == 'CALL' else 'bearish')} momentum** "
+            f"and **{liquidity_quality.lower()} liquidity**, this suggests a high-conviction swing opportunity."
+        )
+
         # Build fields
         fields = [
             {"name": "Contract", "value": f"${signal['strike']} {signal['type']} expiring {signal['expiration']}", "inline": False},
-            {"name": "Thesis", "value": f"Detected **${signal['premium']:,.0f}** in premium on this contract, which is **{signal['voi_ratio']:.1f}x** its open interest. This unusual activity, combined with a **{signal['market_context']['regime']} market** and **{signal['momentum_strength']:.2f} {('bullish' if signal['type'] == 'CALL' else 'bearish')} momentum**, suggests a potential multi-day move.", "inline": False},
+            {"name": "Thesis", "value": thesis, "inline": False},
             {"name": "Current Stock Price", "value": f"${signal['current_price']:.2f}", "inline": True},
             {"name": "Days to Expiration", "value": f"{signal['days_to_expiry']} days", "inline": True},
+            {"name": "ITM Probability", "value": f"{itm_pct:.1f}%", "inline": True},
+            {"name": "5-Day Expected Move", "value": f"${signal['expected_move_5d']:.2f}", "inline": True},
+            {"name": "Open Interest", "value": f"{signal['open_interest']:,}", "inline": True},
+            {"name": "Liquidity Quality", "value": liquidity_quality, "inline": True},
             {"name": "Management", "value": "This is a swing trade idea. Consider a timeframe of several days to weeks. Always use your own risk management.", "inline": False}
         ]
+
+        # Add spread info if available
+        if signal.get('bid_ask_spread_pct') is not None:
+            fields.insert(-1, {"name": "Bid-Ask Spread", "value": f"{signal['bid_ask_spread_pct']:.2f}%", "inline": True})
 
         # Create embed with auto-disclaimer
         embed = self.create_signal_embed_with_disclaimer(
@@ -243,8 +493,9 @@ class BullseyeBot(BaseAutoBot):
             description=description,
             color=color,
             fields=fields,
-            footer="Bullseye Bot - High-Conviction Swing Trades"
+            footer="Bullseye Bot v2 - High-Conviction Swing Trades with ITM Probability"
         )
 
         await self.post_to_discord(embed)
-        logger.info(f"Posted Bullseye SWING signal: {signal['ticker']} {signal['type']} ${signal['strike']} Score:{signal['bullseye_score']}")
+        logger.info(f"Posted Bullseye v2 signal: {signal['ticker']} {signal['type']} ${signal['strike']} "
+                   f"Score:{signal['bullseye_score']} ITM:{itm_pct:.1f}%")
