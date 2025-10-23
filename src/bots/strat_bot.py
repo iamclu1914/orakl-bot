@@ -18,15 +18,28 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class STRATPatternBot:
-    """Bot for detecting STRAT trading patterns"""
+    """Bot for detecting STRAT trading patterns with database persistence"""
 
-    def __init__(self, data_fetcher: DataFetcher = None):
+    def __init__(self, data_fetcher: DataFetcher = None, db_session=None):
         self.name = "STRAT Pattern Scanner"
         # Use provided data_fetcher or create new one with API key from config
         self.data_fetcher = data_fetcher if data_fetcher else DataFetcher(Config.POLYGON_API_KEY)
         self.webhook_url = Config.STRAT_WEBHOOK
         self.scan_interval = Config.STRAT_INTERVAL
+
+        # Database integration
+        self.db_session = db_session
+        self.db_repo = None
+        if db_session:
+            from src.database.strat_repository import STRATRepository
+            self.db_repo = STRATRepository(db_session)
+            logger.info(f"{self.name} initialized with database persistence")
+        else:
+            logger.warning(f"{self.name} initialized WITHOUT database persistence (in-memory only)")
+
+        # Legacy in-memory storage (fallback when no database)
         self.detected_today = {}
+
         self.is_running = False
         self.running = False  # Add for compatibility with BotManager.get_bot_status()
         self.est = pytz.timezone('America/New_York')
@@ -694,15 +707,24 @@ class STRATPatternBot:
 
                         # Check if alert time is appropriate for THIS pattern
                         if self.should_alert_pattern(signal['pattern'], signal):
-                            # Check if already detected today
-                            key = f"{ticker}_{signal['pattern']}_{datetime.now(self.est).date()}"
-                            if key not in self.detected_today:
+                            # Check for duplicate alert (database-backed or in-memory fallback)
+                            trading_date = datetime.now(self.est).date()
+                            is_duplicate = self._check_duplicate_alert(ticker, signal['pattern'], trading_date)
+
+                            if not is_duplicate:
+                                # Save pattern and send alert
+                                pattern_saved = self._save_pattern(ticker, signal)
                                 self.send_alert(signal)
                                 signals_found.append(signal)
+
+                                # Mark as detected (in-memory cache)
+                                key = f"{ticker}_{signal['pattern']}_{trading_date}"
                                 self.detected_today[key] = True
 
                                 logger.info(f"✅ STRAT signal: {ticker} {signal['pattern']} - "
                                           f"Confidence:{signal.get('confidence_score', 0):.2f}")
+                            else:
+                                logger.debug(f"Duplicate alert skipped: {ticker} {signal['pattern']} already alerted today")
                         else:
                             logger.debug(f"Pattern {signal['pattern']} for {ticker} detected but outside alert window")
 
@@ -713,6 +735,121 @@ class STRATPatternBot:
             logger.info(f"Found {len(signals_found)} STRAT patterns")
         else:
             logger.info("No new STRAT patterns detected")
+
+    def _check_duplicate_alert(self, symbol: str, pattern_type: str, trading_date) -> bool:
+        """
+        Check for duplicate alert using database or in-memory fallback
+
+        Args:
+            symbol: Stock symbol
+            pattern_type: Pattern name (e.g., '3-2-2 Reversal')
+            trading_date: Trading date (date object)
+
+        Returns:
+            True if duplicate exists, False otherwise
+        """
+        # Try database first
+        if self.db_repo:
+            try:
+                # Determine timeframe from pattern type
+                timeframe = self._get_timeframe_for_pattern(pattern_type)
+                return self.db_repo.check_duplicate_alert(symbol, pattern_type, timeframe, trading_date)
+            except Exception as e:
+                logger.error(f"Database duplicate check failed, falling back to in-memory: {e}")
+
+        # Fallback to in-memory check
+        key = f"{symbol}_{pattern_type}_{trading_date}"
+        return key in self.detected_today
+
+    def _save_pattern(self, symbol: str, signal: Dict) -> bool:
+        """
+        Save detected pattern to database
+
+        Args:
+            symbol: Stock symbol
+            signal: Pattern signal dict
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        if not self.db_repo:
+            return False
+
+        try:
+            # Determine timeframe
+            pattern_type = signal['pattern']
+            timeframe = self._get_timeframe_for_pattern(pattern_type)
+
+            # Prepare pattern data
+            pattern_data = {
+                'completion_bar_start_utc': datetime.utcnow(),
+                'confidence': signal.get('confidence_score', 0.0),
+                'direction': signal.get('type', 'UNKNOWN'),
+                'entry': signal.get('entry', 0.0),
+                'stop': signal.get('stop', 0.0),
+                'target': signal.get('target', 0.0),
+                'meta': {
+                    'pattern': pattern_type,
+                    'detected_at': datetime.now(self.est).isoformat(),
+                    'bars': signal.get('bars', [])
+                }
+            }
+
+            # Save pattern
+            pattern = self.db_repo.save_pattern(symbol, pattern_type, timeframe, pattern_data)
+
+            # Save alert record
+            trading_date = datetime.now(self.est).date()
+            alert_payload = {
+                'symbol': symbol,
+                'pattern': pattern_type,
+                'confidence': signal.get('confidence_score', 0.0),
+                'type': signal.get('type'),
+                'entry': signal.get('entry'),
+                'stop': signal.get('stop'),
+                'target': signal.get('target')
+            }
+
+            self.db_repo.save_alert(
+                pattern_id=pattern.id,
+                symbol=symbol,
+                pattern_type=pattern_type,
+                timeframe=timeframe,
+                trading_date=trading_date,
+                payload=alert_payload
+            )
+
+            # Commit changes
+            self.db_session.commit()
+
+            logger.info(f"Pattern saved to database: {symbol} {pattern_type}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save pattern to database: {e}")
+            if self.db_session:
+                self.db_session.rollback()
+            return False
+
+    def _get_timeframe_for_pattern(self, pattern_type: str) -> str:
+        """
+        Get timeframe string for pattern type
+
+        Args:
+            pattern_type: Pattern name
+
+        Returns:
+            Timeframe string ('60m', '4h', or '12h')
+        """
+        if '3-2-2' in pattern_type:
+            return '60m'
+        elif '2-2' in pattern_type:
+            return '4h'
+        elif '1-3-1' in pattern_type or 'Miyagi' in pattern_type:
+            return '12h'
+        else:
+            logger.warning(f"Unknown pattern type: {pattern_type}, defaulting to 60m")
+            return '60m'
 
     async def get_next_scan_interval(self):
         """Calculate optimal scan interval based on current time"""
