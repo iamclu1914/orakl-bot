@@ -730,7 +730,15 @@ class DataFetcher:
                     volume_delta = current_volume - previous_volume
 
                     # Filter: Must have significant volume change
-                    if volume_delta < min_volume_delta:
+                    # Special case: On first scan (no previous data), accept any volume ≥10
+                    if not previous_snapshot_dict:
+                        # First scan for this ticker - check absolute volume instead of delta
+                        if current_volume < 10:
+                            continue
+                        # Use full volume as delta for first scan
+                        volume_delta = current_volume
+                        logger.debug(f"First scan for {ticker}: using full volume {volume_delta} as delta")
+                    elif volume_delta < min_volume_delta:
                         continue
 
                     # Calculate volume velocity (contracts per minute)

@@ -27,12 +27,12 @@ class VolumeCache:
     - Thread-safe async operations
     """
 
-    def __init__(self, ttl_seconds: int = 120, cleanup_interval: int = 300):
+    def __init__(self, ttl_seconds: int = 360, cleanup_interval: int = 300):
         """
         Initialize volume cache.
 
         Args:
-            ttl_seconds: Time-to-live for cache entries (default: 2 minutes)
+            ttl_seconds: Time-to-live for cache entries (default: 6 minutes)
             cleanup_interval: Cleanup task interval (default: 5 minutes)
         """
         # Cache structure: {ticker: {contract_ticker: {volume, timestamp}}}
