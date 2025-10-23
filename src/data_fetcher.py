@@ -625,17 +625,6 @@ class DataFetcher:
             data = await self._make_request(endpoint, params)
 
             if data and 'results' in data and len(data['results']) > 0:
-                # Debug: Log first contract structure to verify API response format
-                if len(data['results']) > 0:
-                    sample_contract = data['results'][0]
-                    logger.info(f"🔍 API Response Sample for {underlying}:")
-                    logger.info(f"  Contract keys: {list(sample_contract.keys())}")
-                    if 'day' in sample_contract:
-                        logger.info(f"  day object: {sample_contract['day']}")
-                    else:
-                        logger.info(f"  ⚠️ NO 'day' object in response!")
-                        logger.info(f"  Full contract sample: {sample_contract}")
-
                 logger.debug(
                     f"Retrieved option chain snapshot for {underlying}: "
                     f"{len(data['results'])} contracts"
@@ -649,6 +638,52 @@ class DataFetcher:
             logger.error(f"Error fetching option chain snapshot for {underlying}: {e}")
             return []
 
+    async def get_option_trades(
+        self,
+        option_ticker: str,
+        timestamp_gte: Optional[int] = None,
+        limit: int = 50000
+    ) -> List[Dict]:
+        """
+        Get trade history for a specific option contract.
+
+        Endpoint: /v3/trades/{optionsTicker}
+
+        Args:
+            option_ticker: Option ticker (e.g., 'O:AAPL250117C00200000')
+            timestamp_gte: Nanosecond timestamp - only get trades >= this time
+            limit: Max trades to return (default/max: 50000)
+
+        Returns:
+            List of trade dictionaries with structure:
+            {
+                'sip_timestamp': 1623456789000000000,  # Nanosecond timestamp
+                'participant_timestamp': 1623456788999000000,
+                'price': 5.25,  # Trade price
+                'size': 10,     # Trade size (volume)
+                'exchange': 11,
+                'conditions': [1, 2],
+                'correction': 0
+            }
+        """
+        try:
+            endpoint = f"/v3/trades/{option_ticker}"
+            params = {'limit': limit}
+
+            if timestamp_gte:
+                params['timestamp.gte'] = timestamp_gte
+
+            data = await self._make_request(endpoint, params)
+
+            if data and 'results' in data:
+                return data.get('results', [])
+
+            return []
+
+        except Exception as e:
+            logger.debug(f"Error fetching trades for {option_ticker}: {e}")
+            return []
+
     async def detect_unusual_flow(
         self,
         underlying: str,
@@ -657,17 +692,18 @@ class DataFetcher:
         min_volume_ratio: float = 2.0
     ) -> List[Dict]:
         """
-        Detect unusual options flow by comparing volume deltas between snapshots.
+        Detect unusual options flow by aggregating trades since last scan.
 
-        This is the CORE FLOW DETECTION ALGORITHM for REST-based approach.
+        This is the CORE FLOW DETECTION ALGORITHM using TRADES ENDPOINT.
 
         Algorithm:
-        1. Get current option chain snapshot from Polygon
-        2. Retrieve previous snapshot from volume cache
-        3. Calculate volume delta for each contract
-        4. Filter by premium threshold and unusual activity
-        5. Update cache with current snapshot
-        6. Return flow signals
+        1. Get option chain snapshot for contract details (Greeks, OI, strikes)
+        2. Retrieve last scan timestamp from cache
+        3. For each contract, fetch trades since last scan timestamp
+        4. Aggregate trade sizes to calculate volume delta
+        5. Filter by premium threshold and unusual activity
+        6. Update cache with current scan timestamp
+        7. Return flow signals
 
         Args:
             underlying: Underlying ticker symbol
@@ -685,8 +721,8 @@ class DataFetcher:
                 'type': 'CALL' or 'PUT',
                 'strike': 200.0,
                 'expiration': '2025-01-17',
-                'volume_delta': 150,  # Volume change since last snapshot
-                'total_volume': 1500,  # Current total volume
+                'volume_delta': 150,  # Trades since last scan
+                'total_volume': 1500,  # Day's total volume
                 'open_interest': 10000,
                 'last_price': 5.25,
                 'premium': 78750.0,  # volume_delta * last_price * 100
@@ -697,23 +733,30 @@ class DataFetcher:
             }
         """
         try:
-            # Step 1: Get current snapshot from Polygon API
+            # Step 1: Get option chain snapshot for contract details
             current_snapshot = await self.get_option_chain_snapshot(underlying)
 
             if not current_snapshot:
                 logger.debug(f"No contracts found for {underlying}")
                 return []
 
-            # Step 2: Get previous snapshot from cache
-            previous_snapshot_dict = await volume_cache.get(underlying)
+            # Step 2: Get last scan timestamp from cache
+            cache_data = await volume_cache.get(underlying)
+            last_scan_timestamp_ns = None  # Nanoseconds
 
-            # Step 3: Calculate volume deltas and detect flow
+            if cache_data and isinstance(cache_data, dict):
+                # Cache structure: {'last_scan_ns': timestamp}
+                last_scan_timestamp_ns = cache_data.get('last_scan_ns')
+
+            # Current timestamp in nanoseconds
+            current_timestamp_ns = int(datetime.now().timestamp() * 1_000_000_000)
+
+            # Step 3: Aggregate trades for each contract
             flows = []
-            current_snapshot_dict = {}
 
             # Diagnostic counters
-            total_contracts = len(current_snapshot) if current_snapshot else 0
-            contracts_with_volume = 0
+            total_contracts = len(current_snapshot)
+            contracts_with_trades = 0
             contracts_with_delta = 0
             contracts_with_premium = 0
 
@@ -724,64 +767,53 @@ class DataFetcher:
                     if not ticker:
                         continue
 
-                    # Get day data (volume, price, etc.)
+                    # Get contract details for pricing
                     day_data = contract.get('day', {})
-                    current_volume = day_data.get('volume', 0)
                     last_price = day_data.get('close', 0)
+                    current_day_volume = day_data.get('volume', 0)
 
-                    # Skip if no volume or price
-                    if current_volume == 0 or last_price == 0:
+                    # Skip if no price data
+                    if last_price == 0:
                         continue
 
-                    contracts_with_volume += 1
+                    # Step 4: Fetch trades since last scan
+                    trades = await self.get_option_trades(
+                        option_ticker=ticker,
+                        timestamp_gte=last_scan_timestamp_ns,
+                        limit=50000
+                    )
 
-                    # Store current volume for cache update
-                    current_snapshot_dict[ticker] = {
-                        'volume': current_volume,
-                        'timestamp': datetime.now()
-                    }
+                    if not trades:
+                        continue  # No trades since last scan
 
-                    # Calculate volume delta
-                    previous_volume = 0
-                    previous_timestamp = None
-                    if previous_snapshot_dict and ticker in previous_snapshot_dict:
-                        previous_volume = previous_snapshot_dict[ticker].get('volume', 0)
-                        previous_timestamp = previous_snapshot_dict[ticker].get('timestamp')
+                    contracts_with_trades += 1
 
-                    volume_delta = current_volume - previous_volume
+                    # Step 5: Aggregate trade sizes to get volume delta
+                    volume_delta = sum(trade.get('size', 0) for trade in trades)
 
-                    # Filter: Must have significant volume change
-                    # Special case: On first scan (no previous data), accept any volume ≥10
-                    if not previous_snapshot_dict:
-                        # First scan for this ticker - check absolute volume instead of delta
-                        if current_volume < 10:
-                            continue
-                        # Use full volume as delta for first scan
-                        volume_delta = current_volume
-                        logger.info(f"🔄 First scan {underlying}: {ticker} vol={volume_delta} (cache empty)")
-                    elif volume_delta < min_volume_delta:
+                    # Filter: Must have significant volume
+                    if volume_delta < min_volume_delta:
                         continue
 
                     contracts_with_delta += 1
 
-                    # Calculate volume velocity (contracts per minute)
-                    volume_velocity = 0
+                    # Calculate time elapsed for velocity
                     time_elapsed_minutes = 0
+                    volume_velocity = 0
                     flow_intensity = "NORMAL"
 
-                    if previous_timestamp:
-                        time_elapsed_seconds = (datetime.now() - previous_timestamp).total_seconds()
-                        time_elapsed_minutes = max(time_elapsed_seconds / 60, 0.1)  # Avoid division by zero
+                    if last_scan_timestamp_ns:
+                        time_elapsed_seconds = (current_timestamp_ns - last_scan_timestamp_ns) / 1_000_000_000
+                        time_elapsed_minutes = max(time_elapsed_seconds / 60, 0.1)
                         volume_velocity = volume_delta / time_elapsed_minutes
 
-                        # Classify flow intensity based on velocity
+                        # Classify flow intensity
                         if volume_velocity >= 50:
                             flow_intensity = "AGGRESSIVE"  # 50+ contracts/min
                         elif volume_velocity >= 20:
                             flow_intensity = "STRONG"      # 20-50 contracts/min
                         elif volume_velocity >= 10:
                             flow_intensity = "MODERATE"    # 10-20 contracts/min
-                        # else: NORMAL (< 10 contracts/min)
 
                     # Calculate premium for the delta volume
                     premium = volume_delta * last_price * 100  # Options multiplier
@@ -800,7 +832,7 @@ class DataFetcher:
 
                     # Get Greeks
                     greeks = contract.get('greeks', {})
-                    delta = greeks.get('delta', 0)
+                    delta_greek = greeks.get('delta', 0)
                     gamma = greeks.get('gamma', 0)
                     theta = greeks.get('theta', 0)
                     vega = greeks.get('vega', 0)
@@ -813,20 +845,15 @@ class DataFetcher:
                     underlying_asset = contract.get('underlying_asset', {})
                     underlying_price = underlying_asset.get('price', 0)
 
-                    # Calculate volume/OI ratio for unusual activity detection
+                    # Calculate volume/OI ratio
                     vol_oi_ratio = 0
                     if open_interest > 0:
                         vol_oi_ratio = volume_delta / open_interest
 
-                    # Optional: Filter by volume/OI ratio for truly unusual activity
-                    # (Commented out to catch all flows above premium threshold)
-                    # if vol_oi_ratio < min_volume_ratio and open_interest > 100:
-                    #     continue
-
                     # Determine option type
                     option_type = 'CALL' if contract_type == 'call' or 'C' in ticker else 'PUT'
 
-                    # Create flow signal with velocity metrics
+                    # Create flow signal
                     flow = {
                         'ticker': ticker,
                         'underlying': underlying,
@@ -834,22 +861,22 @@ class DataFetcher:
                         'strike': DataValidator.validate_price(strike, 'strike'),
                         'expiration': expiration,
                         'volume_delta': volume_delta,
-                        'total_volume': current_volume,
+                        'total_volume': current_day_volume,
                         'open_interest': open_interest,
                         'vol_oi_ratio': vol_oi_ratio,
                         'last_price': DataValidator.validate_price(last_price, 'price'),
                         'premium': premium,
                         'implied_volatility': implied_vol,
-                        'delta': delta,
+                        'delta': delta_greek,
                         'gamma': gamma,
                         'theta': theta,
                         'vega': vega,
                         'underlying_price': underlying_price,
                         'timestamp': datetime.now(),
-                        # Volume velocity metrics (NEW)
                         'volume_velocity': volume_velocity,
                         'flow_intensity': flow_intensity,
-                        'time_elapsed_minutes': time_elapsed_minutes
+                        'time_elapsed_minutes': time_elapsed_minutes,
+                        'num_trades': len(trades)  # NEW: Number of individual trades
                     }
 
                     flows.append(flow)
@@ -861,11 +888,10 @@ class DataFetcher:
                     logger.debug(f"Error processing contract {ticker}: {e}")
                     continue
 
-            # Step 4: Update cache with current snapshot
-            if current_snapshot_dict:
-                await volume_cache.set(underlying, current_snapshot_dict)
+            # Step 6: Update cache with current scan timestamp
+            await volume_cache.set(underlying, {'last_scan_ns': current_timestamp_ns})
 
-            # Step 5: Sort by premium (highest first) and return
+            # Step 7: Sort by premium (highest first) and return
             flows_sorted = sorted(flows, key=lambda x: x['premium'], reverse=True)
 
             if flows_sorted:
@@ -876,7 +902,7 @@ class DataFetcher:
             else:
                 logger.info(
                     f"⚠️ {underlying}: 0 flows from {total_contracts} contracts "
-                    f"(volume={contracts_with_volume}, delta={contracts_with_delta}, premium={contracts_with_premium})"
+                    f"(trades={contracts_with_trades}, delta={contracts_with_delta}, premium={contracts_with_premium})"
                 )
 
             return flows_sorted
