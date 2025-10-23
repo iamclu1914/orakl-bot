@@ -55,8 +55,8 @@ class TradyFlowBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=Config.MIN_PREMIUM,  # $10K minimum
-                min_volume_delta=10  # At least 10 contracts of volume change
+                min_premium=1000,  # $1K minimum for testing (was Config.MIN_PREMIUM $10K)
+                min_volume_delta=5  # At least 5 contracts of volume change (was 10)
             )
 
             if not flows:

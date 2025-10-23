@@ -126,8 +126,8 @@ class ScalpsBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=Config.SCALPS_MIN_PREMIUM,  # $2K minimum
-                min_volume_delta=10  # At least 10 contracts of volume change
+                min_premium=500,  # $500 minimum for testing (was Config.SCALPS_MIN_PREMIUM $2K)
+                min_volume_delta=5  # At least 5 contracts of volume change (was 10)
             )
 
             # Process each flow signal
