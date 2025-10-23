@@ -499,29 +499,43 @@ class ScalpsBot(BaseAutoBot):
         return score
 
     def apply_quality_filters(self, signal: Dict) -> bool:
-        """Apply quality filters to signals"""
+        """
+        Apply quality filters to signals with diagnostic logging.
+
+        Phase 1 Tuning: Relaxed thresholds to increase signal flow while maintaining quality.
+        """
         try:
-            # Minimum score threshold (50%)
-            if signal.get('scalp_score', 0) < 50:
+            # Minimum score threshold (45% - lowered from 50% for Phase 1)
+            score = signal.get('scalp_score', 0)
+            if score < 45:
+                logger.debug(f"Rejected {signal.get('ticker')}: score {score} < 45")
                 return False
 
-            # Minimum volume requirement
-            if signal.get('volume', 0) < 75:
+            # Minimum volume requirement (50 contracts - lowered from 75 for Phase 1)
+            volume = signal.get('volume', 0)
+            if volume < 50:
+                logger.debug(f"Rejected {signal.get('ticker')}: volume {volume} < 50")
                 return False
 
-            # Minimum premium requirement
-            if signal.get('premium', 0) < 5000:
+            # Minimum premium requirement (use Config value - was hardcoded $5K, now $2K)
+            premium = signal.get('premium', 0)
+            if premium < Config.SCALPS_MIN_PREMIUM:
+                logger.debug(f"Rejected {signal.get('ticker')}: premium ${premium:,.0f} < ${Config.SCALPS_MIN_PREMIUM:,.0f}")
                 return False
 
-            # Pattern strength requirement
-            if signal.get('pattern_strength', 0) < 70:
+            # Pattern strength requirement (60% - lowered from 70% for Phase 1)
+            pattern_strength = signal.get('pattern_strength', 0)
+            if pattern_strength < 60:
+                logger.debug(f"Rejected {signal.get('ticker')}: pattern strength {pattern_strength} < 60")
                 return False
 
             # DTE range (0-7 days for scalps)
             dte = signal.get('days_to_expiry', 0)
             if dte < 0 or dte > 7:
+                logger.debug(f"Rejected {signal.get('ticker')}: DTE {dte} not in 0-7 range")
                 return False
 
+            logger.info(f"✅ {signal.get('ticker')} passed quality filters - Score: {score}, Premium: ${premium:,.0f}, Volume: {volume}")
             return True
         except Exception as e:
             logger.error(f"Error in quality filter: {e}")

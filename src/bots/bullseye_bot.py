@@ -103,9 +103,10 @@ class BullseyeBot(BaseAutoBot):
                 if days_to_expiry < 7 or days_to_expiry > 60:
                     continue
 
-                # Filter 2: Liquidity guards (NEW - Phase 1)
+                # Filter 2: Liquidity guards (Phase 1 - with diagnostic logging)
                 # Minimum open interest ≥ 500
                 if open_interest < 500:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: OI {open_interest} < 500")
                     continue
 
                 # Bid-ask spread ≤ 5% (spread / mid-price)
@@ -113,26 +114,31 @@ class BullseyeBot(BaseAutoBot):
                     mid_price = (bid + ask) / 2
                     spread_pct = ((ask - bid) / mid_price) * 100 if mid_price > 0 else 100
                     if spread_pct > 5.0:
+                        logger.debug(f"Rejected {symbol} ${strike} {opt_type}: spread {spread_pct:.2f}% > 5%")
                         continue
 
                 # Filter 3: VOI ratio (volume/OI > 3.0)
                 if open_interest == 0 or total_volume < 100:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: insufficient volume {total_volume}")
                     continue
 
                 voi_ratio = total_volume / open_interest
                 if voi_ratio < 3.0:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: VOI {voi_ratio:.1f}x < 3.0x")
                     continue
 
                 # Filter 4: ATM options only (delta 0.4-0.6 range)
                 if abs(delta) < 0.4 or abs(delta) > 0.6:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: delta {abs(delta):.2f} outside 0.4-0.6")
                     continue
 
                 # Filter 5: Strike distance (within 15% of current price)
                 strike_distance = abs(strike - current_price) / current_price
                 if strike_distance > 0.15:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: strike {strike_distance*100:.1f}% from price")
                     continue
 
-                # Filter 6: ITM Probability (NEW - Phase 1)
+                # Filter 6: ITM Probability (Phase 1 - Tuned)
                 # Calculate P(ITM) using Black-Scholes d2
                 T_years = days_to_expiry / 365.0
                 itm_probability = self._calculate_itm_probability(
@@ -143,11 +149,14 @@ class BullseyeBot(BaseAutoBot):
                     opt_type=opt_type
                 )
 
-                # Require P(ITM) ≥ 35%
-                if itm_probability < 0.35:
+                # Require P(ITM) ≥ 25% (lowered from 35% for Phase 1 tuning)
+                if itm_probability < 0.25:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: ITM probability {itm_probability*100:.1f}% < 25%")
                     continue
 
-                # Filter 7: 5-Day Expected Move (NEW - Phase 1)
+                logger.debug(f"✓ {symbol} ${strike} {opt_type}: ITM probability {itm_probability*100:.1f}% passed")
+
+                # Filter 7: 5-Day Expected Move (Phase 1 - Optional for tuning)
                 # Strike must be within 5-day expected move
                 em5 = self._calculate_expected_move(
                     S=current_price,
@@ -156,13 +165,24 @@ class BullseyeBot(BaseAutoBot):
                 )
 
                 strike_diff = abs(strike - current_price)
+                # TEMPORARILY DISABLED for Phase 1 testing - will re-enable after monitoring signal quality
+                # if strike_diff > em5:
+                #     logger.debug(f"Rejected {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} outside EM5 ${em5:.2f}")
+                #     continue
+
                 if strike_diff > em5:
-                    continue
+                    logger.debug(f"⚠️ {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} outside EM5 ${em5:.2f} (allowed for Phase 1)")
+                else:
+                    logger.debug(f"✓ {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} within EM5 ${em5:.2f}")
 
                 # Filter 8: Price action confirmation
                 if (opt_type == 'CALL' and momentum['direction'] != 'bullish') or \
                    (opt_type == 'PUT' and momentum['direction'] != 'bearish'):
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: momentum {momentum['direction']} doesn't align")
                     continue
+
+                # All filters passed!
+                logger.info(f"✅ {symbol} ${strike} {opt_type} passed all filters - ITM: {itm_probability*100:.1f}%, VOI: {voi_ratio:.1f}x, Score: calculating...")
 
                 # Calculate liquidity quality score (0-1)
                 liquidity_score = self._calculate_liquidity_score(
