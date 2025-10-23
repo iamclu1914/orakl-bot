@@ -737,7 +737,7 @@ class DataFetcher:
                             continue
                         # Use full volume as delta for first scan
                         volume_delta = current_volume
-                        logger.debug(f"First scan for {ticker}: using full volume {volume_delta} as delta")
+                        logger.info(f"🔄 First scan {underlying}: {ticker} vol={volume_delta} (cache empty)")
                     elif volume_delta < min_volume_delta:
                         continue
 
@@ -845,9 +845,12 @@ class DataFetcher:
 
             if flows_sorted:
                 logger.info(
-                    f"Detected {len(flows_sorted)} flow signals for {underlying} "
-                    f"(top premium: ${flows_sorted[0]['premium']:,.0f})"
+                    f"✅ {underlying}: {len(flows_sorted)} flows detected "
+                    f"(top: ${flows_sorted[0]['premium']:,.0f}, {flows_sorted[0]['flow_intensity']})"
                 )
+            else:
+                total_contracts = len(current_snapshot) if current_snapshot else 0
+                logger.info(f"⚠️ {underlying}: 0 flows from {total_contracts} contracts (all filtered)")
 
             return flows_sorted
 
