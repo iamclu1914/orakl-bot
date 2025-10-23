@@ -269,33 +269,26 @@ class STRATPatternBot:
             return None
 
         bars = valid_bars
-        pattern_bars = []
-        target_hours = {8: None, 9: None, 10: None}
 
-        # Extract bars at 8am, 9am, 10am
-        for bar in bars:
-            if 't' not in bar:
-                continue
-            bar_time = datetime.fromtimestamp(bar['t'] / 1000, tz=self.est)
-            bar['time'] = bar_time
-            bar_hour = bar_time.hour
+        # Use bar alignment utility to find 8am, 9am, 10am bars
+        from src.utils.bar_alignment import get_bars_for_hours, get_previous_bar
 
-            if bar_hour in target_hours and target_hours[bar_hour] is None:
-                target_hours[bar_hour] = bar
+        # Get pattern bars (60-minute timeframe)
+        pattern_bars = get_bars_for_hours(bars, [8, 9, 10], timeframe_minutes=60, tz=self.est)
 
-        for hour in [8, 9, 10]:
-            if target_hours[hour] is not None:
-                pattern_bars.append(target_hours[hour])
+        bar_8am = pattern_bars.get(8)
+        bar_9am = pattern_bars.get(9)
+        bar_10am = pattern_bars.get(10)
 
-        if len(pattern_bars) < 3:
+        if not bar_8am or not bar_9am or not bar_10am:
             return None
 
-        bar_8am = pattern_bars[0]
-        bar_9am = pattern_bars[1]
-        bar_10am = pattern_bars[2]
+        # Find bar before 8am for comparison (should be 7am bar)
+        prev_bar = get_previous_bar(bars, bar_8am)
 
-        # Find previous bar for 8am comparison
-        prev_bar = bars[0] if len(bars) > 0 else bar_8am
+        if not prev_bar:
+            # Fallback to first bar if previous not found
+            prev_bar = bars[0] if len(bars) > 0 else bar_8am
 
         # Step 1: 8am must be 3-bar (outside)
         bar1_type = self.detect_bar_type(bar_8am, prev_bar)
@@ -362,30 +355,23 @@ class STRATPatternBot:
         if len(bars) < 3:
             return None
 
-        bar_4am = None
-        bar_8am = None
-        bar_before_4am = None
+        # Use bar alignment utility to find 4am and 8am bars
+        from src.utils.bar_alignment import get_bars_for_hours, get_previous_bar
 
-        for i, bar in enumerate(bars):
-            if 't' not in bar:
-                continue
-            bar_time = datetime.fromtimestamp(bar['t'] / 1000, tz=self.est)
-            bar['time'] = bar_time
-            bar_hour = bar_time.hour
+        # Get 4am and 8am bars (4-hour timeframe)
+        pattern_bars = get_bars_for_hours(bars, [4, 8], timeframe_minutes=240, tz=self.est)
 
-            if bar_hour == 0 and bar_before_4am is None:  # Midnight bar (before 4am)
-                bar_before_4am = (i, bar)
-            elif bar_hour == 4 and bar_4am is None:
-                bar_4am = (i, bar)
-            elif bar_hour == 8 and bar_8am is None:
-                bar_8am = (i, bar)
+        data_4am = pattern_bars.get(4)
+        data_8am = pattern_bars.get(8)
 
-        if not bar_4am or not bar_8am or not bar_before_4am:
+        if not data_4am or not data_8am:
             return None
 
-        idx_before, data_before = bar_before_4am
-        idx_4am, data_4am = bar_4am
-        idx_8am, data_8am = bar_8am
+        # Get bar before 4am using sequential indexing (more robust)
+        data_before = get_previous_bar(bars, data_4am)
+
+        if not data_before:
+            return None
 
         # Step 1: 4am must be a 2-bar (2D or 2U)
         bar1_type = self.detect_bar_type(data_4am, data_before)
@@ -549,8 +535,9 @@ class STRATPatternBot:
         try:
             # 1-3-1 Miyagi - Always scan on 12H timeframe
             # Pattern can form at any time, not just at 4am/4pm
+            # Use 720-minute aggregation (12 hours) per MVP specification
             df_12h = await self.data_fetcher.get_aggregates(
-                ticker, 'hour', 12,
+                ticker, 'minute', 720,
                 (now - timedelta(days=5)).strftime('%Y-%m-%d'),
                 now.strftime('%Y-%m-%d')
             )
@@ -590,8 +577,9 @@ class STRATPatternBot:
 
             # 2-2 Reversal - Always scan on 4H timeframe
             # Pattern can complete at any time after 8am
+            # Use 240-minute aggregation (4 hours) per MVP specification
             df_4h = await self.data_fetcher.get_aggregates(
-                ticker, 'hour', 4,
+                ticker, 'minute', 240,
                 (now - timedelta(days=2)).strftime('%Y-%m-%d'),
                 now.strftime('%Y-%m-%d')
             )
