@@ -857,7 +857,7 @@ class DataFetcher:
                         vol_oi_ratio = volume_delta / open_interest
 
                     # Determine option type
-                    option_type = 'CALL' if contract_type == 'call' or 'C' in ticker else 'PUT'
+                    option_type = 'CALL' if contract_type == 'call' or (isinstance(ticker, str) and 'C' in ticker) else 'PUT'
 
                     # Create flow signal
                     flow = {
