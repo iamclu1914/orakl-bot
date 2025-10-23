@@ -700,6 +700,12 @@ class DataFetcher:
             flows = []
             current_snapshot_dict = {}
 
+            # Diagnostic counters
+            total_contracts = len(current_snapshot) if current_snapshot else 0
+            contracts_with_volume = 0
+            contracts_with_delta = 0
+            contracts_with_premium = 0
+
             for contract in current_snapshot:
                 try:
                     # Extract contract data with validation
@@ -715,6 +721,8 @@ class DataFetcher:
                     # Skip if no volume or price
                     if current_volume == 0 or last_price == 0:
                         continue
+
+                    contracts_with_volume += 1
 
                     # Store current volume for cache update
                     current_snapshot_dict[ticker] = {
@@ -743,6 +751,8 @@ class DataFetcher:
                     elif volume_delta < min_volume_delta:
                         continue
 
+                    contracts_with_delta += 1
+
                     # Calculate volume velocity (contracts per minute)
                     volume_velocity = 0
                     time_elapsed_minutes = 0
@@ -768,6 +778,8 @@ class DataFetcher:
                     # Filter: Must meet premium threshold
                     if premium < min_premium:
                         continue
+
+                    contracts_with_premium += 1
 
                     # Get contract details
                     details = contract.get('details', {})
@@ -851,8 +863,10 @@ class DataFetcher:
                     f"(top: ${flows_sorted[0]['premium']:,.0f}, {flows_sorted[0]['flow_intensity']})"
                 )
             else:
-                total_contracts = len(current_snapshot) if current_snapshot else 0
-                logger.info(f"⚠️ {underlying}: 0 flows from {total_contracts} contracts (all filtered)")
+                logger.info(
+                    f"⚠️ {underlying}: 0 flows from {total_contracts} contracts "
+                    f"(volume={contracts_with_volume}, delta={contracts_with_delta}, premium={contracts_with_premium})"
+                )
 
             return flows_sorted
 
