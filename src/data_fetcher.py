@@ -458,7 +458,7 @@ class DataFetcher:
                             trade = {
                                 'symbol': symbol,
                                 'contract': ticker,
-                                'type': 'CALL' if 'C' in ticker else 'PUT',
+                                'type': 'CALL' if (isinstance(ticker, str) and 'C' in ticker) else 'PUT',
                                 'strike': DataValidator.validate_price(
                                     contract.get('strike_price', 0), 'strike'
                                 ),
@@ -512,7 +512,7 @@ class DataFetcher:
                 volume = result.get('day', {}).get('volume', 0)
                 oi = result.get('open_interest', 0)
                 
-                if 'C' in ticker:
+                if isinstance(ticker, str) and 'C' in ticker:
                     total_call_volume += volume
                     total_call_oi += oi
                 else:
