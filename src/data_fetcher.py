@@ -722,14 +722,35 @@ class DataFetcher:
 
                     # Calculate volume delta
                     previous_volume = 0
+                    previous_timestamp = None
                     if previous_snapshot_dict and ticker in previous_snapshot_dict:
                         previous_volume = previous_snapshot_dict[ticker].get('volume', 0)
+                        previous_timestamp = previous_snapshot_dict[ticker].get('timestamp')
 
                     volume_delta = current_volume - previous_volume
 
                     # Filter: Must have significant volume change
                     if volume_delta < min_volume_delta:
                         continue
+
+                    # Calculate volume velocity (contracts per minute)
+                    volume_velocity = 0
+                    time_elapsed_minutes = 0
+                    flow_intensity = "NORMAL"
+
+                    if previous_timestamp:
+                        time_elapsed_seconds = (datetime.now() - previous_timestamp).total_seconds()
+                        time_elapsed_minutes = max(time_elapsed_seconds / 60, 0.1)  # Avoid division by zero
+                        volume_velocity = volume_delta / time_elapsed_minutes
+
+                        # Classify flow intensity based on velocity
+                        if volume_velocity >= 50:
+                            flow_intensity = "AGGRESSIVE"  # 50+ contracts/min
+                        elif volume_velocity >= 20:
+                            flow_intensity = "STRONG"      # 20-50 contracts/min
+                        elif volume_velocity >= 10:
+                            flow_intensity = "MODERATE"    # 10-20 contracts/min
+                        # else: NORMAL (< 10 contracts/min)
 
                     # Calculate premium for the delta volume
                     premium = volume_delta * last_price * 100  # Options multiplier
@@ -772,7 +793,7 @@ class DataFetcher:
                     # Determine option type
                     option_type = 'CALL' if contract_type == 'call' or 'C' in ticker else 'PUT'
 
-                    # Create flow signal
+                    # Create flow signal with velocity metrics
                     flow = {
                         'ticker': ticker,
                         'underlying': underlying,
@@ -791,7 +812,11 @@ class DataFetcher:
                         'theta': theta,
                         'vega': vega,
                         'underlying_price': underlying_price,
-                        'timestamp': datetime.now()
+                        'timestamp': datetime.now(),
+                        # Volume velocity metrics (NEW)
+                        'volume_velocity': volume_velocity,
+                        'flow_intensity': flow_intensity,
+                        'time_elapsed_minutes': time_elapsed_minutes
                     }
 
                     flows.append(flow)

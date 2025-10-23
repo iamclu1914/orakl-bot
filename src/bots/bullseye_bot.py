@@ -92,6 +92,8 @@ class BullseyeBot(BaseAutoBot):
                 bid = flow.get('bid', 0)
                 ask = flow.get('ask', 0)
                 implied_volatility = flow.get('implied_volatility', 0)
+                volume_velocity = flow.get('volume_velocity', 0)
+                flow_intensity = flow.get('flow_intensity', 'NORMAL')
 
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -202,7 +204,10 @@ class BullseyeBot(BaseAutoBot):
                         'expected_move_5d': em5,
                         'liquidity_score': liquidity_score,
                         'bid_ask_spread_pct': spread_pct if bid > 0 and ask > 0 else None,
-                        'implied_volatility': implied_volatility
+                        'implied_volatility': implied_volatility,
+                        # Volume velocity metrics (NEW)
+                        'volume_velocity': volume_velocity,
+                        'flow_intensity': flow_intensity
                     }
 
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
@@ -456,14 +461,22 @@ class BullseyeBot(BaseAutoBot):
         title = f"🎯 Bullseye Swing Idea: {signal['ticker']} {signal['type']}"
         description = f"**Bullseye Score: {signal['bullseye_score']}/100**"
 
-        # Enhanced thesis with ITM probability
+        # Enhanced thesis with ITM probability and flow intensity
         itm_pct = signal['itm_probability'] * 100
         liquidity_quality = "Excellent" if signal['liquidity_score'] >= 0.8 else \
                            "Good" if signal['liquidity_score'] >= 0.6 else \
                            "Fair" if signal['liquidity_score'] >= 0.4 else "Moderate"
 
+        flow_intensity = signal.get('flow_intensity', 'NORMAL')
+        flow_descriptor = {
+            "AGGRESSIVE": "aggressive flow",
+            "STRONG": "strong flow",
+            "MODERATE": "moderate flow",
+            "NORMAL": "steady accumulation"
+        }.get(flow_intensity, "activity")
+
         thesis = (
-            f"Detected **${signal['premium']:,.0f}** in premium on this contract "
+            f"Detected **${signal['premium']:,.0f}** in premium with **{flow_descriptor}** "
             f"(**{signal['voi_ratio']:.1f}x** open interest). "
             f"Black-Scholes model indicates **{itm_pct:.1f}% probability of finishing ITM**. "
             f"Combined with **{signal['momentum_strength']:.2f} {('bullish' if signal['type'] == 'CALL' else 'bearish')} momentum** "

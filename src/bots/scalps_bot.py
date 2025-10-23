@@ -139,6 +139,8 @@ class ScalpsBot(BaseAutoBot):
                 premium = flow['premium']
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
+                volume_velocity = flow.get('volume_velocity', 0)
+                flow_intensity = flow.get('flow_intensity', 'NORMAL')
 
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -166,9 +168,9 @@ class ScalpsBot(BaseAutoBot):
                 if total_volume < 50:
                     continue
 
-                # Calculate scalp score
+                # Calculate scalp score with flow intensity
                 scalp_score = self._calculate_scalp_score(
-                    pattern, total_volume, strike_distance, days_to_expiry
+                    pattern, total_volume, strike_distance, days_to_expiry, flow_intensity
                 )
 
                 if scalp_score >= adjusted_threshold:
@@ -207,7 +209,10 @@ class ScalpsBot(BaseAutoBot):
                         'volume_delta': volume_delta,
                         'delta': flow.get('delta', 0),
                         'gamma': flow.get('gamma', 0),
-                        'rsi': rsi
+                        'rsi': rsi,
+                        # Volume velocity metrics (NEW)
+                        'volume_velocity': volume_velocity,
+                        'flow_intensity': flow_intensity
                     }
 
                     # Check if already posted
@@ -443,10 +448,19 @@ class ScalpsBot(BaseAutoBot):
         return False
 
     def _calculate_scalp_score(self, pattern: Dict, volume: int,
-                              strike_distance: float, dte: int) -> int:
-        """Calculate scalp opportunity score using generic scoring"""
-        # Pattern strength (40% of score)
-        score = int(pattern['strength'] * 0.4)
+                              strike_distance: float, dte: int, flow_intensity: str = "NORMAL") -> int:
+        """
+        Calculate scalp opportunity score with flow velocity enhancement.
+
+        Scoring breakdown:
+        - Pattern strength: 35% (reduced from 40%)
+        - Volume: 30%
+        - Strike proximity: 20%
+        - DTE preference: 10%
+        - Flow intensity: 5% (NEW - velocity-based bonus)
+        """
+        # Pattern strength (35% of score - reduced to make room for flow intensity)
+        score = int(pattern['strength'] * 0.35)
 
         # Add remaining metrics via generic scoring
         score += self.calculate_score({
@@ -471,6 +485,16 @@ class ScalpsBot(BaseAutoBot):
             score += 10
         elif dte <= 5:
             score += 7
+
+        # Flow intensity bonus (5% - NEW)
+        # Rewards fast-moving volume (contracts/minute)
+        if flow_intensity == "AGGRESSIVE":
+            score += 5  # 50+ contracts/min
+        elif flow_intensity == "STRONG":
+            score += 4  # 20-50 contracts/min
+        elif flow_intensity == "MODERATE":
+            score += 3  # 10-20 contracts/min
+        # NORMAL gets 0
 
         return score
 
@@ -557,6 +581,21 @@ class ScalpsBot(BaseAutoBot):
         market = signal.get('market_context', {})
         market_status = f"{market.get('momentum', {}).get('direction', 'neutral').title()}, {market.get('volatility', {}).get('level', 'normal').title()} VIX"
 
+        # Flow intensity emoji
+        flow_emoji = {
+            "AGGRESSIVE": "🔥",
+            "STRONG": "⚡",
+            "MODERATE": "📈",
+            "NORMAL": "📊"
+        }.get(signal.get('flow_intensity', 'NORMAL'), "📊")
+
+        # Format flow intensity display
+        flow_intensity = signal.get('flow_intensity', 'NORMAL')
+        volume_velocity = signal.get('volume_velocity', 0)
+        flow_display = f"{flow_emoji} {flow_intensity}"
+        if volume_velocity > 0:
+            flow_display += f"\n({volume_velocity:.1f} c/min)"
+
         # Build fields
         fields = [
             {"name": "📊 Contract", "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE", "inline": True},
@@ -570,6 +609,7 @@ class ScalpsBot(BaseAutoBot):
             {"name": "📈 Pattern", "value": f"{signal['pattern']} ({signal['pattern_strength']})", "inline": True},
             {"name": "💰 Volume/Premium", "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}", "inline": True},
             {"name": "📍 Distance", "value": f"{signal['strike_distance']:.1f}%", "inline": True},
+            {"name": "🔥 Flow Intensity", "value": flow_display, "inline": True},
             {"name": "🌍 Market", "value": market_status, "inline": True},
             {"name": "📋 Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False},
             {"name": "⚠️ Management", "value": signal['exit_strategy']['management'], "inline": False}
