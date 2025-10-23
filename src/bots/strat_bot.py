@@ -691,32 +691,32 @@ class STRATPatternBot:
             try:
                 signals = await self.scan_ticker(ticker)
 
-                # PRD Enhancement: Post only highest confidence signal per ticker
+                # FIX: Process ALL patterns that meet criteria, not just highest confidence
+                # Multiple patterns can alert in their respective time windows
                 if signals:
-                    best_signal = max(signals, key=lambda x: x.get('confidence_score', 0))
+                    for signal in signals:
+                        # Track pattern state
+                        self.track_pattern_state(ticker, signal)
 
-                    # Track pattern state
-                    self.track_pattern_state(ticker, best_signal)
+                        # Check confidence threshold (minimum 50%)
+                        confidence = signal.get('confidence_score', 0)
+                        if confidence < 0.50:
+                            logger.debug(f"Pattern {signal['pattern']} for {ticker} below 50% confidence ({confidence:.1%}), skipping alert")
+                            continue
 
-                    # Check confidence threshold (minimum 50%)
-                    confidence = best_signal.get('confidence_score', 0)
-                    if confidence < 0.50:
-                        logger.debug(f"Pattern {best_signal['pattern']} for {ticker} below 50% confidence ({confidence:.1%}), skipping alert")
-                        continue
+                        # Check if alert time is appropriate for THIS pattern
+                        if self.should_alert_pattern(signal['pattern'], signal):
+                            # Check if already detected today
+                            key = f"{ticker}_{signal['pattern']}_{datetime.now(self.est).date()}"
+                            if key not in self.detected_today:
+                                self.send_alert(signal)
+                                signals_found.append(signal)
+                                self.detected_today[key] = True
 
-                    # Check if alert time is appropriate
-                    if self.should_alert_pattern(best_signal['pattern'], best_signal):
-                        # Check if already detected today
-                        key = f"{ticker}_{best_signal['pattern']}_{datetime.now(self.est).date()}"
-                        if key not in self.detected_today:
-                            self.send_alert(best_signal)
-                            signals_found.append(best_signal)
-                            self.detected_today[key] = True
-
-                            logger.info(f"✅ STRAT signal: {ticker} {best_signal['pattern']} - "
-                                      f"Confidence:{best_signal.get('confidence_score', 0):.2f}")
-                    else:
-                        logger.debug(f"Pattern {best_signal['pattern']} for {ticker} detected but outside alert window")
+                                logger.info(f"✅ STRAT signal: {ticker} {signal['pattern']} - "
+                                          f"Confidence:{signal.get('confidence_score', 0):.2f}")
+                        else:
+                            logger.debug(f"Pattern {signal['pattern']} for {ticker} detected but outside alert window")
 
             except Exception as e:
                 logger.error(f"Error scanning {ticker}: {e}")
@@ -730,9 +730,13 @@ class STRATPatternBot:
         """Calculate optimal scan interval based on current time"""
         now = datetime.now(self.est)
 
-        # Scan more frequently during alert window (8:00 PM - 8:15 PM EST)
-        if now.hour == 20 and now.minute >= 0 and now.minute <= 15:
-            return 60  # 1 minute during alert window
+        # Scan more frequently during ALL alert windows (1 minute intervals)
+        # 1-3-1 Miyagi: 8:00 AM and 8:00 PM
+        # 2-2 Reversal: 4:00 AM and 8:00 AM
+        # 3-2-2 Reversal: 10:01 AM
+        alert_hours = [4, 8, 10, 20]
+        if now.hour in alert_hours and now.minute <= 15:
+            return 60  # 1 minute during alert windows
         elif now.hour == 19 and now.minute >= 55:  # Pre-alert window
             return 120  # 2 minutes before alert time
         else:
