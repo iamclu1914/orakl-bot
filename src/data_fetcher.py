@@ -625,6 +625,17 @@ class DataFetcher:
             data = await self._make_request(endpoint, params)
 
             if data and 'results' in data and len(data['results']) > 0:
+                # Debug: Log first contract structure to verify API response format
+                if len(data['results']) > 0:
+                    sample_contract = data['results'][0]
+                    logger.info(f"🔍 API Response Sample for {underlying}:")
+                    logger.info(f"  Contract keys: {list(sample_contract.keys())}")
+                    if 'day' in sample_contract:
+                        logger.info(f"  day object: {sample_contract['day']}")
+                    else:
+                        logger.info(f"  ⚠️ NO 'day' object in response!")
+                        logger.info(f"  Full contract sample: {sample_contract}")
+
                 logger.debug(
                     f"Retrieved option chain snapshot for {underlying}: "
                     f"{len(data['results'])} contracts"
