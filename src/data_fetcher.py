@@ -856,7 +856,11 @@ class DataFetcher:
                     if open_interest > 0:
                         vol_oi_ratio = volume_delta / open_interest
 
-                    # Determine option type
+                    # Determine option type - ensure ticker is string
+                    if not isinstance(ticker, str):
+                        logger.warning(f"Ticker is not a string: {ticker} (type: {type(ticker)})")
+                        ticker = str(ticker) if ticker else ''
+                    
                     option_type = 'CALL' if contract_type == 'call' or (isinstance(ticker, str) and 'C' in ticker) else 'PUT'
 
                     # Create flow signal
@@ -914,7 +918,9 @@ class DataFetcher:
             return flows_sorted
 
         except Exception as e:
+            import traceback
             logger.error(f"Error detecting unusual flow for {underlying}: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
 
     async def get_market_hours(self, date: Optional[str] = None) -> Dict:
