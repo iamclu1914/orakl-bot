@@ -614,7 +614,9 @@ class DataFetcher:
         """
         try:
             endpoint = f"/v3/snapshot/options/{underlying}"
-            params = {}
+            params = {
+                'limit': 250  # Get up to 250 contracts per request (Polygon API max)
+            }
 
             if contract_type:
                 # Filter by contract type if specified
