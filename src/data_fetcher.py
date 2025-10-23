@@ -744,14 +744,14 @@ class DataFetcher:
             cache_data = await volume_cache.get(underlying)
             last_scan_timestamp_ns = None  # Nanoseconds
 
-            if cache_data:
-                if isinstance(cache_data, dict):
-                    # New format: {'last_scan_ns': timestamp}
-                    last_scan_timestamp_ns = cache_data.get('last_scan_ns')
-                    # If old format (per-contract dict), clear it - first scan with new format
-                    if last_scan_timestamp_ns is None and len(cache_data) > 0:
-                        logger.info(f"🔄 {underlying}: Clearing old cache format, starting fresh")
-                        last_scan_timestamp_ns = None
+            # Handle cache format - be defensive about old cache data
+            if cache_data is not None and isinstance(cache_data, dict):
+                # New format: {'last_scan_ns': timestamp}
+                last_scan_timestamp_ns = cache_data.get('last_scan_ns')
+
+                # If old format (per-contract dict with ticker keys), treat as first scan
+                if last_scan_timestamp_ns is None:
+                    logger.info(f"🔄 {underlying}: Detected old cache format, treating as first scan")
 
             # Current timestamp in nanoseconds
             current_timestamp_ns = int(datetime.now().timestamp() * 1_000_000_000)
