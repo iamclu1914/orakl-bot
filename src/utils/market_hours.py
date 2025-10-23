@@ -38,39 +38,47 @@ class MarketHours:
     """Utility class for checking market hours and trading days"""
     
     @staticmethod
-    def is_market_open(check_time: Optional[datetime.datetime] = None) -> bool:
+    def is_market_open(check_time: Optional[datetime.datetime] = None, include_extended: bool = True) -> bool:
         """
         Check if the US stock market is open at the given time.
-        Market hours: 9:30 AM - 4:00 PM EST, Monday-Friday, excluding holidays
-        
+
+        Regular hours: 9:30 AM - 4:00 PM EST
+        Extended hours: 4:00 AM - 8:00 PM EST (pre-market + regular + after-hours)
+
         Args:
             check_time: Time to check (default: current time)
-            
+            include_extended: Include pre-market (4:00-9:30 AM) and after-hours (4:00-8:00 PM)
+
         Returns:
-            True if market is open, False otherwise
+            True if market is open (regular or extended hours), False otherwise
         """
         est = pytz.timezone('America/New_York')
-        
+
         if check_time is None:
             check_time = datetime.datetime.now(est)
         elif check_time.tzinfo is None:
             check_time = est.localize(check_time)
         else:
             check_time = check_time.astimezone(est)
-        
+
         # Check if it's a weekend
         if check_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
             return False
-        
+
         # Check if it's a holiday
         if check_time.date() in ALL_MARKET_HOLIDAYS:
             return False
-        
-        # Check market hours (9:30 AM - 4:00 PM EST)
-        market_open = check_time.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = check_time.replace(hour=16, minute=0, second=0, microsecond=0)
-        
-        return market_open <= check_time < market_close
+
+        if include_extended:
+            # Extended hours: 4:00 AM - 8:00 PM EST
+            extended_start = check_time.replace(hour=4, minute=0, second=0, microsecond=0)
+            extended_end = check_time.replace(hour=20, minute=0, second=0, microsecond=0)
+            return extended_start <= check_time < extended_end
+        else:
+            # Regular hours only: 9:30 AM - 4:00 PM EST
+            market_open = check_time.replace(hour=9, minute=30, second=0, microsecond=0)
+            market_close = check_time.replace(hour=16, minute=0, second=0, microsecond=0)
+            return market_open <= check_time < market_close
     
     @staticmethod
     def is_trading_day(check_date: Optional[datetime.date] = None) -> bool:
