@@ -18,10 +18,10 @@ class DarkpoolBot(BaseAutoBot):
     """
 
     # Configuration constants
-    MIN_BLOCK_SIZE = 10000  # Minimum 10k shares for block trade detection
+    MIN_BLOCK_SIZE = 5000  # Minimum 5k shares for block trade detection (lowered for better detection)
     KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
     DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.001  # 0.1% threshold for aggressive buying/selling
-    MIN_DOLLAR_VALUE = 100000  # Minimum $100k trade value
+    MIN_DOLLAR_VALUE = 50000  # Minimum $50k trade value (lowered for better detection)
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=240)  # 4 minutes
@@ -34,10 +34,11 @@ class DarkpoolBot(BaseAutoBot):
         """Scan for large darkpool and block trades using concurrent processing"""
         logger.info(f"{self.name} scanning for darkpool activity")
 
-        # Scan during regular hours AND after-hours (9:30 AM - 8:00 PM EST, Monday-Friday)
-        # Institutional darkpool activity often continues after market close
-        if not MarketHours.is_market_open() and not MarketHours.is_extended_hours():
-            logger.debug(f"{self.name} - Market closed, skipping scan")
+        # Darkpool trades occur throughout extended hours (4:00 AM - 8:00 PM EST)
+        # We should scan during all extended hours, not just regular market hours
+        # Note: is_market_open() already includes extended hours by default
+        if not MarketHours.is_market_open(include_extended=True):
+            logger.info(f"{self.name} - Outside extended hours (4 AM - 8 PM EST), skipping scan")
             return
         
         # Use base class concurrent implementation
@@ -50,6 +51,8 @@ class DarkpoolBot(BaseAutoBot):
     async def _scan_block_trades(self, symbol: str) -> List[Dict]:
         """Scan for block trades and darkpool activity with enhanced context"""
         blocks = []
+        trades_analyzed = 0
+        trades_too_old = 0
 
         try:
             # --- ENHANCEMENT 1: Get historical context ---
@@ -65,15 +68,21 @@ class DarkpoolBot(BaseAutoBot):
             # Get recent trades
             trades = await self.fetcher.get_stock_trades(symbol, limit=1000)
             if not trades:
+                logger.debug(f"{symbol}: No trades found")
                 return blocks
+            
+            logger.debug(f"{symbol}: Found {len(trades)} trades to analyze")
 
             avg_size = sum(t.get('size', 0) for t in trades) / len(trades) if trades else 0
-            recent_cutoff = datetime.now() - timedelta(minutes=15)
-
+            recent_cutoff = datetime.now() - timedelta(minutes=30)  # Extended to 30 minutes for better detection
+            
             for trade in trades:
                 trade_time = datetime.fromtimestamp(trade.get('timestamp', 0) / 1000)
                 if trade_time < recent_cutoff:
+                    trades_too_old += 1
                     continue
+                
+                trades_analyzed += 1
 
                 size = trade.get('size', 0)
                 price = trade.get('price', current_price)
@@ -104,7 +113,7 @@ class DarkpoolBot(BaseAutoBot):
                     key_level_info is not None, directional_bias != "Neutral"
                 )
 
-                if block_score >= 60:  # Higher threshold for enhanced signals
+                if block_score >= 45:  # Adjusted threshold for better detection
                     block = {
                         'ticker': symbol,
                         'current_price': current_price,
@@ -126,9 +135,15 @@ class DarkpoolBot(BaseAutoBot):
                     if signal_key not in self.signal_history:
                         blocks.append(block)
                         self.signal_history[signal_key] = datetime.now()
+                        logger.info(f"🌑 Darkpool/Block detected: {symbol} - {size:,} shares @ ${price:.2f} (Score: {block_score})")
+                else:
+                    logger.debug(f"{symbol}: Block trade found but score too low ({block_score} < 45) - {size:,} shares @ ${price:.2f}")
 
         except Exception as e:
             logger.error(f"Error scanning block trades for {symbol}: {e}")
+        
+        if trades_analyzed > 0:
+            logger.debug(f"{symbol}: Analyzed {trades_analyzed} trades, skipped {trades_too_old} old trades, found {len(blocks)} blocks")
 
         return blocks
 
