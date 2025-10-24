@@ -8,6 +8,7 @@ import pytz
 from src.data_fetcher import DataFetcher
 from src.config import Config
 from src.bots.strat_bot import STRATPatternBot
+from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -39,25 +40,8 @@ async def scan_all_stocks_for_131():
     fetcher = DataFetcher(Config.POLYGON_API_KEY)
     strat_bot = STRATPatternBot(data_fetcher=fetcher)
     
-    # Use a comprehensive list of liquid stocks
-    # Top stocks across all sectors (same as bot uses)
-    all_stocks = [
-        # Tech/Communications
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'TSLA', 'AMD', 'INTC', 'NFLX',
-        'ADBE', 'CRM', 'ORCL', 'CSCO', 'AVGO', 'QCOM', 'TXN', 'ASML', 'NOW',
-        # Finance
-        'JPM', 'BAC', 'WFC', 'GS', 'MS', 'C', 'BLK', 'SCHW', 'AXP', 'USB', 'PNC',
-        # Healthcare
-        'UNH', 'JNJ', 'LLY', 'ABBV', 'MRK', 'PFE', 'TMO', 'ABT', 'DHR', 'AMGN', 'CVS',
-        # Consumer
-        'WMT', 'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TGT', 'COST', 'DIS', 'CMCSA',
-        # Industrials
-        'CAT', 'BA', 'HON', 'UPS', 'RTX', 'LMT', 'GE', 'MMM', 'DE', 'UNP',
-        # Energy
-        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'PXD', 'MPC', 'PSX', 'VLO',
-        # ETFs
-        'SPY', 'QQQ', 'IWM', 'DIA', 'VXX', 'GLD', 'SLV', 'USO', 'TLT', 'HYG'
-    ]
+    # Use the complete STRAT watchlist (all mega/large caps + sector ETFs)
+    all_stocks = STRAT_COMPLETE_WATCHLIST
     
     print(f"📊 Scanning {len(all_stocks)} stocks from watchlist...")
     print("This will take a few minutes...\n")

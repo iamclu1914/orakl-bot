@@ -1040,16 +1040,17 @@ class STRATPatternBot:
                 
                 # 50% Trigger = (High + Low) / 2 of the 3rd bar
                 trigger_50 = (high_bar3 + low_bar3) / 2.0
-                
-                # Price targets based on open direction
-                # If open above trigger → target is lower (bearish)
-                # If open below trigger → target is higher (bullish)
-                pt_above = low_bar3  # If opens above, target the low
-                pt_below = high_bar3  # If opens below, target the high
             else:
                 trigger_50 = entry
-                pt_above = entry * 0.99  # 1% below
-                pt_below = entry * 1.01  # 1% above
+            
+            # Price targets: Quick scalps percentages
+            # If open above trigger → bearish (downward targets)
+            # If open below trigger → bullish (upward targets)
+            pt1_above = trigger_50 * 0.90  # 10% below (1st PT)
+            pt2_above = trigger_50 * 0.85  # 15% below (2nd PT)
+            
+            pt1_below = trigger_50 * 1.10  # 10% above (1st PT)
+            pt2_below = trigger_50 * 1.15  # 15% above (2nd PT)
             
             # Simple description
             description = f"Completed: {completed_time.strftime('%m/%d %H:%M ET')}"
@@ -1065,13 +1066,13 @@ class STRATPatternBot:
             # Add price targets based on open direction
             embed.add_embed_field(
                 name=f"If we open ABOVE ${trigger_50:.2f}",
-                value=f"First PT is **${pt_above:.2f}**",
+                value=f"1st PT: **${pt1_above:.2f}** (-10%)\n2nd PT: **${pt2_above:.2f}** (-15%)",
                 inline=False
             )
             
             embed.add_embed_field(
                 name=f"If we open BELOW ${trigger_50:.2f}",
-                value=f"First PT is **${pt_below:.2f}**",
+                value=f"1st PT: **${pt1_below:.2f}** (+10%)\n2nd PT: **${pt2_below:.2f}** (+15%)",
                 inline=False
             )
 
