@@ -3,7 +3,7 @@ Scan all stocks for 1-3-1 Miyagi patterns and post to Discord
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from src.data_fetcher import DataFetcher
 from src.config import Config
