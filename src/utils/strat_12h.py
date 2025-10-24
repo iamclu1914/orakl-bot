@@ -90,42 +90,36 @@ class STRAT12HourDetector:
     @staticmethod
     def classify_bar(curr: Dict, prev: Dict) -> str:
         """
-        Classify STRAT bar type based on CLOSE position
+        Classify STRAT bar type - EXACT TradingView/Strat rules
         
-        Rules:
+        Rules (pure high/low comparison):
         - "3" (Outside): high > prevHigh AND low < prevLow  
-        - "2U" (Up): close > prevClose (upward)
-        - "2D" (Down): close < prevClose (downward)
-        - "1" (Inside): close == prevClose OR inside previous range
+        - "2U" (Up): high > prevHigh AND low >= prevLow
+        - "2D" (Down): low < prevLow AND high <= prevHigh
+        - "1" (Inside): high <= prevHigh AND low >= prevLow
         
         Args:
-            curr: Current bar dict with h, l, c keys
-            prev: Previous bar dict with h, l, c keys
+            curr: Current bar dict with h, l keys
+            prev: Previous bar dict with h, l keys
             
         Returns:
             STRAT type: "1", "2U", "2D", or "3"
         """
-        curr_h, curr_l, curr_c = curr['h'], curr['l'], curr['c']
-        prev_h, prev_l, prev_c = prev['h'], prev['l'], prev['c']
+        curr_h, curr_l = curr['h'], curr['l']
+        prev_h, prev_l = prev['h'], prev['l']
         
-        broke_high = curr_h > prev_h
-        broke_low = curr_l < prev_l
-        
-        # Outside bar (broke both high and low)
-        if broke_high and broke_low:
+        # Outside bar - broke both sides
+        if curr_h > prev_h and curr_l < prev_l:
             return "3"
-        
-        # Inside bar (within previous range)
-        if curr_h <= prev_h and curr_l >= prev_l:
-            return "1"
-        
-        # Directional bars based on close
-        if curr_c > prev_c:
-            return "2U"  # Closed higher
-        elif curr_c < prev_c:
-            return "2D"  # Closed lower
+        # Directional up - broke high but not low
+        elif curr_h > prev_h and curr_l >= prev_l:
+            return "2U"
+        # Directional down - broke low but not high
+        elif curr_l < prev_l and curr_h <= prev_h:
+            return "2D"
+        # Inside bar - didn't break either side
         else:
-            return "1"  # Closed same (inside)
+            return "1"
     
     @staticmethod
     def attach_types(bars: List[Dict]) -> List[TypedBar]:

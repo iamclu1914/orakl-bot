@@ -103,32 +103,26 @@ class STRAT4HourDetector:
     @staticmethod
     def classify_bar(curr: Dict, prev: Dict) -> str:
         """
-        Classify STRAT bar type based on CLOSE position
+        Classify STRAT bar type - EXACT TradingView/Strat rules
         
         Returns: "1", "2U", "2D", "3", or "0" (invalid)
         """
-        curr_h, curr_l, curr_c = curr.get('h', 0), curr.get('l', 0), curr.get('c', 0)
-        prev_h, prev_l, prev_c = prev.get('h', 0), prev.get('l', 0), prev.get('c', 0)
+        curr_h, curr_l = curr.get('h', 0), curr.get('l', 0)
+        prev_h, prev_l = prev.get('h', 0), prev.get('l', 0)
         
         if curr_h == 0 or curr_l == 0 or prev_h == 0 or prev_l == 0:
             return "0"
         
-        broke_high = curr_h > prev_h
-        broke_low = curr_l < prev_l
-        
-        # Outside bar
-        if broke_high and broke_low:
+        # Outside bar - broke both sides
+        if curr_h > prev_h and curr_l < prev_l:
             return "3"
-        
-        # Inside bar
-        if curr_h <= prev_h and curr_l >= prev_l:
-            return "1"
-        
-        # Directional based on close
-        if curr_c > prev_c:
+        # Directional up - broke high but not low
+        elif curr_h > prev_h and curr_l >= prev_l:
             return "2U"
-        elif curr_c < prev_c:
+        # Directional down - broke low but not high
+        elif curr_l < prev_l and curr_h <= prev_h:
             return "2D"
+        # Inside bar - didn't break either side
         else:
             return "1"
     
