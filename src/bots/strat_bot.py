@@ -107,11 +107,13 @@ class STRATPatternBot:
     
     async def fetch_and_compose_12h_bars(self, symbol: str, n_bars: int = 10) -> List[Dict]:
         """
-        Fetch 60-minute bars and compose into 12-hour ET-aligned bars
+        Fetch 12-hour bars using best practice approach:
+        1. Try direct 720-minute aggregates (most efficient)
+        2. Fall back to composing from 60-minute bars if needed
         
         Args:
             symbol: Stock symbol
-            n_bars: Number of 12-hour bars to compose
+            n_bars: Number of 12-hour bars to get
             
         Returns:
             List of 12-hour bars aligned to 08:00 and 20:00 ET
@@ -120,6 +122,48 @@ class STRATPatternBot:
             days_needed = (n_bars // 2) + 2
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_needed)
+            
+            # TRY 1: Direct 720-minute aggregates (12 hours = 720 minutes)
+            logger.debug(f"{symbol}: Attempting direct 720-minute aggregates")
+            
+            bars_720m = await self.data_fetcher.get_aggregates(
+                symbol,
+                timespan='minute',
+                multiplier=720,
+                from_date=start_date.strftime('%Y-%m-%d'),
+                to_date=end_date.strftime('%Y-%m-%d')
+            )
+            
+            # Check if we got good data with proper alignment
+            if bars_720m is not None and len(bars_720m) >= 4:
+                if hasattr(bars_720m, 'to_dict'):
+                    bars_list = bars_720m.to_dict('records')
+                else:
+                    bars_list = bars_720m
+                
+                # Normalize and check alignment
+                normalized_720 = []
+                for bar in bars_list:
+                    normalized_720.append({
+                        'o': bar.get('o', bar.get('open', 0)),
+                        'h': bar.get('h', bar.get('high', 0)),
+                        'l': bar.get('l', bar.get('low', 0)),
+                        'c': bar.get('c', bar.get('close', 0)),
+                        'v': bar.get('v', bar.get('volume', 0)),
+                        't': bar.get('t', bar.get('timestamp', 0))
+                    })
+                
+                # Verify ET alignment (bars should end at 08:00 or 20:00 ET)
+                is_aligned = self._check_12h_alignment(normalized_720)
+                
+                if is_aligned:
+                    logger.info(f"{symbol}: Using direct 720m bars ({len(normalized_720)} bars)")
+                    return normalized_720
+                else:
+                    logger.warning(f"{symbol}: 720m bars not ET-aligned, falling back to composition")
+            
+            # FALLBACK: Compose from 60-minute bars
+            logger.debug(f"{symbol}: Composing from 60-minute bars")
             
             bars_60m = await self.data_fetcher.get_aggregates(
                 symbol,
@@ -137,9 +181,9 @@ class STRATPatternBot:
             else:
                 bars_list = bars_60m
             
-            normalized = []
+            normalized_60m = []
             for bar in bars_list:
-                normalized.append({
+                normalized_60m.append({
                     'o': bar.get('o', bar.get('open', 0)),
                     'h': bar.get('h', bar.get('high', 0)),
                     'l': bar.get('l', bar.get('low', 0)),
@@ -148,12 +192,49 @@ class STRATPatternBot:
                     't': bar.get('t', bar.get('timestamp', 0))
                 })
             
-            composed = self.strat_12h_composer.compose_12h_bars(normalized)
+            # Compose into 12-hour bars with ET alignment
+            composed = self.strat_12h_composer.compose_12h_bars(normalized_60m)
+            logger.info(f"{symbol}: Composed {len(composed)} 12h bars from {len(normalized_60m)} 60m bars")
             return composed
             
         except Exception as e:
             logger.error(f"Error fetching/composing 12h bars for {symbol}: {e}")
             return []
+    
+    def _check_12h_alignment(self, bars: List[Dict]) -> bool:
+        """
+        Check if bars are properly aligned to 08:00 and 20:00 ET
+        
+        Args:
+            bars: List of bar dicts
+            
+        Returns:
+            True if aligned, False otherwise
+        """
+        if not bars:
+            return False
+        
+        try:
+            # Check last few bars for ET alignment
+            for bar in bars[-3:]:
+                timestamp_ms = bar.get('t', 0)
+                if timestamp_ms == 0:
+                    continue
+                
+                if hasattr(timestamp_ms, 'timestamp'):
+                    bar_time = datetime.fromtimestamp(timestamp_ms.timestamp(), tz=pytz.UTC).astimezone(ET)
+                else:
+                    bar_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
+                
+                # Check if hour is 8 or 20 and minute is 0
+                if bar_time.hour not in [8, 20] or bar_time.minute != 0:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking alignment: {e}")
+            return False
     
     async def scan_symbol_12h(self, symbol: str) -> List[Dict]:
         """
@@ -750,7 +831,39 @@ class STRATPatternBot:
                 signals.append(signal)
             
             # ===== 2. SCAN 2-2 REVERSAL (4h: 4am-8am) =====
-            bars_4h = self.strat_4h_detector.compose_4h_bars(normalized_60m)
+            # Try direct 240-minute aggregates first, fall back to composition
+            bars_240m = await self.data_fetcher.get_aggregates(
+                ticker,
+                timespan='minute',
+                multiplier=240,  # 4 hours = 240 minutes
+                from_date=start_date.strftime('%Y-%m-%d'),
+                to_date=end_date.strftime('%Y-%m-%d')
+            )
+            
+            # Check if direct 240m is good, otherwise compose from 60m
+            if bars_240m is not None and len(bars_240m) >= 4:
+                if hasattr(bars_240m, 'to_dict'):
+                    bars_4h_list = bars_240m.to_dict('records')
+                else:
+                    bars_4h_list = bars_240m
+                
+                normalized_240 = []
+                for bar in bars_4h_list:
+                    normalized_240.append({
+                        'o': bar.get('o', bar.get('open', 0)),
+                        'h': bar.get('h', bar.get('high', 0)),
+                        'l': bar.get('l', bar.get('low', 0)),
+                        'c': bar.get('c', bar.get('close', 0)),
+                        'v': bar.get('v', bar.get('volume', 0)),
+                        't': bar.get('t', bar.get('timestamp', 0))
+                    })
+                bars_4h = normalized_240
+                logger.debug(f"{ticker}: Using direct 240m bars for 4h")
+            else:
+                # Compose from 60m
+                bars_4h = self.strat_4h_detector.compose_4h_bars(normalized_60m)
+                logger.debug(f"{ticker}: Composed 4h bars from 60m")
+            
             patterns_22 = self.strat_4h_detector.detect_22_reversal_4am_8am(bars_4h)
             for sig in patterns_22:
                 signal = {
