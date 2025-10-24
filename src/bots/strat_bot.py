@@ -475,23 +475,22 @@ class STRATPatternBot:
         Check if pattern should be alerted based on pattern-specific time windows
 
         Pattern-specific alert times (ET):
-        - 1-3-1 Miyagi: Within 30 min after 08:00 and 20:00 (bar close times)
-        - 2-2 Reversal: Within 30 min after 08:00 (when 8am bar completes)
-        - 3-2-2 Reversal: Within 30 min after 10:00 (when 10am bar completes)
+        - 1-3-1 Miyagi: ONLY after 20:00 (8pm) when evening bar closes
+        - 2-2 Reversal: After 08:00 (when 8am bar completes)
+        - 3-2-2 Reversal: After 10:00 (when 10am bar completes)
         """
         now = datetime.now(self.est)
         current_hour = now.hour
         current_minute = now.minute
 
-        # 30-minute alert window after bar close (allows for data availability)
+        # 30-minute alert window after bar close
         alert_window = 30
 
         if 'Miyagi' in pattern_type or '1-3-1' in pattern_type:
-            # Alert after 8:00 AM or 8:00 PM (12h bar boundaries)
-            return ((current_hour == 8 and current_minute < alert_window) or
-                    (current_hour == 20 and current_minute < alert_window) or
-                    (current_hour == 9 and current_minute < 15) or  # Extended window
-                    (current_hour == 21 and current_minute < 15))
+            # ONLY alert after 8:00 PM (20:00 ET) evening bar close
+            # This gives us 36 hours of data (3 bars × 12 hours)
+            return ((current_hour == 20 and current_minute < alert_window) or
+                    (current_hour == 21 and current_minute < 15))  # Extended window
 
         elif '2-2' in pattern_type:
             # Alert after 8:00 AM (when 8am bar completes the 4am→8am sequence)
@@ -501,8 +500,8 @@ class STRATPatternBot:
             # Alert after 10:00 AM (when 10am bar completes the 8am→9am→10am sequence)
             return (current_hour == 10 and current_minute < alert_window) or (current_hour == 11 and current_minute < 15)
 
-        # Default: allow alert (for testing/debugging)
-        return True
+        # Default: deny alert outside windows
+        return False
 
     def track_pattern_state(self, ticker: str, pattern: Dict):
         """Track patterns that need monitoring (e.g., 2-2 waiting for pullback)"""
@@ -988,7 +987,7 @@ class STRATPatternBot:
         return signals
 
     def send_alert(self, signal: Dict):
-        """Send Discord alert for STRAT pattern"""
+        """Send Discord alert for STRAT pattern with trigger and price targets"""
         try:
             # Convert timestamp
             timestamp = signal.get('completed_at', 0)
@@ -1002,6 +1001,7 @@ class STRATPatternBot:
             # Color based on pattern and bias
             pattern_type = signal.get('pattern', '')
             bias = signal.get('type', signal.get('bias', ''))
+            symbol = signal.get('symbol', '')
             
             if '1-3-1' in pattern_type:
                 color = 0xFFD700  # Gold
@@ -1022,46 +1022,83 @@ class STRATPatternBot:
             elif 'Bearish' in str(bias) or 'PUTS' in str(bias) or '2D' in str(bias):
                 color = 0xFF0000  # Red
 
-            title = f"{emoji} {signal['symbol']} - {pattern_type}"
+            title = f"{emoji} 1-3-1 Pattern Detected for {symbol}"
             
             embed = DiscordEmbed(title=title, color=color)
-
-            # Add core fields
+            
+            # Calculate 50% trigger and price targets
+            entry = signal.get('entry', 0)  # Already calculated as (H + L) / 2
+            
+            # For 1-3-1, get the 3rd bar (inside bar) details
+            if 'pattern_bars' in signal and isinstance(signal['pattern_bars'], dict):
+                bar3 = signal['pattern_bars'].get('bar3', {})
+                high_bar3 = bar3.get('h', entry)
+                low_bar3 = bar3.get('l', entry)
+                
+                # 50% Trigger = (High + Low) / 2 of the 3rd bar
+                trigger_50 = (high_bar3 + low_bar3) / 2.0
+                
+                # Price targets based on open direction
+                # If open above trigger → target is lower (bearish)
+                # If open below trigger → target is higher (bullish)
+                pt_above = low_bar3  # If opens above, target the low
+                pt_below = high_bar3  # If opens below, target the high
+            else:
+                trigger_50 = entry
+                pt_above = entry * 0.99  # 1% below
+                pt_below = entry * 1.01  # 1% above
+            
+            # Main description with trigger logic
+            description = f"**{pattern_type}** setup completed at {completed_time.strftime('%m/%d %H:%M ET')}"
+            embed.description = description
+            
+            # Add 50% Trigger
             embed.add_embed_field(
-                name="📅 Completed",
-                value=completed_time.strftime('%Y-%m-%d %H:%M ET'),
+                name="🎯 50% Trigger",
+                value=f"**${trigger_50:.2f}**",
+                inline=False
+            )
+            
+            # Add price targets based on open direction
+            embed.add_embed_field(
+                name="📈 If Open ABOVE $" + f"{trigger_50:.2f}",
+                value=f"First PT: **${pt_above:.2f}**",
                 inline=True
             )
             
-            timeframe = signal.get('timeframe', 'N/A')
+            embed.add_embed_field(
+                name="📉 If Open BELOW $" + f"{trigger_50:.2f}",
+                value=f"First PT: **${pt_below:.2f}**",
+                inline=True
+            )
+            
+            # Add formula
+            embed.add_embed_field(
+                name="💡 Formula",
+                value="50% Trigger = (High + Low) / 2 (Fib 50% line)",
+                inline=False
+            )
+            
+            timeframe = signal.get('timeframe', '12h')
             embed.add_embed_field(name="📊 Timeframe", value=timeframe, inline=True)
-            
-            entry = signal.get('entry', 0)
-            embed.add_embed_field(name="💰 Entry", value=f"${entry:.2f}", inline=True)
-            
-            # Add bias/direction
-            if bias:
-                embed.add_embed_field(name="🎲 Bias/Direction", value=str(bias), inline=True)
             
             # Add confidence
             confidence = signal.get('confidence_score', 0)
             embed.add_embed_field(name="📈 Confidence", value=f"{confidence*100:.0f}%", inline=True)
             
-            # Add pattern sequence if available
+            # Add pattern sequence
             if 'bars' in signal:
-                embed.add_embed_field(name="📊 Pattern", value=signal['bars'], inline=True)
+                embed.add_embed_field(name="🔢 Pattern", value=signal['bars'], inline=True)
             
             # Pattern explanation
-            if '1-3-1' in pattern_type:
-                explanation = "Inside → Outside → Inside\n\nCompression-Expansion-Compression setup signaling potential breakout."
-            elif '3-2-2' in pattern_type:
-                explanation = "Outside → Directional → Opposite\n\nReversal after volatility expansion."
-            elif '2-2' in pattern_type:
-                explanation = "Directional → Opposite\n\nClassic trend reversal."
-            else:
-                explanation = "STRAT pattern detected"
+            explanation = (
+                "**1-3-1 Miyagi Pattern (36-hour lookback)**\n\n"
+                "Inside → Outside → Inside\n\n"
+                "Compression-Expansion-Compression setup. "
+                "Watch the next bar open relative to the 50% trigger to determine direction."
+            )
             
-            embed.add_embed_field(name="💡 Pattern Info", value=explanation, inline=False)
+            embed.add_embed_field(name="ℹ️ Pattern Info", value=explanation, inline=False)
 
             # Auto-append disclaimer
             self._add_disclaimer(embed)
@@ -1073,7 +1110,9 @@ class STRATPatternBot:
             response = webhook.execute()
 
             if response.status_code == 200:
-                logger.info(f"✅ Alert sent: {signal['symbol']} {pattern_type}")
+                logger.info(f"✅ Alert sent: {symbol} {pattern_type}")
+            else:
+                logger.warning(f"Discord post failed: {response.status_code}")
 
         except Exception as e:
             logger.error(f"Failed to send alert: {e}")
