@@ -19,21 +19,15 @@ async def scan_all_stocks_for_131():
     """Scan all stocks for 1-3-1 Miyagi patterns"""
     
     print("\n" + "="*80)
-    print("🎯 SCANNING FOR 1-3-1 MIYAGI PATTERNS CLOSING AT 20:00 ET TODAY")
+    print("🎯 SCANNING FOR 1-3-1 MIYAGI PATTERNS FROM TODAY'S TRADING DAY")
     print("="*80)
     now_et = datetime.now(ET)
     print(f"Time: {now_et.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
-    # Calculate today's 20:00 ET boundary
-    today_8pm_et = now_et.replace(hour=20, minute=0, second=0, microsecond=0)
-    if now_et.hour < 20:
-        # If before 8pm, use yesterday's 8pm
-        today_8pm_et = today_8pm_et - timedelta(days=1)
+    # We scan at 8pm but want patterns from TODAY (either 08:00 or 20:00 close)
+    today_date = now_et.date()
     
-    today_8pm_utc = today_8pm_et.astimezone(pytz.UTC)
-    today_8pm_ms = int(today_8pm_utc.timestamp() * 1000)
-    
-    print(f"Target: Patterns closing at {today_8pm_et.strftime('%Y-%m-%d 20:00 ET')}")
+    print(f"Target: Patterns from today ({today_date}) at 08:00 or 20:00 ET")
     print("="*80 + "\n")
     
     # Initialize

@@ -52,7 +52,7 @@ class STRATPatternBot:
         self.est = pytz.timezone('America/New_York')
         self.pattern_states = {}  # Track patterns waiting for conditions
         self.watchlist = None  # Will be set by BotManager
-        
+
         # STRAT detectors (battle-tested) - multiple timeframes
         self.strat_12h_detector = STRAT12HourDetector()  # 1-3-1 Miyagi
         self.strat_12h_composer = STRAT12HourComposer()
@@ -934,7 +934,7 @@ class STRATPatternBot:
                             'pattern_bars': sig['pattern_bars'],
                             'timeframe': '12h'
                         }
-                        signals.append(signal)
+                    signals.append(signal)
 
             # 3-2-2 Reversal - Always scan, pattern must have formed after 10am ET
             # Get data from 7am to current time
@@ -992,7 +992,7 @@ class STRATPatternBot:
                 completed_time = datetime.fromtimestamp(timestamp.timestamp(), tz=pytz.UTC).astimezone(ET)
             else:
                 completed_time = datetime.fromtimestamp(timestamp / 1000, tz=pytz.UTC).astimezone(ET)
-            
+
             webhook = DiscordWebhook(url=self.webhook_url, rate_limit_retry=True)
 
             # Color based on pattern and bias
