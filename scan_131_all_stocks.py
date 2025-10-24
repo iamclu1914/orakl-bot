@@ -48,8 +48,8 @@ async def scan_all_stocks_for_131():
     # Scan in batches to avoid rate limits
     for i, symbol in enumerate(all_stocks, 1):
         try:
-            # Scan specifically for 1-3-1 patterns (only need last 4 bars for 1-3-1)
-            bars_12h = await strat_bot.fetch_and_compose_12h_bars(symbol, n_bars=4)
+            # Scan for 1-3-1 patterns (need enough bars to see both 08:00 and 20:00)
+            bars_12h = await strat_bot.fetch_and_compose_12h_bars(symbol, n_bars=6)
             
             if len(bars_12h) < 4:
                 continue

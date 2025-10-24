@@ -119,7 +119,9 @@ class STRATPatternBot:
             List of 12-hour bars aligned to 08:00 and 20:00 ET
         """
         try:
-            days_needed = (n_bars // 2) + 2
+            # Need enough days to get n_bars of 12-hour bars (2 per day)
+            # Add extra days to ensure we have sufficient data
+            days_needed = (n_bars // 2) + 3  # Increased from +2 to +3
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_needed)
             
