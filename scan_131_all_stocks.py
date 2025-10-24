@@ -65,17 +65,14 @@ async def scan_all_stocks_for_131():
             
             if miyagi:
                 for sig in miyagi:
-                    # Filter: Only patterns that completed at today's 20:00 ET
+                    # Only show the most recent pattern (last bar in sequence)
                     if sig['kind'] == '131-complete':
                         timestamp_ms = sig['completed_at']
-                        
-                        # Check if this pattern completed at today's 8pm
-                        # Allow 1 hour tolerance for alignment variations
-                        time_diff = abs(timestamp_ms - today_8pm_ms)
-                        if time_diff > 3600000:  # More than 1 hour difference (in ms)
-                            continue  # Skip old patterns
-                        
                         time_obj = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
+                        
+                        # Only include patterns from today (any time today)
+                        if time_obj.date() != now_et.date():
+                            continue  # Skip patterns from previous days
                         
                         pattern = {
                             'symbol': symbol,

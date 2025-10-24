@@ -28,7 +28,8 @@ SECTOR_WATCHLIST = {
         "GS", "MS", "AXP", "SPGI", "BLK", "C", "SCHW", "CB", "PGR", "BX",
         "CME", "ICE", "AON", "MMC", "PNC", "USB", "TFC", "TRV", "AIG", "MET",
         "PRU", "ALL", "COF", "BK", "STT", "TROW", "MSCI", "NDAQ", "CBOE", "FIS",
-        "AFL", "DFS", "WTW", "AJG", "MTB", "FITB", "HBAN", "RF", "CFG", "KEY"
+        "AFL", "DFS", "WTW", "AJG", "MTB", "FITB", "HBAN", "RF", "CFG", "KEY",
+        "SOFI"  # SoFi Technologies
     ],
     
     "Consumer Discretionary": [
@@ -45,7 +46,8 @@ SECTOR_WATCHLIST = {
         "GOOGL", "GOOG", "META", "NFLX", "DIS", "CMCSA", "VZ", "T", "TMUS",
         # Large caps
         "CHTR", "EA", "TTWO", "ATVI", "WBD", "PARA", "FOX", "FOXA", "OMC", "IPG",
-        "ROKU", "MTCH", "PINS", "SNAP", "SPOT", "RBLX", "DASH", "ABNB", "UBER", "LYFT"
+        "ROKU", "MTCH", "PINS", "SNAP", "SPOT", "RBLX", "DASH", "ABNB", "UBER", "LYFT",
+        "ASTS"  # AST SpaceMobile
     ],
     
     "Consumer Staples": [

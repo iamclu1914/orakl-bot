@@ -913,21 +913,15 @@ class STRATPatternBot:
                 typed_bars_12h = self.strat_12h_detector.attach_types(bars_12h)
                 patterns_131 = self.strat_12h_detector.detect_131_miyagi(typed_bars_12h)
                 
-                # Calculate today's 20:00 ET for filtering (only alert fresh patterns)
-                today_8pm_et = now.replace(hour=20, minute=0, second=0, microsecond=0)
-                if now.hour < 20:
-                    today_8pm_et = today_8pm_et - timedelta(days=1)
-                today_8pm_ms = int(today_8pm_et.astimezone(pytz.UTC).timestamp() * 1000)
-                
                 for sig in patterns_131:
                     if sig['kind'] == '131-complete':
-                        # Only alert patterns from current trading day's 20:00 close
+                        # Check if pattern is from today
                         timestamp_ms = sig['completed_at']
-                        time_diff = abs(timestamp_ms - today_8pm_ms)
+                        pattern_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
                         
-                        # Skip if not from today's evening close (allow 1 hour tolerance)
-                        if time_diff > 3600000:
-                            logger.debug(f"{ticker}: Skipping old 1-3-1 pattern (not from today's 20:00 close)")
+                        # Only alert patterns from current trading day
+                        if pattern_time.date() != now.date():
+                            logger.debug(f"{ticker}: Skipping old 1-3-1 pattern from {pattern_time.date()}")
                             continue
                         
                         signal = {
@@ -1043,14 +1037,11 @@ class STRATPatternBot:
             else:
                 trigger_50 = entry
             
-            # Price targets: Quick scalps percentages
-            # If open above trigger → bearish (downward targets)
-            # If open below trigger → bullish (upward targets)
-            pt1_above = trigger_50 * 0.90  # 10% below (1st PT)
-            pt2_above = trigger_50 * 0.85  # 15% below (2nd PT)
-            
-            pt1_below = trigger_50 * 1.10  # 10% above (1st PT)
-            pt2_below = trigger_50 * 1.15  # 15% above (2nd PT)
+            # Price targets based on the inside bar's range
+            # If open above trigger → PT is the low of bar 3
+            # If open below trigger → PT is the high of bar 3
+            pt_above = low_bar3 if 'pattern_bars' in signal else trigger_50 * 0.99
+            pt_below = high_bar3 if 'pattern_bars' in signal else trigger_50 * 1.01
             
             # Simple description
             description = f"Completed: {completed_time.strftime('%m/%d %H:%M ET')}"
@@ -1065,14 +1056,14 @@ class STRATPatternBot:
             
             # Add price targets based on open direction
             embed.add_embed_field(
-                name=f"If we open ABOVE ${trigger_50:.2f}",
-                value=f"1st PT: **${pt1_above:.2f}** (-10%)\n2nd PT: **${pt2_above:.2f}** (-15%)",
+                name=f"If we open above {trigger_50:.2f}",
+                value=f"First PT is **{pt_above:.2f}**",
                 inline=False
             )
             
             embed.add_embed_field(
-                name=f"If we open BELOW ${trigger_50:.2f}",
-                value=f"1st PT: **${pt1_below:.2f}** (+10%)\n2nd PT: **${pt2_below:.2f}** (+15%)",
+                name=f"If we open below {trigger_50:.2f}",
+                value=f"First PT is **{pt_below:.2f}**",
                 inline=False
             )
 
