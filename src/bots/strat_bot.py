@@ -913,8 +913,23 @@ class STRATPatternBot:
                 typed_bars_12h = self.strat_12h_detector.attach_types(bars_12h)
                 patterns_131 = self.strat_12h_detector.detect_131_miyagi(typed_bars_12h)
                 
+                # Calculate today's 20:00 ET for filtering (only alert fresh patterns)
+                today_8pm_et = now.replace(hour=20, minute=0, second=0, microsecond=0)
+                if now.hour < 20:
+                    today_8pm_et = today_8pm_et - timedelta(days=1)
+                today_8pm_ms = int(today_8pm_et.astimezone(pytz.UTC).timestamp() * 1000)
+                
                 for sig in patterns_131:
                     if sig['kind'] == '131-complete':
+                        # Only alert patterns from current trading day's 20:00 close
+                        timestamp_ms = sig['completed_at']
+                        time_diff = abs(timestamp_ms - today_8pm_ms)
+                        
+                        # Skip if not from today's evening close (allow 1 hour tolerance)
+                        if time_diff > 3600000:
+                            logger.debug(f"{ticker}: Skipping old 1-3-1 pattern (not from today's 20:00 close)")
+                            continue
+                        
                         signal = {
                             'pattern': '1-3-1 Miyagi',
                             'symbol': ticker,
@@ -923,18 +938,6 @@ class STRATPatternBot:
                             'type': 'Pending 4th bar',
                             'confidence_score': 0.75,
                             'pattern_bars': sig['pattern_bars'],
-                            'timeframe': '12h'
-                        }
-                        signals.append(signal)
-                        
-                    elif sig['kind'] in ['131-4th-2U-PUTS', '131-4th-2D-CALLS']:
-                        signal = {
-                            'pattern': '1-3-1 Miyagi (Confirmed)',
-                            'symbol': ticker,
-                            'completed_at': sig['at'],
-                            'entry': sig['entry'],
-                            'type': sig['direction'],
-                            'confidence_score': 0.85,
                             'timeframe': '12h'
                         }
                         signals.append(signal)
@@ -1048,62 +1051,34 @@ class STRATPatternBot:
                 pt_above = entry * 0.99  # 1% below
                 pt_below = entry * 1.01  # 1% above
             
-            # Main description with trigger logic
-            description = f"**{pattern_type}** setup completed at {completed_time.strftime('%m/%d %H:%M ET')}"
+            # Simple description
+            description = f"Completed: {completed_time.strftime('%m/%d %H:%M ET')}"
             embed.description = description
             
             # Add 50% Trigger
             embed.add_embed_field(
                 name="🎯 50% Trigger",
-                value=f"**${trigger_50:.2f}**",
+                value=f"${trigger_50:.2f}",
                 inline=False
             )
             
             # Add price targets based on open direction
             embed.add_embed_field(
-                name="📈 If Open ABOVE $" + f"{trigger_50:.2f}",
-                value=f"First PT: **${pt_above:.2f}**",
-                inline=True
-            )
-            
-            embed.add_embed_field(
-                name="📉 If Open BELOW $" + f"{trigger_50:.2f}",
-                value=f"First PT: **${pt_below:.2f}**",
-                inline=True
-            )
-            
-            # Add formula
-            embed.add_embed_field(
-                name="💡 Formula",
-                value="50% Trigger = (High + Low) / 2 (Fib 50% line)",
+                name=f"If we open ABOVE ${trigger_50:.2f}",
+                value=f"First PT is **${pt_above:.2f}**",
                 inline=False
             )
             
-            timeframe = signal.get('timeframe', '12h')
-            embed.add_embed_field(name="📊 Timeframe", value=timeframe, inline=True)
-            
-            # Add confidence
-            confidence = signal.get('confidence_score', 0)
-            embed.add_embed_field(name="📈 Confidence", value=f"{confidence*100:.0f}%", inline=True)
-            
-            # Add pattern sequence
-            if 'bars' in signal:
-                embed.add_embed_field(name="🔢 Pattern", value=signal['bars'], inline=True)
-            
-            # Pattern explanation
-            explanation = (
-                "**1-3-1 Miyagi Pattern (36-hour lookback)**\n\n"
-                "Inside → Outside → Inside\n\n"
-                "Compression-Expansion-Compression setup. "
-                "Watch the next bar open relative to the 50% trigger to determine direction."
+            embed.add_embed_field(
+                name=f"If we open BELOW ${trigger_50:.2f}",
+                value=f"First PT is **${pt_below:.2f}**",
+                inline=False
             )
-            
-            embed.add_embed_field(name="ℹ️ Pattern Info", value=explanation, inline=False)
 
             # Auto-append disclaimer
             self._add_disclaimer(embed)
 
-            embed.set_footer(text=f"STRAT Scanner • {timeframe} • Not Financial Advice")
+            embed.set_footer(text="STRAT Scanner • Not Financial Advice")
             embed.set_timestamp()
 
             webhook.add_embed(embed)
@@ -1345,3 +1320,4 @@ class STRATPatternBot:
         self.is_running = False
         self.running = False  # Sync with is_running
         logger.info(f"{self.name} stopped")
+

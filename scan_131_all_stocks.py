@@ -18,15 +18,21 @@ async def scan_all_stocks_for_131():
     """Scan all stocks for 1-3-1 Miyagi patterns"""
     
     print("\n" + "="*80)
-    print("🎯 SCANNING ALL STOCKS FOR 1-3-1 MIYAGI PATTERNS")
+    print("🎯 SCANNING FOR 1-3-1 MIYAGI PATTERNS CLOSING AT 20:00 ET TODAY")
     print("="*80)
     now_et = datetime.now(ET)
     print(f"Time: {now_et.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    print(f"Current Hour: {now_et.hour}")
-    print("="*80)
-    print("\n⚠️  NOTE: 1-3-1 patterns are scanned after 20:00 ET (8pm)")
-    print("    This ensures 36 hours of data (3 bars × 12 hours)")
-    print("    Patterns found now will be posted to Discord.\n")
+    
+    # Calculate today's 20:00 ET boundary
+    today_8pm_et = now_et.replace(hour=20, minute=0, second=0, microsecond=0)
+    if now_et.hour < 20:
+        # If before 8pm, use yesterday's 8pm
+        today_8pm_et = today_8pm_et - timedelta(days=1)
+    
+    today_8pm_utc = today_8pm_et.astimezone(pytz.UTC)
+    today_8pm_ms = int(today_8pm_utc.timestamp() * 1000)
+    
+    print(f"Target: Patterns closing at {today_8pm_et.strftime('%Y-%m-%d 20:00 ET')}")
     print("="*80 + "\n")
     
     # Initialize
@@ -64,8 +70,8 @@ async def scan_all_stocks_for_131():
     # Scan in batches to avoid rate limits
     for i, symbol in enumerate(all_stocks, 1):
         try:
-            # Scan specifically for 1-3-1 patterns
-            bars_12h = await strat_bot.fetch_and_compose_12h_bars(symbol, n_bars=10)
+            # Scan specifically for 1-3-1 patterns (only need last 4 bars for 1-3-1)
+            bars_12h = await strat_bot.fetch_and_compose_12h_bars(symbol, n_bars=4)
             
             if len(bars_12h) < 4:
                 continue
@@ -75,21 +81,25 @@ async def scan_all_stocks_for_131():
             
             if miyagi:
                 for sig in miyagi:
-                    pattern = {
-                        'symbol': symbol,
-                        'signal': sig,
-                        'bars_12h': bars_12h
-                    }
-                    patterns_found.append(pattern)
-                    
-                    # Show immediate feedback
+                    # Filter: Only patterns that completed at today's 20:00 ET
                     if sig['kind'] == '131-complete':
                         timestamp_ms = sig['completed_at']
+                        
+                        # Check if this pattern completed at today's 8pm
+                        # Allow 1 hour tolerance for alignment variations
+                        time_diff = abs(timestamp_ms - today_8pm_ms)
+                        if time_diff > 3600000:  # More than 1 hour difference (in ms)
+                            continue  # Skip old patterns
+                        
                         time_obj = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
+                        
+                        pattern = {
+                            'symbol': symbol,
+                            'signal': sig,
+                            'bars_12h': bars_12h
+                        }
+                        patterns_found.append(pattern)
                         print(f"  ✅ {symbol:6} - 1-3-1 Miyagi @ {time_obj.strftime('%m/%d %H:%M ET')} (Entry: ${sig['entry']:.2f})")
-                    elif sig['kind'] in ['131-4th-2U-PUTS', '131-4th-2D-CALLS']:
-                        direction = sig.get('direction', 'N/A')
-                        print(f"  🔔 {symbol:6} - 1-3-1 4th Bar: {direction} bias")
             
             scanned += 1
             
