@@ -125,54 +125,8 @@ class STRATPatternBot:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days_needed)
             
-            # TRY 1: Direct 720-minute aggregates (12 hours = 720 minutes)
-            logger.debug(f"{symbol}: Attempting direct 720-minute aggregates")
-            
-            bars_720m = await self.data_fetcher.get_aggregates(
-                symbol,
-                timespan='minute',
-                multiplier=720,
-                from_date=start_date.strftime('%Y-%m-%d'),
-                to_date=end_date.strftime('%Y-%m-%d')
-            )
-            
-            # Check if we got good data with proper alignment
-            if bars_720m is not None and len(bars_720m) >= 4:
-                if hasattr(bars_720m, 'to_dict'):
-                    bars_list = bars_720m.to_dict('records')
-                else:
-                    bars_list = bars_720m
-                
-                # Normalize and check alignment
-                normalized_720 = []
-                for bar in bars_list:
-                    # Handle timestamp - convert pandas Timestamp to int milliseconds
-                    timestamp = bar.get('t', bar.get('timestamp', 0))
-                    if hasattr(timestamp, 'timestamp'):
-                        timestamp_ms = int(timestamp.timestamp() * 1000)
-                    else:
-                        timestamp_ms = int(timestamp) if timestamp else 0
-                    
-                    normalized_720.append({
-                        'o': bar.get('o', bar.get('open', 0)),
-                        'h': bar.get('h', bar.get('high', 0)),
-                        'l': bar.get('l', bar.get('low', 0)),
-                        'c': bar.get('c', bar.get('close', 0)),
-                        'v': bar.get('v', bar.get('volume', 0)),
-                        't': timestamp_ms
-                    })
-                
-                # Verify ET alignment (bars should end at 08:00 or 20:00 ET)
-                is_aligned = self._check_12h_alignment(normalized_720)
-                
-                if is_aligned:
-                    logger.info(f"{symbol}: Using direct 720m bars ({len(normalized_720)} bars)")
-                    return normalized_720
-                else:
-                    logger.warning(f"{symbol}: 720m bars not ET-aligned, falling back to composition")
-            
-            # FALLBACK: Compose from 60-minute bars
-            logger.debug(f"{symbol}: Composing from 60-minute bars")
+            # Polygon 720m bars are not ET-aligned, so skip direct attempt
+            # Go straight to composing from 60-minute bars for ET alignment
             
             bars_60m = await self.data_fetcher.get_aggregates(
                 symbol,
