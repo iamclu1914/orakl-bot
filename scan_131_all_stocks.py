@@ -48,33 +48,53 @@ async def scan_all_stocks_for_131():
     # Scan in batches to avoid rate limits
     for i, symbol in enumerate(all_stocks, 1):
         try:
-            # Scan for 1-3-1 patterns (need enough bars to see both 08:00 and 20:00)
+            # Scan for 1-3-1: Last 36 hours = Last 3 bars (12h each)
+            # Need at least 4 bars to classify 3 bars
             bars_12h = await strat_bot.fetch_and_compose_12h_bars(symbol, n_bars=6)
             
             if len(bars_12h) < 4:
                 continue
             
-            typed_bars = strat_bot.strat_12h_detector.attach_types(bars_12h)
-            miyagi = strat_bot.strat_12h_detector.detect_131_miyagi(typed_bars)
+            # Check if last bar closes at 20:00 today
+            last_bar_time = datetime.fromtimestamp(bars_12h[-1]['t'] / 1000, tz=pytz.UTC).astimezone(ET)
+            if last_bar_time.date() != today_date or last_bar_time.hour != 20:
+                continue  # Skip if last bar isn't today's 20:00
             
-            if miyagi:
-                for sig in miyagi:
-                    # Only show patterns where bar 3 closes at 20:00 TODAY
-                    if sig['kind'] == '131-complete':
-                        timestamp_ms = sig['completed_at']
-                        time_obj = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
-                        
-                        # Must close at 20:00 today (not 08:00)
-                        if time_obj.date() != now_et.date() or time_obj.hour != 20:
-                            continue  # Skip patterns that didn't close at 20:00 today
-                        
-                        pattern = {
-                            'symbol': symbol,
-                            'signal': sig,
-                            'bars_12h': bars_12h
+            # Type the bars
+            typed_bars = strat_bot.strat_12h_detector.attach_types(bars_12h)
+            
+            # Check LAST 3 typed bars for 1-3-1 pattern
+            if len(typed_bars) >= 3:
+                bar1 = typed_bars[-3]  # 36h ago (yesterday 20:00)
+                bar2 = typed_bars[-2]  # 24h ago (today 08:00)
+                bar3 = typed_bars[-1]  # 12h ago (today 20:00)
+                
+                # Check for 1-3-1 pattern
+                if bar1.type == "1" and bar2.type == "3" and bar3.type == "1":
+                    time1 = datetime.fromtimestamp(bar1.t / 1000, tz=pytz.UTC).astimezone(ET)
+                    time2 = datetime.fromtimestamp(bar2.t / 1000, tz=pytz.UTC).astimezone(ET)
+                    time3 = datetime.fromtimestamp(bar3.t / 1000, tz=pytz.UTC).astimezone(ET)
+                    
+                    entry = (bar3.h + bar3.l) / 2.0
+                    
+                    signal = {
+                        'kind': '131-complete',
+                        'completed_at': bar3.t,
+                        'entry': entry,
+                        'pattern_bars': {
+                            'bar1': {'type': bar1.type, 'h': bar1.h, 'l': bar1.l, 'c': bar1.c, 'time': time1},
+                            'bar2': {'type': bar2.type, 'h': bar2.h, 'l': bar2.l, 'c': bar2.c, 'time': time2},
+                            'bar3': {'type': bar3.type, 'h': bar3.h, 'l': bar3.l, 'c': bar3.c, 'time': time3}
                         }
-                        patterns_found.append(pattern)
-                        print(f"  ✅ {symbol:6} - 1-3-1 Miyagi @ {time_obj.strftime('%m/%d %H:%M ET')} (Entry: ${sig['entry']:.2f})")
+                    }
+                    
+                    pattern = {
+                        'symbol': symbol,
+                        'signal': signal,
+                        'bars_12h': bars_12h
+                    }
+                    patterns_found.append(pattern)
+                    print(f"  ✅ {symbol:6} - 1-3-1: {time1.strftime('%m/%d %H:%M')}/{time2.strftime('%H:%M')}/{time3.strftime('%H:%M')} (Entry: ${entry:.2f})")
             
             scanned += 1
             
