@@ -103,12 +103,12 @@ class STRAT4HourDetector:
     @staticmethod
     def classify_bar(curr: Dict, prev: Dict) -> str:
         """
-        Classify STRAT bar type
+        Classify STRAT bar type based on CLOSE position
         
         Returns: "1", "2U", "2D", "3", or "0" (invalid)
         """
-        curr_h, curr_l = curr.get('h', 0), curr.get('l', 0)
-        prev_h, prev_l = prev.get('h', 0), prev.get('l', 0)
+        curr_h, curr_l, curr_c = curr.get('h', 0), curr.get('l', 0), curr.get('c', 0)
+        prev_h, prev_l, prev_c = prev.get('h', 0), prev.get('l', 0), prev.get('c', 0)
         
         if curr_h == 0 or curr_l == 0 or prev_h == 0 or prev_l == 0:
             return "0"
@@ -116,11 +116,18 @@ class STRAT4HourDetector:
         broke_high = curr_h > prev_h
         broke_low = curr_l < prev_l
         
+        # Outside bar
         if broke_high and broke_low:
             return "3"
-        elif broke_high and curr_l >= prev_l:
+        
+        # Inside bar
+        if curr_h <= prev_h and curr_l >= prev_l:
+            return "1"
+        
+        # Directional based on close
+        if curr_c > prev_c:
             return "2U"
-        elif broke_low and curr_h <= prev_h:
+        elif curr_c < prev_c:
             return "2D"
         else:
             return "1"

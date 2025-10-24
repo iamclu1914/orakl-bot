@@ -90,35 +90,42 @@ class STRAT12HourDetector:
     @staticmethod
     def classify_bar(curr: Dict, prev: Dict) -> str:
         """
-        Classify STRAT bar type
+        Classify STRAT bar type based on CLOSE position
         
-        Rules (strict):
+        Rules:
         - "3" (Outside): high > prevHigh AND low < prevLow  
-        - "2U" (Up): high > prevHigh AND low >= prevLow
-        - "2D" (Down): low < prevLow AND high <= prevHigh
-        - "1" (Inside): high <= prevHigh AND low >= prevLow
+        - "2U" (Up): close > prevClose (upward)
+        - "2D" (Down): close < prevClose (downward)
+        - "1" (Inside): close == prevClose OR inside previous range
         
         Args:
-            curr: Current bar dict with h, l keys
-            prev: Previous bar dict with h, l keys
+            curr: Current bar dict with h, l, c keys
+            prev: Previous bar dict with h, l, c keys
             
         Returns:
             STRAT type: "1", "2U", "2D", or "3"
         """
-        curr_h, curr_l = curr['h'], curr['l']
-        prev_h, prev_l = prev['h'], prev['l']
+        curr_h, curr_l, curr_c = curr['h'], curr['l'], curr['c']
+        prev_h, prev_l, prev_c = prev['h'], prev['l'], prev['c']
         
         broke_high = curr_h > prev_h
         broke_low = curr_l < prev_l
         
+        # Outside bar (broke both high and low)
         if broke_high and broke_low:
-            return "3"  # Outside bar
-        elif broke_high and curr_l >= prev_l:
-            return "2U"  # Directional up
-        elif broke_low and curr_h <= prev_h:
-            return "2D"  # Directional down
+            return "3"
+        
+        # Inside bar (within previous range)
+        if curr_h <= prev_h and curr_l >= prev_l:
+            return "1"
+        
+        # Directional bars based on close
+        if curr_c > prev_c:
+            return "2U"  # Closed higher
+        elif curr_c < prev_c:
+            return "2D"  # Closed lower
         else:
-            return "1"  # Inside bar
+            return "1"  # Closed same (inside)
     
     @staticmethod
     def attach_types(bars: List[Dict]) -> List[TypedBar]:
