@@ -90,20 +90,19 @@ class STRAT12HourDetector:
     @staticmethod
     def classify_bar(curr: Dict, prev: Dict) -> str:
         """
-        Classify STRAT bar type - EXACT TradingView/Strat rules
+        Classify STRAT bar type - EXACT TradingView Pine Script logic
         
-        Rules (pure high/low comparison):
+        Matches the simplified classification from TradingView indicator:
         - "3" (Outside): high > prevHigh AND low < prevLow  
-        - "2U" (Up): high > prevHigh AND low >= prevLow
-        - "2D" (Down): low < prevLow AND high <= prevHigh
         - "1" (Inside): high <= prevHigh AND low >= prevLow
+        - "2" (Directional): high > prevHigh OR low < prevLow (either direction)
         
         Args:
             curr: Current bar dict with h, l keys
             prev: Previous bar dict with h, l keys
             
         Returns:
-            STRAT type: "1", "2U", "2D", or "3"
+            STRAT type: "1", "2", or "3"
         """
         curr_h, curr_l = curr['h'], curr['l']
         prev_h, prev_l = prev['h'], prev['l']
@@ -111,15 +110,14 @@ class STRAT12HourDetector:
         # Outside bar - broke both sides
         if curr_h > prev_h and curr_l < prev_l:
             return "3"
-        # Directional up - broke high but not low
-        elif curr_h > prev_h and curr_l >= prev_l:
-            return "2U"
-        # Directional down - broke low but not high
-        elif curr_l < prev_l and curr_h <= prev_h:
-            return "2D"
         # Inside bar - didn't break either side
-        else:
+        elif curr_h <= prev_h and curr_l >= prev_l:
             return "1"
+        # Directional - broke at least one side (no distinction between up/down for 1-3-1)
+        elif curr_h > prev_h or curr_l < prev_l:
+            return "2"
+        else:
+            return "1"  # Default to inside
     
     @staticmethod
     def attach_types(bars: List[Dict]) -> List[TypedBar]:

@@ -64,47 +64,35 @@ async def scan_all_stocks_for_131():
             if len(bars_12h) < 4:
                 continue
             
-            # Check if last bar closes at 20:00 on target date
+            # We want patterns from today (either 08:00 or 20:00)
+            # Just ensure we have recent data
             last_bar_time = datetime.fromtimestamp(bars_12h[-1]['t'] / 1000, tz=pytz.UTC).astimezone(ET)
-            if last_bar_time.date() != target_date or last_bar_time.hour != 20:
-                logger.debug(f"{symbol}: Last bar at {last_bar_time.strftime('%m/%d %H:%M')}, not target {target_date} 20:00")
+            if last_bar_time.date() < target_date:
+                logger.debug(f"{symbol}: Data too old, last bar: {last_bar_time.strftime('%m/%d')}")
                 continue
             
             # Type the bars
             typed_bars = strat_bot.strat_12h_detector.attach_types(bars_12h)
             
-            # Check LAST 3 typed bars for 1-3-1 pattern
-            if len(typed_bars) >= 3:
-                bar1 = typed_bars[-3]  # 36h ago (yesterday 20:00)
-                bar2 = typed_bars[-2]  # 24h ago (today 08:00)
-                bar3 = typed_bars[-1]  # 12h ago (today 20:00)
-                
-                # Check for 1-3-1 pattern
-                if bar1.type == "1" and bar2.type == "3" and bar3.type == "1":
-                    time1 = datetime.fromtimestamp(bar1.t / 1000, tz=pytz.UTC).astimezone(ET)
-                    time2 = datetime.fromtimestamp(bar2.t / 1000, tz=pytz.UTC).astimezone(ET)
-                    time3 = datetime.fromtimestamp(bar3.t / 1000, tz=pytz.UTC).astimezone(ET)
+            # Find ANY 1-3-1 patterns in the data (not just last 3)
+            miyagi_patterns = strat_bot.strat_12h_detector.detect_131_miyagi(typed_bars)
+            
+            for sig in miyagi_patterns:
+                if sig['kind'] == '131-complete':
+                    # Check if pattern completed today
+                    pattern_time = datetime.fromtimestamp(sig['completed_at'] / 1000, tz=pytz.UTC).astimezone(ET)
                     
-                    entry = (bar3.h + bar3.l) / 2.0
+                    if pattern_time.date() != target_date:
+                        continue  # Skip old patterns
                     
-                    signal = {
-                        'kind': '131-complete',
-                        'completed_at': bar3.t,
-                        'entry': entry,
-                        'pattern_bars': {
-                            'bar1': {'type': bar1.type, 'h': bar1.h, 'l': bar1.l, 'c': bar1.c, 'time': time1},
-                            'bar2': {'type': bar2.type, 'h': bar2.h, 'l': bar2.l, 'c': bar2.c, 'time': time2},
-                            'bar3': {'type': bar3.type, 'h': bar3.h, 'l': bar3.l, 'c': bar3.c, 'time': time3}
-                        }
-                    }
-                    
+                    # Pattern already has all the data we need
                     pattern = {
                         'symbol': symbol,
-                        'signal': signal,
+                        'signal': sig,
                         'bars_12h': bars_12h
                     }
                     patterns_found.append(pattern)
-                    print(f"  ✅ {symbol:6} - 1-3-1: {time1.strftime('%m/%d %H:%M')}/{time2.strftime('%H:%M')}/{time3.strftime('%H:%M')} (Entry: ${entry:.2f})")
+                    print(f"  ✅ {symbol:6} - 1-3-1 @ {pattern_time.strftime('%m/%d %H:%M ET')} (Entry: ${sig['entry']:.2f})")
             
             # Progress update every 50 stocks
             if i % 50 == 0:
