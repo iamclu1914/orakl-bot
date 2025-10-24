@@ -24,10 +24,17 @@ async def scan_all_stocks_for_131():
     now_et = datetime.now(ET)
     print(f"Time: {now_et.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     
-    # We scan at 8pm but want patterns from TODAY (either 08:00 or 20:00 close)
-    today_date = now_et.date()
+    # Calculate the most recent 20:00 ET close
+    # If it's after midnight but before 8am, use yesterday's 20:00
+    # If it's after 8pm but before midnight, use today's 20:00
+    if now_et.hour < 8:
+        # After midnight, before 8am - target yesterday's 20:00
+        target_date = (now_et - timedelta(days=1)).date()
+    else:
+        # After 8am - target today's 20:00 (even if it hasn't closed yet)
+        target_date = now_et.date()
     
-    print(f"Target: Patterns from today ({today_date}) at 08:00 or 20:00 ET")
+    print(f"Target: Patterns closing at {target_date} 20:00 ET")
     print("="*80 + "\n")
     
     # Initialize
@@ -52,13 +59,16 @@ async def scan_all_stocks_for_131():
             # Need at least 4 bars to classify 3 bars
             bars_12h = await strat_bot.fetch_and_compose_12h_bars(symbol, n_bars=6)
             
+            scanned += 1
+            
             if len(bars_12h) < 4:
                 continue
             
-            # Check if last bar closes at 20:00 today
+            # Check if last bar closes at 20:00 on target date
             last_bar_time = datetime.fromtimestamp(bars_12h[-1]['t'] / 1000, tz=pytz.UTC).astimezone(ET)
-            if last_bar_time.date() != today_date or last_bar_time.hour != 20:
-                continue  # Skip if last bar isn't today's 20:00
+            if last_bar_time.date() != target_date or last_bar_time.hour != 20:
+                logger.debug(f"{symbol}: Last bar at {last_bar_time.strftime('%m/%d %H:%M')}, not target {target_date} 20:00")
+                continue
             
             # Type the bars
             typed_bars = strat_bot.strat_12h_detector.attach_types(bars_12h)
@@ -95,8 +105,6 @@ async def scan_all_stocks_for_131():
                     }
                     patterns_found.append(pattern)
                     print(f"  ✅ {symbol:6} - 1-3-1: {time1.strftime('%m/%d %H:%M')}/{time2.strftime('%H:%M')}/{time3.strftime('%H:%M')} (Entry: ${entry:.2f})")
-            
-            scanned += 1
             
             # Progress update every 50 stocks
             if i % 50 == 0:
