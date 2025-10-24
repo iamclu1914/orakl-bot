@@ -871,14 +871,18 @@ class STRATPatternBot:
                 
                 for sig in patterns_131:
                     if sig['kind'] == '131-complete':
-                        # Check if bar 3 closes at 20:00 today (going into next trading day)
+                        # Pattern MUST complete at 20:00 PM to be valid for next trading day
                         timestamp_ms = sig['completed_at']
                         pattern_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
                         
-                        # Only alert patterns where bar 3 closes at 20:00 TODAY
-                        # Pattern: yesterday 20:00 (1) → today 08:00 (3) → today 20:00 (1)
-                        if pattern_time.date() != now.date() or pattern_time.hour != 20:
-                            logger.debug(f"{ticker}: Skipping 1-3-1 (not closing at 20:00 today)")
+                        # Strict: must close at 20:00 on current trading day
+                        if pattern_time.hour != 20:
+                            logger.debug(f"{ticker}: Pattern completes at {pattern_time.strftime('%H:%M')}, not 20:00")
+                            continue
+                        
+                        # Must be from today
+                        if pattern_time.date() != now.date():
+                            logger.debug(f"{ticker}: Pattern from {pattern_time.date()}, not today")
                             continue
                         
                         signal = {

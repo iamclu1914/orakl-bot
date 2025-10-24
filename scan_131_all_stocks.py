@@ -79,11 +79,13 @@ async def scan_all_stocks_for_131():
             
             for sig in miyagi_patterns:
                 if sig['kind'] == '131-complete':
-                    # Check if pattern completed today
+                    # Pattern MUST complete at 20:00 PM on target date
                     pattern_time = datetime.fromtimestamp(sig['completed_at'] / 1000, tz=pytz.UTC).astimezone(ET)
                     
-                    if pattern_time.date() != target_date:
-                        continue  # Skip old patterns
+                    # Strict check: must be target date AND 20:00 hour
+                    if pattern_time.date() != target_date or pattern_time.hour != 20:
+                        logger.debug(f"{symbol}: Pattern at {pattern_time.strftime('%m/%d %H:%M')}, not {target_date} 20:00")
+                        continue  # Skip patterns not completing at 20:00
                     
                     # Pattern already has all the data we need
                     pattern = {
