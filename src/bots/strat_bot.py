@@ -144,13 +144,20 @@ class STRATPatternBot:
                 # Normalize and check alignment
                 normalized_720 = []
                 for bar in bars_list:
+                    # Handle timestamp - convert pandas Timestamp to int milliseconds
+                    timestamp = bar.get('t', bar.get('timestamp', 0))
+                    if hasattr(timestamp, 'timestamp'):
+                        timestamp_ms = int(timestamp.timestamp() * 1000)
+                    else:
+                        timestamp_ms = int(timestamp) if timestamp else 0
+                    
                     normalized_720.append({
                         'o': bar.get('o', bar.get('open', 0)),
                         'h': bar.get('h', bar.get('high', 0)),
                         'l': bar.get('l', bar.get('low', 0)),
                         'c': bar.get('c', bar.get('close', 0)),
                         'v': bar.get('v', bar.get('volume', 0)),
-                        't': bar.get('t', bar.get('timestamp', 0))
+                        't': timestamp_ms
                     })
                 
                 # Verify ET alignment (bars should end at 08:00 or 20:00 ET)
@@ -183,13 +190,20 @@ class STRATPatternBot:
             
             normalized_60m = []
             for bar in bars_list:
+                # Handle timestamp - convert pandas Timestamp to int milliseconds
+                timestamp = bar.get('t', bar.get('timestamp', 0))
+                if hasattr(timestamp, 'timestamp'):
+                    timestamp_ms = int(timestamp.timestamp() * 1000)
+                else:
+                    timestamp_ms = int(timestamp) if timestamp else 0
+                
                 normalized_60m.append({
                     'o': bar.get('o', bar.get('open', 0)),
                     'h': bar.get('h', bar.get('high', 0)),
                     'l': bar.get('l', bar.get('low', 0)),
                     'c': bar.get('c', bar.get('close', 0)),
                     'v': bar.get('v', bar.get('volume', 0)),
-                    't': bar.get('t', bar.get('timestamp', 0))
+                    't': timestamp_ms
                 })
             
             # Compose into 12-hour bars with ET alignment
@@ -206,31 +220,33 @@ class STRATPatternBot:
         Check if bars are properly aligned to 08:00 and 20:00 ET
         
         Args:
-            bars: List of bar dicts
+            bars: List of bar dicts with normalized 't' timestamps
             
         Returns:
             True if aligned, False otherwise
         """
-        if not bars:
+        if not bars or len(bars) < 2:
             return False
         
         try:
+            aligned_count = 0
+            
             # Check last few bars for ET alignment
-            for bar in bars[-3:]:
+            for bar in bars[-min(3, len(bars)):]:
                 timestamp_ms = bar.get('t', 0)
                 if timestamp_ms == 0:
                     continue
                 
-                if hasattr(timestamp_ms, 'timestamp'):
-                    bar_time = datetime.fromtimestamp(timestamp_ms.timestamp(), tz=pytz.UTC).astimezone(ET)
-                else:
-                    bar_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
+                # Already normalized to int milliseconds
+                bar_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
                 
                 # Check if hour is 8 or 20 and minute is 0
-                if bar_time.hour not in [8, 20] or bar_time.minute != 0:
-                    return False
+                # Allow some tolerance for minute (within 5 minutes)
+                if bar_time.hour in [8, 20] and bar_time.minute <= 5:
+                    aligned_count += 1
             
-            return True
+            # If at least 50% of checked bars are aligned, consider it aligned
+            return aligned_count >= len(bars[-min(3, len(bars)):]) * 0.5
             
         except Exception as e:
             logger.error(f"Error checking alignment: {e}")
@@ -806,13 +822,20 @@ class STRATPatternBot:
             
             normalized_60m = []
             for bar in bars_list:
+                # Handle timestamp - convert pandas Timestamp to int milliseconds
+                timestamp = bar.get('t', bar.get('timestamp', 0))
+                if hasattr(timestamp, 'timestamp'):
+                    timestamp_ms = int(timestamp.timestamp() * 1000)
+                else:
+                    timestamp_ms = int(timestamp) if timestamp else 0
+                
                 normalized_60m.append({
                     'o': bar.get('o', bar.get('open', 0)),
                     'h': bar.get('h', bar.get('high', 0)),
                     'l': bar.get('l', bar.get('low', 0)),
                     'c': bar.get('c', bar.get('close', 0)),
                     'v': bar.get('v', bar.get('volume', 0)),
-                    't': bar.get('t', bar.get('timestamp', 0))
+                    't': timestamp_ms
                 })
             
             # ===== 1. SCAN 3-2-2 REVERSAL (60m: 8am-9am-10am) =====
@@ -849,13 +872,20 @@ class STRATPatternBot:
                 
                 normalized_240 = []
                 for bar in bars_4h_list:
+                    # Handle timestamp - convert pandas Timestamp to int milliseconds
+                    timestamp = bar.get('t', bar.get('timestamp', 0))
+                    if hasattr(timestamp, 'timestamp'):
+                        timestamp_ms = int(timestamp.timestamp() * 1000)
+                    else:
+                        timestamp_ms = int(timestamp) if timestamp else 0
+                    
                     normalized_240.append({
                         'o': bar.get('o', bar.get('open', 0)),
                         'h': bar.get('h', bar.get('high', 0)),
                         'l': bar.get('l', bar.get('low', 0)),
                         'c': bar.get('c', bar.get('close', 0)),
                         'v': bar.get('v', bar.get('volume', 0)),
-                        't': bar.get('t', bar.get('timestamp', 0))
+                        't': timestamp_ms
                     })
                 bars_4h = normalized_240
                 logger.debug(f"{ticker}: Using direct 240m bars for 4h")
