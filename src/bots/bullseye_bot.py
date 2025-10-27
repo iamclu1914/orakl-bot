@@ -478,7 +478,7 @@ class BullseyeBot(BaseAutoBot):
         """Post Bullseye swing trade signal matching reference format"""
         color = 0x007bff  # Professional Blue
 
-        title = "∞ Bullseye Trade Idea"
+        title = "🎯 Bullseye Trade Idea"
         description = "Expected to pan out within 1-2 days."
 
         # Enhanced thesis with ITM probability and flow intensity
@@ -502,13 +502,7 @@ class BullseyeBot(BaseAutoBot):
             # Row 3: Prems Spent, Volume, OI
             {"name": "Prems Spent", "value": f"{signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"{signal['premium']/1_000:.0f}K", "inline": True},
             {"name": "Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
-            {"name": "OI", "value": f"{signal['open_interest']:,}", "inline": True},
-
-            # Tracking Link (empty for now)
-            {"name": "Tracking Link", "value": "N/A", "inline": False},
-
-            # Disclaimer
-            {"name": "\u200b", "value": "∞ Please always do your own due diligence on top of these trade ideas. For shorter term expirations, it is better to add some extra time.", "inline": False}
+            {"name": "OI", "value": f"{signal['open_interest']:,}", "inline": True}
         ]
 
         # Create embed with auto-disclaimer
