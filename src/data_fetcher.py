@@ -746,7 +746,8 @@ class DataFetcher:
             # Step 2: Get volume data from cache for comparison
             cached_volumes = {}
             volume_cache_key = f"{underlying}_volumes"
-            cached_data = await cache_manager.get('volume', volume_cache_key)
+            volume_cache = cache_manager.get_cache('volume')  # Get cache instance
+            cached_data = await volume_cache.get(volume_cache_key)
             if cached_data:
                 cached_volumes = cached_data
                 logger.debug(f"{underlying}: Found cached volumes for {len(cached_volumes)} contracts")
@@ -888,7 +889,7 @@ class DataFetcher:
                     new_volumes[ticker] = volume
             
             # Save to cache
-            await cache_manager.set('volume', volume_cache_key, new_volumes, ttl_seconds=14400)  # 4 hours
+            await volume_cache.set(volume_cache_key, new_volumes, ttl_seconds=14400)  # 4 hours
             
             # Step 7: Sort by premium (highest first) and return
             flows_sorted = sorted(flows, key=lambda x: x['premium'], reverse=True)
