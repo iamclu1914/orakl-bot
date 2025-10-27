@@ -41,7 +41,14 @@ class DataFetcher:
         self._request_count = 0
         self._error_count = 0
         self._last_error_time = None
-        self.skip_tickers = self._build_skip_set(Config.SKIP_TICKERS)
+        configured_skip_list = getattr(Config, 'SKIP_TICKERS', None)
+        if not configured_skip_list:
+            configured_skip_list = ['ABC', 'ATVI', 'BRK-A', 'BRK-B', 'SPX', 'DFS']
+            logger.debug(
+                "Config.SKIP_TICKERS not found or empty; using default skip list %s",
+                configured_skip_list
+            )
+        self.skip_tickers = self._build_skip_set(configured_skip_list)
         
     async def __aenter__(self):
         """Async context manager entry"""
@@ -111,9 +118,11 @@ class DataFetcher:
             normalized.replace('-', '.'),
         }
     
-    def _build_skip_set(self, tickers: List[str]) -> set:
+    def _build_skip_set(self, tickers: Union[List[str], str]) -> set:
         """Build skip ticker set including normalized variations and translations"""
         skip = set()
+        if isinstance(tickers, str):
+            tickers = tickers.split(',')
         for raw in tickers:
             if not raw:
                 continue
