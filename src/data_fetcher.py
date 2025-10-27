@@ -738,25 +738,20 @@ class DataFetcher:
             current_snapshot = await self.get_option_chain_snapshot(underlying)
 
             if not current_snapshot:
-                logger.debug(f"No contracts found for {underlying}")
+                logger.warning(f"No option chain snapshot returned for {underlying}")
                 return []
+            
+            logger.debug(f"{underlying}: Got {len(current_snapshot)} contracts from snapshot")
 
-            # Step 2: Get last scan timestamp from cache
-            cache_data = await volume_cache.get(underlying)
-            last_scan_timestamp_ns = None  # Nanoseconds
-
-            # Handle cache format - be defensive about old cache data
-            if cache_data is not None and isinstance(cache_data, dict):
-                # Check for our scan metadata
-                scan_meta = cache_data.get('_scan_meta', {})
-                if scan_meta and isinstance(scan_meta, dict):
-                    last_scan_timestamp_ns = scan_meta.get('last_scan_ns')
-                else:
-                    # Old format or no scan meta, treat as first scan
-                    logger.info(f"🔄 {underlying}: No scan metadata found, treating as first scan")
-
-            # Current timestamp in nanoseconds
-            current_timestamp_ns = int(datetime.now().timestamp() * 1_000_000_000)
+            # Step 2: Get volume data from cache for comparison
+            cached_volumes = {}
+            volume_cache_key = f"{underlying}_volumes"
+            cached_data = await cache_manager.get('volume', volume_cache_key)
+            if cached_data:
+                cached_volumes = cached_data
+                logger.debug(f"{underlying}: Found cached volumes for {len(cached_volumes)} contracts")
+            else:
+                logger.info(f"{underlying}: No cached volumes, first scan")
 
             # Step 3: Aggregate trades for each contract
             flows = []
@@ -783,20 +778,16 @@ class DataFetcher:
                     if last_price == 0:
                         continue
 
-                    # Step 4: Fetch trades since last scan
-                    trades = await self.get_option_trades(
-                        option_ticker=ticker,
-                        timestamp_gte=last_scan_timestamp_ns,
-                        limit=50000
-                    )
-
-                    if not trades:
-                        continue  # No trades since last scan
-
-                    contracts_with_trades += 1
-
-                    # Step 5: Aggregate trade sizes to get volume delta
-                    volume_delta = sum(trade.get('size', 0) for trade in trades)
+                    # Step 4: Calculate volume delta by comparing with cached volume
+                    cached_volume = cached_volumes.get(ticker, 0)
+                    volume_delta = current_day_volume - cached_volume
+                    
+                    # If first scan or negative delta (market reset), use current volume
+                    if volume_delta <= 0:
+                        volume_delta = min(current_day_volume, 100)  # Cap initial scan to avoid false positives
+                    
+                    if current_day_volume > 0:
+                        contracts_with_trades += 1
 
                     # Filter: Must have significant volume
                     if volume_delta < min_volume_delta:
@@ -804,23 +795,20 @@ class DataFetcher:
 
                     contracts_with_delta += 1
 
-                    # Calculate time elapsed for velocity
-                    time_elapsed_minutes = 0
-                    volume_velocity = 0
+                    # Calculate flow intensity based on volume/OI ratio and premium
                     flow_intensity = "NORMAL"
-
-                    if last_scan_timestamp_ns:
-                        time_elapsed_seconds = (current_timestamp_ns - last_scan_timestamp_ns) / 1_000_000_000
-                        time_elapsed_minutes = max(time_elapsed_seconds / 60, 0.1)
-                        volume_velocity = volume_delta / time_elapsed_minutes
-
-                        # Classify flow intensity
-                        if volume_velocity >= 50:
-                            flow_intensity = "AGGRESSIVE"  # 50+ contracts/min
-                        elif volume_velocity >= 20:
-                            flow_intensity = "STRONG"      # 20-50 contracts/min
-                        elif volume_velocity >= 10:
-                            flow_intensity = "MODERATE"    # 10-20 contracts/min
+                    
+                    # Get open interest for ratio calculation
+                    open_interest = contract.get('open_interest', 0)
+                    
+                    if open_interest > 0:
+                        vol_oi_ratio = volume_delta / open_interest
+                        if vol_oi_ratio >= 0.5:
+                            flow_intensity = "AGGRESSIVE"  # 50%+ of OI
+                        elif vol_oi_ratio >= 0.2:
+                            flow_intensity = "STRONG"      # 20-50% of OI
+                        elif vol_oi_ratio >= 0.1:
+                            flow_intensity = "MODERATE"    # 10-20% of OI
 
                     # Calculate premium for the delta volume
                     premium = volume_delta * last_price * 100  # Options multiplier
@@ -845,17 +833,11 @@ class DataFetcher:
                     vega = greeks.get('vega', 0)
 
                     # Get additional metrics
-                    open_interest = contract.get('open_interest', 0)
                     implied_vol = contract.get('implied_volatility', 0)
 
                     # Get underlying price
                     underlying_asset = contract.get('underlying_asset', {})
                     underlying_price = underlying_asset.get('price', 0)
-
-                    # Calculate volume/OI ratio
-                    vol_oi_ratio = 0
-                    if open_interest > 0:
-                        vol_oi_ratio = volume_delta / open_interest
 
                     # Determine option type - ensure ticker is string
                     if not isinstance(ticker, str):
@@ -884,10 +866,7 @@ class DataFetcher:
                         'vega': vega,
                         'underlying_price': underlying_price,
                         'timestamp': datetime.now(),
-                        'volume_velocity': volume_velocity,
                         'flow_intensity': flow_intensity,
-                        'time_elapsed_minutes': time_elapsed_minutes,
-                        'num_trades': len(trades)  # NEW: Number of individual trades
                     }
 
                     flows.append(flow)
@@ -899,17 +878,18 @@ class DataFetcher:
                     logger.debug(f"Error processing contract {ticker}: {e}")
                     continue
 
-            # Step 6: Update cache with current scan timestamp
-            # Store timestamp in a format compatible with volume_cache structure
-            # Using special key '_scan_meta' to avoid conflict with contract tickers
-            timestamp_data = {
-                '_scan_meta': {
-                    'last_scan_ns': current_timestamp_ns,
-                    'timestamp': datetime.now()
-                }
-            }
-            await volume_cache.set(underlying, timestamp_data)
-
+            # Step 6: Update volume cache with current volumes
+            new_volumes = {}
+            for contract in current_snapshot:
+                ticker = contract.get('ticker', '')
+                day_data = contract.get('day', {})
+                volume = day_data.get('volume', 0)
+                if ticker and volume > 0:
+                    new_volumes[ticker] = volume
+            
+            # Save to cache
+            await cache_manager.set('volume', volume_cache_key, new_volumes, ttl_seconds=14400)  # 4 hours
+            
             # Step 7: Sort by premium (highest first) and return
             flows_sorted = sorted(flows, key=lambda x: x['premium'], reverse=True)
 

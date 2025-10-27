@@ -1,0 +1,20 @@
+[33mbd77135[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Strict filter: 1-3-1 pattern must complete at 20:00 PM only (not 08:00)
+[33med38e79[m Match TradingView Pine Script: use Type 2 for any directional (not 2U/2D), scan all today patterns
+[33m1d38add[m Remove 720m endpoint, use ONLY 60m composition for proper ET alignment (08:00 & 20:00)
+[33mfcf775c[m Fix missing timedelta import in scan script
+[33m27ae54f[m Fix date logic for after-midnight scanning: target previous day's 20:00 ET when run after midnight
+[33m6070a5f[m Use EXACT TradingView Strat rules: high/low based classification (not close-based)
+[33m15d5c45[m Simplify 1-3-1: check last 3 bars (36h/24h/12h lookback) ending at 20:00 today
+[33m1dd398f[m Increase data range for better 12h bar composition, ensure both 08:00 and 20:00 bars
+[33mc427f78[m Update 1-3-1 filter: only alert patterns where bar 3 closes at 20:00 today (going into next trading day)
+[33mcc59566[m Fix STRAT classification: use CLOSE for directional bars (2U/2D) instead of high/low breaks
+[33m7582a6c[m Fix 1-3-1 filter: include patterns from today at 08:00 OR 20:00 ET, not just 20:00
+[33m1eea663[m Fix 1-3-1 PTs to use bar high/low, add SOFI and ASTS to watchlist, relax date filtering
+[33mcc5dcd1[m Update 1-3-1 alerts: 10%/15% scalp PTs, scan all stocks from complete watchlist
+[33mc0a4755[m Filter 1-3-1 patterns to only current trading day 20:00 ET close, simplify Discord format
+[33m8a871cb[m Update 1-3-1 alerts: only after 8pm ET, add 50% trigger logic with price targets, prevent duplicates
+[33mbbd1aec[m Fix timestamp handling: convert pandas Timestamps to int milliseconds for all pattern detectors
+[33m9519588[m Implement best practice: try direct 720m/240m aggregates first, fall back to composition with ET alignment verification
+[33mde4d5b6[m Implement battle-tested STRAT patterns: 1-3-1 Miyagi (12h), 2-2 Reversal (4h), 3-2-2 Reversal (60m) with proper ET alignment
+[33ma670b89[m Fix darkpool bot: improve market hours check, lower thresholds, add debug logging
+[33m5ff557d[m Fix volume_cache format mismatch - store timestamp in compatible structure

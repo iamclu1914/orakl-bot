@@ -895,7 +895,7 @@ class STRATPatternBot:
                             'pattern_bars': sig['pattern_bars'],
                             'timeframe': '12h'
                         }
-                        signals.append(signal)
+                    signals.append(signal)
 
             # 3-2-2 Reversal - Always scan, pattern must have formed after 10am ET
             # Get data from 7am to current time
