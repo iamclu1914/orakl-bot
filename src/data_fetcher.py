@@ -14,6 +14,7 @@ from asyncio import Semaphore
 import json
 import time
 
+from src.config import Config
 from src.utils.resilience import exponential_backoff_retry, polygon_rate_limiter, api_circuit_breaker
 from src.utils.exceptions import (
     APIException, RateLimitException, APITimeoutException, 
@@ -40,6 +41,7 @@ class DataFetcher:
         self._request_count = 0
         self._error_count = 0
         self._last_error_time = None
+        self.skip_tickers = self._build_skip_set(Config.SKIP_TICKERS)
         
     async def __aenter__(self):
         """Async context manager entry"""
@@ -99,6 +101,51 @@ class DataFetcher:
         """Ensure aiohttp session exists"""
         if not self.session:
             await self._init_session()
+
+    def _ticker_variations(self, ticker: str) -> set:
+        """Generate common ticker variations (dot vs hyphen) for comparisons"""
+        normalized = ticker.strip().upper()
+        return {
+            normalized,
+            normalized.replace('.', '-'),
+            normalized.replace('-', '.'),
+        }
+    
+    def _build_skip_set(self, tickers: List[str]) -> set:
+        """Build skip ticker set including normalized variations and translations"""
+        skip = set()
+        for raw in tickers:
+            if not raw:
+                continue
+            normalized = raw.strip().upper()
+            if not normalized:
+                continue
+            skip.update(self._ticker_variations(normalized))
+            translated = translate_ticker(normalized)
+            if translated:
+                skip.update(self._ticker_variations(translated))
+        return skip
+    
+    def _register_skip(self, ticker: str) -> None:
+        """Dynamically register a ticker to be skipped after repeated failures"""
+        if not ticker:
+            return
+        for variation in self._ticker_variations(ticker):
+            if variation:
+                self.skip_tickers.add(variation)
+        translated = translate_ticker(ticker)
+        if translated:
+            for variation in self._ticker_variations(translated):
+                if variation:
+                    self.skip_tickers.add(variation)
+    
+    def _should_skip(self, ticker: str) -> bool:
+        if not ticker:
+            return False
+        for variation in self._ticker_variations(ticker):
+            if variation in self.skip_tickers:
+                return True
+        return False
             
     @exponential_backoff_retry(
         max_retries=3,
@@ -188,6 +235,11 @@ class DataFetcher:
     @cached(cache_name='market', ttl_seconds=30)
     async def get_stock_price(self, symbol: str) -> Optional[float]:
         """Get current stock price with caching (uses snapshot for real-time during market hours)"""
+        original_symbol = symbol
+        if self._should_skip(symbol):
+            logger.debug(f"Skipping stock price fetch for {symbol} (skip list)")
+            return None
+
         # Translate ticker if needed (e.g., BLOCK -> SQ)
         symbol = translate_ticker(symbol)
 
@@ -227,6 +279,22 @@ class DataFetcher:
             
         except DataValidationException as e:
             logger.error(f"Price validation failed for {symbol}: {e}")
+            return None
+        except APIException as e:
+            details = e.details or {}
+            status = details.get('status')
+            error_text_raw = details.get('error', '')
+            error_text_upper = error_text_raw.upper() if isinstance(error_text_raw, str) else ''
+            message_upper = str(e).upper()
+            if status == 404 or 'NOTFOUND' in error_text_upper or 'NOTFOUND' in message_upper:
+                logger.warning(
+                    f"Polygon reports {symbol} (original: {original_symbol}) as not found. "
+                    "Adding to skip list to avoid repeated 404s."
+                )
+                self._register_skip(symbol)
+                self._register_skip(original_symbol)
+                return None
+            logger.error(f"API error fetching stock price for {symbol}: {e}")
             return None
         except Exception as e:
             logger.error(f"Error fetching stock price for {symbol}: {e}")
@@ -308,6 +376,10 @@ class DataFetcher:
                               expiration_date_gte: Optional[str] = None,
                               expiration_date_lte: Optional[str] = None) -> pd.DataFrame:
         """Get options chain for a symbol"""
+        if self._should_skip(symbol):
+            logger.debug(f"Skipping options chain fetch for {symbol} (skip list)")
+            return pd.DataFrame()
+
         params = {
             'underlying_ticker': symbol,
             'limit': 1000,
@@ -626,6 +698,10 @@ class DataFetcher:
                 'underlying_asset': {'ticker': 'AAPL', 'price': 195.50, ...}
             }
         """
+        if self._should_skip(underlying):
+            logger.debug(f"Skipping option chain snapshot for {underlying} (skip list)")
+            return []
+
         try:
             endpoint = f"/v3/snapshot/options/{underlying}"
             params = {
@@ -748,6 +824,10 @@ class DataFetcher:
             }
         """
         try:
+            if self._should_skip(underlying):
+                logger.debug(f"Skipping unusual flow detection for {underlying} (skip list)")
+                return []
+
             # Step 1: Get option chain snapshot for contract details
             current_snapshot = await self.get_option_chain_snapshot(underlying)
 
@@ -1025,6 +1105,10 @@ class DataFetcher:
     async def get_aggregates(self, symbol: str, timespan: str = 'minute', 
                            multiplier: int = 5, from_date: str = None, to_date: str = None) -> pd.DataFrame:
         """Get aggregate bars for analysis"""
+        if self._should_skip(symbol):
+            logger.debug(f"Skipping aggregates fetch for {symbol} (skip list)")
+            return pd.DataFrame()
+
         if not from_date:
             from_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         if not to_date:
