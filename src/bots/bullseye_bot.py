@@ -479,52 +479,43 @@ class BullseyeBot(BaseAutoBot):
         color = 0xFF6B35  # ORAKL Orange
 
         # ORAKL-style title and description
-        title = f"🎯 {signal['ticker']} {signal['type']} - Bullseye Detected"
+        title = f"🎯 {signal['ticker']} ${signal['strike']} {signal['type']} - Bullseye Signal"
 
         itm_pct = signal['itm_probability'] * 100
         flow_intensity = signal.get('flow_intensity', 'NORMAL')
 
-        # Create compelling description
-        flow_emoji = {
-            "AGGRESSIVE": "🔥",
-            "STRONG": "⚡",
-            "MODERATE": "📈",
-            "NORMAL": "✅"
-        }.get(flow_intensity, "✅")
-
         description = (
-            f"{flow_emoji} **{flow_intensity} FLOW** detected with "
-            f"**{signal['voi_ratio']:.1f}x** volume/OI ratio\n"
-            f"💰 **${signal['premium']:,.0f}** in premium | "
-            f"🎲 **{itm_pct:.1f}%** ITM probability"
+            f"**{flow_intensity} FLOW** • "
+            f"**{signal['voi_ratio']:.1f}x** Vol/OI • "
+            f"**${signal['premium']:,.0f}** Premium • "
+            f"**{itm_pct:.1f}%** ITM Probability"
         )
 
-        # ORAKL-style fields with more context
+        # ORAKL-style fields - clean and informative
         liquidity_quality = "Excellent" if signal['liquidity_score'] >= 0.8 else \
                            "Good" if signal['liquidity_score'] >= 0.6 else \
                            "Fair" if signal['liquidity_score'] >= 0.4 else "Moderate"
 
         sentiment = "BULLISH" if signal['type'] == "CALL" else "BEARISH"
-        momentum_str = f"{signal['momentum_strength']:.2f}"
 
         fields = [
-            # Contract details
-            {"name": "📋 Contract", "value": f"**${signal['strike']}** {signal['type']} • Exp: **{signal['expiration']}**", "inline": False},
+            # Contract
+            {"name": "Contract Details", "value": f"**${signal['strike']}** {signal['type']} expiring **{signal['expiration']}** ({signal['days_to_expiry']} days)", "inline": False},
 
             # Key metrics row
-            {"name": "💵 Premium", "value": f"${signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"${signal['premium']/1_000:.0f}K", "inline": True},
-            {"name": "📊 Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
-            {"name": "🎯 Open Interest", "value": f"{signal['open_interest']:,}", "inline": True},
+            {"name": "Premium", "value": f"${signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"${signal['premium']/1_000:.0f}K", "inline": True},
+            {"name": "Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
+            {"name": "Open Interest", "value": f"{signal['open_interest']:,}", "inline": True},
 
             # Analysis row
-            {"name": "🎲 ITM Probability", "value": f"**{itm_pct:.1f}%**", "inline": True},
-            {"name": "📈 Momentum", "value": f"**{momentum_str}** {sentiment}", "inline": True},
-            {"name": "💧 Liquidity", "value": liquidity_quality, "inline": True},
+            {"name": "ITM Probability", "value": f"**{itm_pct:.1f}%**", "inline": True},
+            {"name": "Momentum", "value": f"**{signal['momentum_strength']:.2f}** {sentiment}", "inline": True},
+            {"name": "Liquidity", "value": liquidity_quality, "inline": True},
 
-            # Trade info
-            {"name": "⏰ Days to Expiry", "value": f"**{signal['days_to_expiry']}** days", "inline": True},
-            {"name": "📏 Expected Move (5d)", "value": f"${signal['expected_move_5d']:.2f}", "inline": True},
-            {"name": "🔥 Flow Intensity", "value": f"**{flow_intensity}**", "inline": True}
+            # Additional info
+            {"name": "Expected Move (5d)", "value": f"${signal['expected_move_5d']:.2f}", "inline": True},
+            {"name": "Flow Intensity", "value": f"**{flow_intensity}**", "inline": True},
+            {"name": "Bullseye Score", "value": f"**{signal['bullseye_score']}/100**", "inline": True}
         ]
 
         # Create embed with ORAKL branding
@@ -533,7 +524,7 @@ class BullseyeBot(BaseAutoBot):
             description=description,
             color=color,
             fields=fields,
-            footer=f"ORAKL Bullseye • Score: {signal['bullseye_score']}/100"
+            footer="ORAKL Bullseye Bot • AI-Powered Swing Trade Analysis"
         )
 
         await self.post_to_discord(embed)
