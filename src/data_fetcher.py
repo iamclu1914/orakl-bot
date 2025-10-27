@@ -766,18 +766,53 @@ class DataFetcher:
             for contract in current_snapshot:
                 try:
                     # Extract contract data with validation
-                    ticker = contract.get('ticker', '')
+                    details = contract.get('details', {}) or {}
+                    ticker = contract.get('ticker') or details.get('ticker', '')
                     if not ticker:
                         continue
 
-                    # Get contract details for pricing
-                    day_data = contract.get('day', {})
-                    last_price = day_data.get('close', 0)
+                    day_data = contract.get('day', {}) or {}
                     current_day_volume = day_data.get('volume', 0)
 
-                    # Skip if no price data
-                    if last_price == 0:
+                    if current_day_volume > 0:
+                        contracts_with_trades += 1
+
+                    # Derive last traded price with sensible fallbacks
+                    last_price = day_data.get('close')
+                    if not last_price or last_price <= 0:
+                        last_trade = contract.get('last_trade') or {}
+                        last_quote = contract.get('last_quote') or {}
+                        quote_last = last_quote.get('last')
+
+                        price_candidates = [
+                            last_trade.get('price'),
+                            last_trade.get('p'),
+                        ]
+
+                        if isinstance(quote_last, dict):
+                            price_candidates.extend([
+                                quote_last.get('price'),
+                                quote_last.get('p'),
+                            ])
+
+                        price_candidates.extend([
+                            last_quote.get('midpoint'),
+                            last_quote.get('bid'),
+                            last_quote.get('ask'),
+                            day_data.get('open'),
+                            day_data.get('high'),
+                            day_data.get('low'),
+                        ])
+
+                        for candidate in price_candidates:
+                            if candidate and candidate > 0:
+                                last_price = candidate
+                                break
+
+                    # Skip if no usable price data
+                    if not last_price or last_price <= 0:
                         continue
+                    last_price = DataValidator.validate_price(last_price, 'price')
 
                     # Step 4: Calculate volume delta by comparing with cached volume
                     cached_volume = cached_volumes.get(ticker, 0)
@@ -786,9 +821,6 @@ class DataFetcher:
                     # If first scan or negative delta (market reset), use current volume
                     if volume_delta <= 0:
                         volume_delta = min(current_day_volume, 100)  # Cap initial scan to avoid false positives
-                    
-                    if current_day_volume > 0:
-                        contracts_with_trades += 1
 
                     # Filter: Must have significant volume
                     if volume_delta < min_volume_delta:
@@ -798,6 +830,7 @@ class DataFetcher:
 
                     # Calculate flow intensity based on volume/OI ratio and premium
                     flow_intensity = "NORMAL"
+                    vol_oi_ratio = 0.0
                     
                     # Get open interest for ratio calculation
                     open_interest = contract.get('open_interest', 0)
@@ -821,7 +854,6 @@ class DataFetcher:
                     contracts_with_premium += 1
 
                     # Get contract details
-                    details = contract.get('details', {})
                     strike = details.get('strike_price', 0)
                     expiration = details.get('expiration_date', '')
                     contract_type = details.get('contract_type', '')
@@ -858,7 +890,7 @@ class DataFetcher:
                         'total_volume': current_day_volume,
                         'open_interest': open_interest,
                         'vol_oi_ratio': vol_oi_ratio,
-                        'last_price': DataValidator.validate_price(last_price, 'price'),
+                        'last_price': last_price,
                         'premium': premium,
                         'implied_volatility': implied_vol,
                         'delta': delta_greek,
@@ -882,7 +914,8 @@ class DataFetcher:
             # Step 6: Update volume cache with current volumes
             new_volumes = {}
             for contract in current_snapshot:
-                ticker = contract.get('ticker', '')
+                details = contract.get('details', {}) or {}
+                ticker = contract.get('ticker') or details.get('ticker', '')
                 day_data = contract.get('day', {})
                 volume = day_data.get('volume', 0)
                 if ticker and volume > 0:
