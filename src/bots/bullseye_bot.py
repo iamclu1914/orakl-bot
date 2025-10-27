@@ -475,11 +475,11 @@ class BullseyeBot(BaseAutoBot):
             return None
 
     async def _post_signal(self, signal: Dict):
-        """Post the new Bullseye swing trade signal with Phase 1 enhancements"""
+        """Post Bullseye swing trade signal matching reference format"""
         color = 0x007bff  # Professional Blue
 
-        title = f"🎯 Bullseye Swing Idea: {signal['ticker']} {signal['type']}"
-        description = f"**Bullseye Score: {signal['bullseye_score']}/100**"
+        title = "∞ Bullseye Trade Idea"
+        description = "Expected to pan out within 1-2 days."
 
         # Enhanced thesis with ITM probability and flow intensity
         itm_pct = signal['itm_probability'] * 100
@@ -487,38 +487,29 @@ class BullseyeBot(BaseAutoBot):
                            "Good" if signal['liquidity_score'] >= 0.6 else \
                            "Fair" if signal['liquidity_score'] >= 0.4 else "Moderate"
 
-        flow_intensity = signal.get('flow_intensity', 'NORMAL')
-        flow_descriptor = {
-            "AGGRESSIVE": "aggressive flow",
-            "STRONG": "strong flow",
-            "MODERATE": "moderate flow",
-            "NORMAL": "steady accumulation"
-        }.get(flow_intensity, "activity")
-
-        thesis = (
-            f"Detected **${signal['premium']:,.0f}** in premium with **{flow_descriptor}** "
-            f"(**{signal['voi_ratio']:.1f}x** open interest). "
-            f"Black-Scholes model indicates **{itm_pct:.1f}% probability of finishing ITM**. "
-            f"Combined with **{signal['momentum_strength']:.2f} {('bullish' if signal['type'] == 'CALL' else 'bearish')} momentum** "
-            f"and **{liquidity_quality.lower()} liquidity**, this suggests a high-conviction swing opportunity."
-        )
-
-        # Build fields
+        # Build fields in exact order from reference
         fields = [
-            {"name": "Contract", "value": f"${signal['strike']} {signal['type']} expiring {signal['expiration']}", "inline": False},
-            {"name": "Thesis", "value": thesis, "inline": False},
-            {"name": "Current Stock Price", "value": f"${signal['current_price']:.2f}", "inline": True},
-            {"name": "Days to Expiration", "value": f"{signal['days_to_expiry']} days", "inline": True},
-            {"name": "ITM Probability", "value": f"{itm_pct:.1f}%", "inline": True},
-            {"name": "5-Day Expected Move", "value": f"${signal['expected_move_5d']:.2f}", "inline": True},
-            {"name": "Open Interest", "value": f"{signal['open_interest']:,}", "inline": True},
-            {"name": "Liquidity Quality", "value": liquidity_quality, "inline": True},
-            {"name": "Management", "value": "This is a swing trade idea. Consider a timeframe of several days to weeks. Always use your own risk management.", "inline": False}
-        ]
+            # Row 1: Symbol, Strike, Expiration
+            {"name": "Symbol", "value": signal['ticker'], "inline": True},
+            {"name": "Strike", "value": f"{signal['strike']}", "inline": True},
+            {"name": "Expiration", "value": signal['expiration'], "inline": True},
 
-        # Add spread info if available
-        if signal.get('bid_ask_spread_pct') is not None:
-            fields.insert(-1, {"name": "Bid-Ask Spread", "value": f"{signal['bid_ask_spread_pct']:.2f}%", "inline": True})
+            # Row 2: Call/Put, Buy/Sell, AI Confidence
+            {"name": "Call/Put", "value": signal['type'], "inline": True},
+            {"name": "Buy/Sell", "value": "Buy", "inline": True},
+            {"name": "AI Confidence", "value": f"{itm_pct:.2f}%", "inline": True},
+
+            # Row 3: Prems Spent, Volume, OI
+            {"name": "Prems Spent", "value": f"{signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"{signal['premium']/1_000:.0f}K", "inline": True},
+            {"name": "Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
+            {"name": "OI", "value": f"{signal['open_interest']:,}", "inline": True},
+
+            # Tracking Link (empty for now)
+            {"name": "Tracking Link", "value": "N/A", "inline": False},
+
+            # Disclaimer
+            {"name": "\u200b", "value": "∞ Please always do your own due diligence on top of these trade ideas. For shorter term expirations, it is better to add some extra time.", "inline": False}
+        ]
 
         # Create embed with auto-disclaimer
         embed = self.create_signal_embed_with_disclaimer(
@@ -526,9 +517,9 @@ class BullseyeBot(BaseAutoBot):
             description=description,
             color=color,
             fields=fields,
-            footer="Bullseye Bot v2 - High-Conviction Swing Trades with ITM Probability"
+            footer="Bullseye Bot - Swing Trade Ideas"
         )
 
         await self.post_to_discord(embed)
-        logger.info(f"Posted Bullseye v2 signal: {signal['ticker']} {signal['type']} ${signal['strike']} "
-                   f"Score:{signal['bullseye_score']} ITM:{itm_pct:.1f}%")
+        logger.info(f"Posted Bullseye signal: {signal['ticker']} {signal['type']} ${signal['strike']} "
+                   f"Premium:{signal['premium']:,.0f} ITM:{itm_pct:.1f}%")
