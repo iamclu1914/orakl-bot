@@ -34,7 +34,6 @@ class Config:
     GOLDEN_SWEEPS_WEBHOOK = os.getenv('GOLDEN_SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     SCALPS_WEBHOOK = os.getenv('SCALPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
-    BREAKOUTS_WEBHOOK = os.getenv('BREAKOUTS_WEBHOOK', DISCORD_WEBHOOK_URL)
     DARKPOOL_WEBHOOK = os.getenv('DARKPOOL_WEBHOOK', DISCORD_WEBHOOK_URL)
     ORAKL_FLOW_WEBHOOK = os.getenv('ORAKL_FLOW_WEBHOOK', DISCORD_WEBHOOK_URL)
     STRAT_WEBHOOK = os.getenv('STRAT_WEBHOOK', DISCORD_WEBHOOK_URL)
@@ -51,7 +50,6 @@ class Config:
     SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '120'))  # 2 minutes
     DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '240'))  # 4 minutes
-    BREAKOUTS_INTERVAL = int(os.getenv('BREAKOUTS_INTERVAL', '300'))  # 5 minutes
     STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '300'))  # 5 minutes
     
     # ORAKL Flow Settings
@@ -68,17 +66,15 @@ class Config:
     SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '50000'))  # $50k
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '5000'))  # $5k for intraday
     SCALPS_MIN_PREMIUM = float(os.getenv('SCALPS_MIN_PREMIUM', '2000'))  # $2k for scalps
-    BREAKOUT_MIN_VOLUME_SURGE = float(os.getenv('BREAKOUT_MIN_VOLUME_SURGE', '1.5'))  # 1.5x average
     MIN_VOLUME_RATIO = float(os.getenv('MIN_VOLUME_RATIO', '3.0'))  # 3x volume for unusual
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
-    
+
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '65'))
     MIN_SWEEP_SCORE = int(os.getenv('MIN_SWEEP_SCORE', '60'))
     MIN_DARKPOOL_SCORE = int(os.getenv('MIN_DARKPOOL_SCORE', '60'))
     MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '70'))
     MIN_SCALP_SCORE = int(os.getenv('MIN_SCALP_SCORE', '65'))
-    MIN_BREAKOUT_SCORE = int(os.getenv('MIN_BREAKOUT_SCORE', '65'))
     
     # Watchlist Mode - Dynamic or Static
     WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC
@@ -262,7 +258,6 @@ class Config:
         logger.info(f"  Sweeps: ${cls.SWEEPS_MIN_PREMIUM:,.0f} (Score: {cls.MIN_SWEEP_SCORE})")
         logger.info(f"  Bullseye: ${cls.BULLSEYE_MIN_PREMIUM:,.0f} (Score: {cls.MIN_BULLSEYE_SCORE})")
         logger.info(f"  Scalps: ${cls.SCALPS_MIN_PREMIUM:,.0f} (Score: {cls.MIN_SCALP_SCORE})")
-        logger.info(f"  Breakouts: {cls.BREAKOUT_MIN_VOLUME_SURGE:.1f}x volume (Score: {cls.MIN_BREAKOUT_SCORE})")
         logger.info("=" * 60)
         
         return True

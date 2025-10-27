@@ -12,8 +12,7 @@ from src.bots import (
     ScalpsBot,
     SweepsBot,
     GoldenSweepsBot,
-    DarkpoolBot,
-    BreakoutsBot
+    DarkpoolBot
 )
 from src.bots.strat_bot import STRATPatternBot
 from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST
@@ -108,16 +107,6 @@ class BotManager:
         )
         self.bots.append(self.darkpool_bot)
         logger.info(f"  ✓ Darkpool Bot → Channel ID: {Config.DARKPOOL_WEBHOOK.split('/')[-2]}")
-
-        # Breakouts Bot (Stock Breakouts)
-        self.breakouts_bot = BreakoutsBot(
-            Config.BREAKOUTS_WEBHOOK,
-            self.watchlist,
-            self.fetcher,
-            self.analyzer
-        )
-        self.bots.append(self.breakouts_bot)
-        logger.info(f"  ✓ Breakouts Bot → Channel ID: {Config.BREAKOUTS_WEBHOOK.split('/')[-2]}")
 
         # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
         self.strat_bot = STRATPatternBot(self.fetcher)
