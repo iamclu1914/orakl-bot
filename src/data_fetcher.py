@@ -187,27 +187,41 @@ class DataFetcher:
                 
     @cached(cache_name='market', ttl_seconds=30)
     async def get_stock_price(self, symbol: str) -> Optional[float]:
-        """Get current stock price with caching"""
+        """Get current stock price with caching (uses snapshot for real-time during market hours)"""
         # Translate ticker if needed (e.g., BLOCK -> SQ)
         symbol = translate_ticker(symbol)
-        
+
         try:
-            # Check cache first
+            # Check cache first (short TTL for real-time pricing)
             cached_price = await self.market_cache.get_stock_price(symbol)
             if cached_price is not None:
                 return cached_price
-            
-            endpoint = f"/v2/aggs/ticker/{symbol}/prev"
+
+            # Use snapshot endpoint for real-time price during market hours
+            endpoint = f"/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
             data = await self._make_request(endpoint)
-            
-            if data and 'results' in data and len(data['results']) > 0:
-                price = DataValidator.validate_price(data['results'][0]['c'])
-                
-                # Cache the price
-                await self.market_cache.set_stock_price(symbol, price)
-                
-                return price
-            
+
+            # Try to get current price from snapshot
+            if data and 'ticker' in data:
+                ticker_data = data['ticker']
+
+                # Priority 1: Current day's latest price (most recent trade)
+                if 'day' in ticker_data and ticker_data['day']:
+                    day_data = ticker_data['day']
+                    # Use last trade price if available (most current)
+                    if 'c' in day_data and day_data['c'] is not None:
+                        price = DataValidator.validate_price(day_data['c'])
+                        await self.market_cache.set_stock_price(symbol, price)
+                        return price
+
+                # Priority 2: Previous day close as fallback
+                if 'prevDay' in ticker_data and ticker_data['prevDay']:
+                    prev_day = ticker_data['prevDay']
+                    if 'c' in prev_day and prev_day['c'] is not None:
+                        price = DataValidator.validate_price(prev_day['c'])
+                        await self.market_cache.set_stock_price(symbol, price)
+                        return price
+
             logger.warning(f"No price data available for {symbol}")
             return None
             
