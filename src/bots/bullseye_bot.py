@@ -484,12 +484,8 @@ class BullseyeBot(BaseAutoBot):
         itm_pct = signal['itm_probability'] * 100
         flow_intensity = signal.get('flow_intensity', 'NORMAL')
 
-        description = (
-            f"**{flow_intensity} FLOW** • "
-            f"**{signal['voi_ratio']:.1f}x** Vol/OI • "
-            f"**${signal['premium']:,.0f}** Premium • "
-            f"**{itm_pct:.1f}%** ITM Probability"
-        )
+        # Simple description with current stock price
+        description = f"Current Price: **${signal['current_price']:.2f}**"
 
         # ORAKL-style fields - clean and informative
         liquidity_quality = "Excellent" if signal['liquidity_score'] >= 0.8 else \
