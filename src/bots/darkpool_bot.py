@@ -24,7 +24,7 @@ class DarkpoolBot(BaseAutoBot):
     MIN_DOLLAR_VALUE = 50000  # Minimum $50k trade value (lowered for better detection)
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
-        super().__init__(webhook_url, "Darkpool Bot", scan_interval=240)  # 4 minutes
+        super().__init__(webhook_url, "Darkpool Bot", scan_interval=Config.DARKPOOL_INTERVAL)
         self.watchlist = watchlist
         self.fetcher = fetcher
         self.analyzer = analyzer

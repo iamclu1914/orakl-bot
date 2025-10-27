@@ -48,8 +48,8 @@ class Config:
     BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '180'))  # 3 minutes
     SCALPS_INTERVAL = int(os.getenv('SCALPS_INTERVAL', '120'))  # 2 minutes
     SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
-    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '120'))  # 2 minutes
-    DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '240'))  # 4 minutes
+    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '900'))  # 15 minutes
+    DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '900'))  # 15 minutes
     STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '300'))  # 5 minutes
     
     # ORAKL Flow Settings
