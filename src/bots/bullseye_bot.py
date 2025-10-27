@@ -475,45 +475,67 @@ class BullseyeBot(BaseAutoBot):
             return None
 
     async def _post_signal(self, signal: Dict):
-        """Post Bullseye swing trade signal matching reference format"""
-        color = 0x007bff  # Professional Blue
+        """Post Bullseye swing trade signal with unique ORAKL branding"""
+        color = 0xFF6B35  # ORAKL Orange
 
-        title = "🎯 Bullseye Trade Idea"
-        description = "Expected to pan out within 1-2 days."
+        # ORAKL-style title and description
+        title = f"🎯 {signal['ticker']} {signal['type']} - Bullseye Detected"
 
-        # Enhanced thesis with ITM probability and flow intensity
         itm_pct = signal['itm_probability'] * 100
+        flow_intensity = signal.get('flow_intensity', 'NORMAL')
+
+        # Create compelling description
+        flow_emoji = {
+            "AGGRESSIVE": "🔥",
+            "STRONG": "⚡",
+            "MODERATE": "📈",
+            "NORMAL": "✅"
+        }.get(flow_intensity, "✅")
+
+        description = (
+            f"{flow_emoji} **{flow_intensity} FLOW** detected with "
+            f"**{signal['voi_ratio']:.1f}x** volume/OI ratio\n"
+            f"💰 **${signal['premium']:,.0f}** in premium | "
+            f"🎲 **{itm_pct:.1f}%** ITM probability"
+        )
+
+        # ORAKL-style fields with more context
         liquidity_quality = "Excellent" if signal['liquidity_score'] >= 0.8 else \
                            "Good" if signal['liquidity_score'] >= 0.6 else \
                            "Fair" if signal['liquidity_score'] >= 0.4 else "Moderate"
 
-        # Build fields in exact order from reference
+        sentiment = "BULLISH" if signal['type'] == "CALL" else "BEARISH"
+        momentum_str = f"{signal['momentum_strength']:.2f}"
+
         fields = [
-            # Row 1: Symbol, Strike, Expiration
-            {"name": "Symbol", "value": signal['ticker'], "inline": True},
-            {"name": "Strike", "value": f"{signal['strike']}", "inline": True},
-            {"name": "Expiration", "value": signal['expiration'], "inline": True},
+            # Contract details
+            {"name": "📋 Contract", "value": f"**${signal['strike']}** {signal['type']} • Exp: **{signal['expiration']}**", "inline": False},
 
-            # Row 2: Call/Put, Buy/Sell, AI Confidence
-            {"name": "Call/Put", "value": signal['type'], "inline": True},
-            {"name": "Buy/Sell", "value": "Buy", "inline": True},
-            {"name": "AI Confidence", "value": f"{itm_pct:.2f}%", "inline": True},
+            # Key metrics row
+            {"name": "💵 Premium", "value": f"${signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"${signal['premium']/1_000:.0f}K", "inline": True},
+            {"name": "📊 Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
+            {"name": "🎯 Open Interest", "value": f"{signal['open_interest']:,}", "inline": True},
 
-            # Row 3: Prems Spent, Volume, OI
-            {"name": "Prems Spent", "value": f"{signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"{signal['premium']/1_000:.0f}K", "inline": True},
-            {"name": "Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
-            {"name": "OI", "value": f"{signal['open_interest']:,}", "inline": True}
+            # Analysis row
+            {"name": "🎲 ITM Probability", "value": f"**{itm_pct:.1f}%**", "inline": True},
+            {"name": "📈 Momentum", "value": f"**{momentum_str}** {sentiment}", "inline": True},
+            {"name": "💧 Liquidity", "value": liquidity_quality, "inline": True},
+
+            # Trade info
+            {"name": "⏰ Days to Expiry", "value": f"**{signal['days_to_expiry']}** days", "inline": True},
+            {"name": "📏 Expected Move (5d)", "value": f"${signal['expected_move_5d']:.2f}", "inline": True},
+            {"name": "🔥 Flow Intensity", "value": f"**{flow_intensity}**", "inline": True}
         ]
 
-        # Create embed with auto-disclaimer
+        # Create embed with ORAKL branding
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
             description=description,
             color=color,
             fields=fields,
-            footer="Bullseye Bot - Swing Trade Ideas"
+            footer=f"ORAKL Bullseye • Score: {signal['bullseye_score']}/100"
         )
 
         await self.post_to_discord(embed)
         logger.info(f"Posted Bullseye signal: {signal['ticker']} {signal['type']} ${signal['strike']} "
-                   f"Premium:{signal['premium']:,.0f} ITM:{itm_pct:.1f}%")
+                   f"Score:{signal['bullseye_score']} Premium:{signal['premium']:,.0f} ITM:{itm_pct:.1f}%")
