@@ -164,6 +164,7 @@ class GoldenSweepsBot(BaseAutoBot):
                 sweep = {
                     'ticker': symbol,
                     'symbol': symbol,
+                    'contract': flow.get('ticker'),
                     'type': opt_type,
                     'strike': strike,
                     'expiration': expiration,
@@ -292,30 +293,41 @@ class GoldenSweepsBot(BaseAutoBot):
         # Get enhanced score
         final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep['golden_score']))
 
-        # Get sector (placeholder - would need to be added to sweep data)
-        sector = sweep.get('sector', 'N/A')
+        # Determine contract symbol and sector (if provided)
+        contract_symbol = (
+            sweep.get('contract')
+            or sweep.get('option_symbol')
+            or sweep.get('contract_symbol')
+            or "N/A"
+        )
+        sector = sweep.get('sector')
 
         # Format details string (contracts @ avg_price)
         details = f"{sweep['volume']:,} @ {sweep['avg_price']:.2f}"
+
+        fields = [
+            {"name": "Date", "value": date_str, "inline": True},
+            {"name": "Time", "value": time_str, "inline": True},
+            {"name": "Ticker", "value": sweep['symbol'], "inline": True},
+            {"name": "Contract", "value": contract_symbol, "inline": False},
+            {"name": "Exp", "value": exp_str, "inline": True},
+            {"name": "Strike", "value": f"{sweep['strike']:.0f}", "inline": True},
+            {"name": "C/P", "value": sweep['type'] + "S", "inline": True},
+            {"name": "Spot", "value": f"{sweep['current_price']:.2f}", "inline": True},
+            {"name": "Details", "value": details, "inline": True},
+            {"name": "Type", "value": "SWEEP", "inline": True},
+            {"name": "Prem", "value": f"${premium_millions:.1f}M", "inline": True},
+            {"name": "Algo Score", "value": str(int(final_score)), "inline": True}
+        ]
+
+        if sector:
+            fields.append({"name": "Sector", "value": sector, "inline": True})
 
         embed = self.create_signal_embed_with_disclaimer(
             title=f"🏆 {sweep['ticker']} - Golden Sweep Detected",
             description="",
             color=color,
-            fields=[
-                {"name": "Date", "value": date_str, "inline": True},
-                {"name": "Time", "value": time_str, "inline": True},
-                {"name": "Ticker", "value": sweep['ticker'], "inline": True},
-                {"name": "Exp", "value": exp_str, "inline": True},
-                {"name": "Strike", "value": f"{sweep['strike']:.0f}", "inline": True},
-                {"name": "C/P", "value": sweep['type'] + "S", "inline": True},
-                {"name": "Spot", "value": f"{sweep['current_price']:.2f}", "inline": True},
-                {"name": "Details", "value": details, "inline": True},
-                {"name": "Type", "value": "SWEEP", "inline": True},
-                {"name": "Prem", "value": f"${premium_millions:.1f}M", "inline": True},
-                {"name": "Algo Score", "value": str(int(final_score)), "inline": True},
-                {"name": "Sect", "value": sector, "inline": True}
-            ],
+            fields=fields,
             footer="ORAKL Bot - Golden Sweeps"
         )
 
