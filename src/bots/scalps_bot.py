@@ -611,14 +611,11 @@ class ScalpsBot(BaseAutoBot):
             {"name": "Stop Loss", "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})", "inline": True},
             {"name": "Target 1", "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})", "inline": True},
             {"name": "Target 2", "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})", "inline": True},
-            {"name": "R:R Ratios", "value": f"T1: {signal['risk_reward_1']:.1f}:1\nT2: {signal['risk_reward_2']:.1f}:1", "inline": True},
             {"name": "Pattern", "value": f"{signal['pattern']} ({signal['pattern_strength']})", "inline": True},
             {"name": "Volume/Premium", "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}", "inline": True},
             {"name": "Distance", "value": f"{signal['strike_distance']:.1f}%", "inline": True},
             {"name": "Flow Intensity", "value": flow_display, "inline": True},
-            {"name": "Market", "value": market_status, "inline": True},
-            {"name": "Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False},
-            {"name": "Management", "value": signal['exit_strategy']['management'], "inline": False}
+            {"name": "Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False}
         ]
 
         # Create embed with auto-disclaimer
