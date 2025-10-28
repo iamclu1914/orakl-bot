@@ -9,9 +9,11 @@ import time
 from dataclasses import dataclass, field
 from collections import deque
 
+from src.config import Config
 from src.utils.exceptions import BotException, BotNotRunningException, WebhookException
 from src.utils.resilience import exponential_backoff_retry, BoundedDeque
 from src.utils.validation import DataValidator
+from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,9 @@ class BaseAutoBot(ABC):
         self._error_history = BoundedDeque(maxlen=100, ttl_seconds=3600)
         self._consecutive_errors = 0
         self._max_consecutive_errors = 25  # Increased from 10
+        self._cooldowns: Dict[str, datetime] = {}
+        self._skip_records: deque = deque(maxlen=200)
+        self.concurrency_limit = getattr(Config, 'MAX_CONCURRENT_REQUESTS', 10)
 
     async def start(self):
         """Start the bot with enhanced error handling and monitoring"""
@@ -101,6 +106,21 @@ class BaseAutoBot(ABC):
         await self._cleanup()
         logger.info(f"{self.name} stopped")
 
+    def should_run_now(self) -> bool:
+        """
+        Determine if the bot should execute a scan right now.
+        Default implementation limits scanning to regular US market hours.
+        Override in subclasses for custom trading windows.
+        """
+        return MarketHours.is_market_open(include_extended=False)
+
+    def _inactive_sleep_duration(self) -> int:
+        """
+        Determine how long to sleep between checks when the bot is outside its active window.
+        Uses a minimum of 60 seconds so we are responsive at the open without spamming logs overnight.
+        """
+        return max(min(self.scan_interval, 300), 60)
+
     async def _scan_loop(self):
         """Main scanning loop with error recovery"""
         recovery_attempts = 0
@@ -119,6 +139,12 @@ class BaseAutoBot(ABC):
                     logger.error(f"{self.name} failed to recover after 3 attempts, stopping permanently")
                     break
                     
+                if not self.should_run_now():
+                    sleep_time = self._inactive_sleep_duration()
+                    logger.debug(f"{self.name} outside active trading window, sleeping {sleep_time}s")
+                    await asyncio.sleep(sleep_time)
+                    continue
+
                 scan_start = time.time()
                 
                 # Perform scan
@@ -211,42 +237,34 @@ class BaseAutoBot(ABC):
                 self.session = None
     
     async def scan_and_post(self):
-        """Default concurrent scanning implementation - can be overridden by subclasses"""
-        logger.info(f"{self.name} starting concurrent scan of {len(self.watchlist)} symbols")
-        
+        """Default concurrent scanning implementation with bounded concurrency"""
         if not hasattr(self, '_scan_symbol'):
-            # Fallback to abstract method if not using new pattern
             raise NotImplementedError("Either implement scan_and_post or _scan_symbol")
-        
-        # Process in chunks to avoid overwhelming the API
-        chunk_size = 10  # Reduced from 20 to avoid memory issues on Render Starter plan
-        all_signals = []
-        
-        for i in range(0, len(self.watchlist), chunk_size):
-            chunk = self.watchlist[i:i + chunk_size]
-            logger.debug(f"{self.name} processing chunk {i//chunk_size + 1}/{(len(self.watchlist) + chunk_size - 1)//chunk_size}")
-            
-            # Create tasks for this chunk
-            tasks = []
-            for symbol in chunk:
-                task = self._scan_symbol_safe(symbol)
-                tasks.append(task)
-            
-            # Process chunk concurrently
-            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Collect valid signals
-            for result in chunk_results:
-                if isinstance(result, list):
-                    all_signals.extend(result)
-                elif isinstance(result, Exception):
-                    logger.error(f"{self.name} scan error: {result}")
-            
-            # Small delay between chunks to avoid rate limits
-            if i + chunk_size < len(self.watchlist):
-                await asyncio.sleep(0.5)
-        
-        # Post signals
+
+        watchlist = getattr(self, 'watchlist', [])
+        total_symbols = len(watchlist)
+        logger.info(f"{self.name} starting concurrent scan of {total_symbols} symbols (max {self.concurrency_limit} concurrent)")
+
+        if total_symbols == 0:
+            logger.debug(f"{self.name} watchlist empty, skipping scan")
+            return
+
+        semaphore = asyncio.Semaphore(max(1, self.concurrency_limit))
+        all_signals: List[Dict] = []
+
+        async def run_symbol(symbol: str):
+            async with semaphore:
+                return await self._scan_symbol_safe(symbol)
+
+        tasks = [run_symbol(symbol) for symbol in watchlist]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, list):
+                all_signals.extend(result)
+            elif isinstance(result, Exception):
+                logger.error(f"{self.name} scan error: {result}")
+
         logger.info(f"{self.name} found {len(all_signals)} signals")
         for signal in all_signals:
             try:
@@ -417,6 +435,28 @@ class BaseAutoBot(ABC):
             embed["author"] = author
 
         return embed
+    
+    def _cooldown_active(self, key: str, cooldown_seconds: int = 900) -> bool:
+        """Check whether a signal is within cooldown window"""
+        now = datetime.now()
+        last_seen = self._cooldowns.get(key)
+        if last_seen and (now - last_seen).total_seconds() < cooldown_seconds:
+            return True
+        return False
+
+    def _mark_cooldown(self, key: str) -> None:
+        """Mark a signal as posted for cooldown tracking"""
+        self._cooldowns[key] = datetime.now()
+
+    def _log_skip(self, symbol: str, reason: str) -> None:
+        """Record skip reasons for quick diagnostics"""
+        entry = {
+            'time': datetime.now().isoformat(timespec='seconds'),
+            'symbol': symbol,
+            'reason': reason
+        }
+        self._skip_records.append(entry)
+        logger.debug(f"{self.name} skip {symbol}: {reason}")
     
     async def get_health(self) -> Dict[str, Any]:
         """

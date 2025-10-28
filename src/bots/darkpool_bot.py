@@ -18,10 +18,11 @@ class DarkpoolBot(BaseAutoBot):
     """
 
     # Configuration constants
-    MIN_BLOCK_SIZE = 5000  # Minimum 5k shares for block trade detection (lowered for better detection)
+    MIN_BLOCK_SIZE = 5000  # Minimum 5k shares for block trade detection
     KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
     DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.001  # 0.1% threshold for aggressive buying/selling
-    MIN_DOLLAR_VALUE = 50000  # Minimum $50k trade value (lowered for better detection)
+    MIN_DOLLAR_VALUE = 5000000  # Minimum $5M trade value
+    MIN_BLOCK_COUNT = 3
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=Config.DARKPOOL_INTERVAL)
@@ -29,6 +30,10 @@ class DarkpoolBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
+
+    def should_run_now(self) -> bool:
+        """Override to include pre-market and after-hours darkpool activity."""
+        return MarketHours.is_market_open(include_extended=True)
 
     async def scan_and_post(self):
         """Scan for large darkpool and block trades using concurrent processing"""
@@ -97,6 +102,11 @@ class DarkpoolBot(BaseAutoBot):
                 if not is_block:
                     continue
 
+                price_move_pct = abs(price - current_price) / current_price if current_price else 0
+                if price_move_pct < 0.005:
+                    self._log_skip(symbol, f'darkpool price move {price_move_pct*100:.2f}% < 0.50%')
+                    continue
+
                 # --- ENHANCEMENT 2: Key level and directional bias analysis ---
                 key_level_info = self._check_key_levels(price, week_52_high, week_52_low)
                 directional_bias = self._infer_directional_bias(price, current_price)
@@ -144,6 +154,11 @@ class DarkpoolBot(BaseAutoBot):
         
         if trades_analyzed > 0:
             logger.debug(f"{symbol}: Analyzed {trades_analyzed} trades, skipped {trades_too_old} old trades, found {len(blocks)} blocks")
+
+        if len(blocks) < self.MIN_BLOCK_COUNT:
+            if blocks:
+                self._log_skip(symbol, f'darkpool only {len(blocks)} qualifying blocks (< {self.MIN_BLOCK_COUNT})')
+            return []
 
         return blocks
 

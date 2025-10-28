@@ -29,14 +29,26 @@ class ScalpsBot(BaseAutoBot):
         self.analyzer = analyzer
         self.signal_history = {}
         self.candle_history = {}
+        self.MIN_PREMIUM = 75000
+        self.MIN_VOLUME = 150
+        self.MIN_VOLUME_DELTA = 75
+        self.MAX_SPREAD = 0.15
+        self.active_windows = [(570, 630), (900, 960)]  # 9:30-10:30 and 15:00-16:00 ET
+
+    def should_run_now(self) -> bool:
+        """Only run during regular hours and within high-probability scalping windows."""
+        if not MarketHours.is_market_open(include_extended=False):
+            return False
+        minute_of_day = MarketHours.minutes_since_midnight()
+        return any(start <= minute_of_day < end for start, end in self.active_windows)
 
     async def scan_and_post(self):
         """Enhanced scan with market context and concurrent processing"""
         logger.info(f"{self.name} scanning for quick scalp setups")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
-        if not MarketHours.is_market_open():
-            logger.debug(f"{self.name} - Market closed, skipping scan")
+        if not self.should_run_now():
+            logger.debug(f"{self.name} - Inactive trading window, skipping scan")
             return
         
         # Get market context
@@ -96,6 +108,10 @@ class ScalpsBot(BaseAutoBot):
         - Pattern and momentum confirmation
         """
         signals = []
+        minute_of_day = MarketHours.minutes_since_midnight()
+        if not any(start <= minute_of_day < end for start, end in self.active_windows):
+            self._log_skip(symbol, 'scalps outside active window')
+            return signals
 
         try:
             # Get current price
@@ -126,8 +142,8 @@ class ScalpsBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=500,  # $500 minimum for testing (was Config.SCALPS_MIN_PREMIUM $2K)
-                min_volume_delta=5  # At least 5 contracts of volume change (was 10)
+                min_premium=self.MIN_PREMIUM,
+                min_volume_delta=self.MIN_VOLUME_DELTA
             )
 
             # Process each flow signal
@@ -137,8 +153,23 @@ class ScalpsBot(BaseAutoBot):
                 strike = flow['strike']
                 expiration = flow['expiration']
                 premium = flow['premium']
-                total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
+                total_volume = flow['total_volume']
+
+                if premium < self.MIN_PREMIUM:
+                    self._log_skip(symbol, f"scalps premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
+                    continue
+
+                if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
+                    self._log_skip(symbol, f"scalps volume {total_volume}/{volume_delta} below thresholds")
+                    continue
+
+                bid = flow.get('bid', 0)
+                ask = flow.get('ask', 0)
+                if bid > 0 and ask > 0 and (ask - bid) > self.MAX_SPREAD:
+                    self._log_skip(symbol, f"scalps spread {(ask - bid):.2f} exceeds {self.MAX_SPREAD}")
+                    continue
+
                 volume_velocity = flow.get('volume_velocity', 0)
                 flow_intensity = flow.get('flow_intensity', 'NORMAL')
 
@@ -162,10 +193,7 @@ class ScalpsBot(BaseAutoBot):
                 # Filter 3: Strike proximity (within 3% for scalps)
                 strike_distance = abs(strike - current_price) / current_price * 100
                 if strike_distance > 3:
-                    continue
-
-                # Filter 4: Volume intensity check
-                if total_volume < 50:
+                    self._log_skip(symbol, f"scalps strike distance {strike_distance:.1f}% > 3%")
                     continue
 
                 # Calculate scalp score with flow intensity
@@ -217,9 +245,13 @@ class ScalpsBot(BaseAutoBot):
 
                     # Check if already posted
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
+                    if self._cooldown_active(signal_key):
+                        self._log_skip(symbol, f"scalps cooldown {signal_key}")
+                        continue
                     if signal_key not in self.signal_history:
                         signals.append(signal)
                         self.signal_history[signal_key] = datetime.now()
+                        self._mark_cooldown(signal_key)
 
         except Exception as e:
             logger.error(f"Error scanning Strat setup for {symbol}: {e}")

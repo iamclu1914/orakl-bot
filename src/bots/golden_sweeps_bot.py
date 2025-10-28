@@ -27,7 +27,10 @@ class GoldenSweepsBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_GOLDEN_PREMIUM = Config.GOLDEN_MIN_PREMIUM
+        self.MIN_GOLDEN_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
+        self.MIN_CONTRACT_VOLUME = 100
+        self.MIN_VOLUME_DELTA = 100
+        self.MAX_STRIKE_DISTANCE = 5  # percent
         self.MIN_SCORE = Config.MIN_GOLDEN_SCORE
 
         # Enhanced analysis tools
@@ -40,7 +43,7 @@ class GoldenSweepsBot(BaseAutoBot):
         logger.info(f"{self.name} scanning for million dollar sweeps")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
-        if not MarketHours.is_market_open():
+        if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
@@ -51,40 +54,45 @@ class GoldenSweepsBot(BaseAutoBot):
         """Scan a symbol for golden sweeps with enhancements"""
         try:
             sweeps = await self._scan_golden_sweeps(symbol)
-            
-            # Enhance signals with critical features
-            enhanced_sweeps = []
+
+            enhanced_sweeps: List[Dict] = []
             for sweep in sweeps:
                 try:
-                    # Volume Ratio Analysis
                     volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
                         symbol, sweep['volume']
                     )
                     sweep['volume_ratio'] = volume_ratio
-                    
-                    # Boost score for unusual volume
+
                     volume_boost = 0
                     if volume_ratio > 10:
                         volume_boost = 0.20
                     elif volume_ratio > 5:
                         volume_boost = 0.10
-                    
-                    # Apply volume boost to score
-                    sweep['golden_score'] = min(
-                        sweep.get('golden_score', 50) + (volume_boost * 100),
-                        100
-                    )
-                    
-                    if sweep['golden_score'] >= Config.MIN_GOLDEN_SCORE:
-                        enhanced_sweeps.append(sweep)
-                except Exception as e:
-                    logger.error(f"Error enhancing sweep: {e}")
-                    # Include unenhanced sweep if it meets threshold
-                    if sweep.get('golden_score', 0) >= Config.MIN_GOLDEN_SCORE:
-                        enhanced_sweeps.append(sweep)
-            
-            # Return top 3 signals per symbol
-            return sorted(enhanced_sweeps, key=lambda x: x['golden_score'], reverse=True)[:3]
+
+                    boosted_score = sweep.get('golden_score', 50) + int(volume_boost * 100)
+                    sweep['golden_score'] = min(boosted_score, 100)
+                except Exception as enhancement_error:
+                    logger.debug(f"Golden sweep enhancement error for {symbol}: {enhancement_error}")
+
+                signal_key = f"{symbol}_{sweep.get('type')}_{sweep.get('strike')}_{sweep.get('expiration')}"
+                dedup_result = self.deduplicator.should_alert(signal_key, sweep.get('premium', 0))
+
+                if not dedup_result.get('should_alert', True):
+                    self._log_skip(symbol, dedup_result.get('reason', 'golden sweep deduplicated'))
+                    continue
+
+                if self._cooldown_active(signal_key):
+                    self._log_skip(symbol, f'golden sweep cooldown {signal_key}')
+                    continue
+
+                sweep['alert_type'] = dedup_result.get('type', 'NEW')
+                sweep['alert_reason'] = dedup_result.get('reason', '')
+                self._mark_cooldown(signal_key)
+
+                if sweep.get('golden_score', 0) >= self.MIN_SCORE:
+                    enhanced_sweeps.append(sweep)
+
+            return sorted(enhanced_sweeps, key=lambda x: x.get('golden_score', 0), reverse=True)[:3]
         except Exception as e:
             logger.error(f"Error scanning {symbol}: {e}")
             return []
@@ -123,6 +131,10 @@ class GoldenSweepsBot(BaseAutoBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
+                if total_volume < 100 or volume_delta < 100:
+                    self._log_skip(symbol, f"golden sweep volume too small ({total_volume} total / {volume_delta} delta)")
+                    continue
+
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
@@ -136,7 +148,7 @@ class GoldenSweepsBot(BaseAutoBot):
 
                 # Smart strike filtering (≤5% OTM/ITM only - no lottery tickets)
                 if not self.is_smart_strike(strike, current_price, opt_type):
-                    logger.debug(f"{symbol} {opt_type} {strike}: Lottery ticket ({abs(strike_distance):.1f}% OTM)")
+                    self._log_skip(symbol, f"golden sweep lottery strike distance {strike_distance:.1f}%")
                     continue
 
                 # Calculate probability ITM

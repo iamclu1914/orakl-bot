@@ -27,9 +27,11 @@ class SweepsBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SWEEP_PREMIUM = Config.SWEEPS_MIN_PREMIUM
+        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 150000)
+        self.MIN_VOLUME = 100
+        self.MIN_VOLUME_DELTA = 50
+        self.MAX_STRIKE_DISTANCE = 10  # percent
         self.MIN_SCORE = Config.MIN_SWEEP_SCORE
-        self.MIN_CONTRACT_VOLUME = 100
 
         # Enhanced analysis tools
         self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
@@ -41,7 +43,7 @@ class SweepsBot(BaseAutoBot):
         logger.info(f"{self.name} scanning for large sweeps")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
-        if not MarketHours.is_market_open():
+        if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
@@ -122,8 +124,8 @@ class SweepsBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=self.MIN_SWEEP_PREMIUM,  # $50K minimum
-                min_volume_delta=10  # At least 10 contracts of volume change
+                min_premium=self.MIN_SWEEP_PREMIUM,
+                min_volume_delta=self.MIN_VOLUME_DELTA
             )
 
             # Process each flow signal
@@ -136,8 +138,9 @@ class SweepsBot(BaseAutoBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
-                # Filter: Minimum volume threshold (>= MIN_CONTRACT_VOLUME contracts)
-                if total_volume < self.MIN_CONTRACT_VOLUME or volume_delta < self.MIN_CONTRACT_VOLUME:
+                # Filter: Minimum volume threshold
+                if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
+                    self._log_skip(symbol, f"sweep volume too small ({total_volume} total / {volume_delta} delta)")
                     continue
 
                 # Calculate DTE
@@ -155,6 +158,9 @@ class SweepsBot(BaseAutoBot):
 
                 # Strike analysis
                 strike_distance = ((strike - current_price) / current_price) * 100
+                if abs(strike_distance) > self.MAX_STRIKE_DISTANCE:
+                    self._log_skip(symbol, f'sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
+                    continue
                 if opt_type == 'CALL':
                     moneyness = 'ITM' if strike < current_price else 'OTM' if strike > current_price else 'ATM'
                 else:
@@ -194,9 +200,13 @@ class SweepsBot(BaseAutoBot):
                 dedup_result = self.deduplicator.should_alert(signal_key, premium)
 
                 if dedup_result['should_alert']:
+                    if self._cooldown_active(signal_key):
+                        self._log_skip(symbol, f'sweep cooldown {signal_key}')
+                        continue
                     sweep['alert_type'] = dedup_result['type']
                     sweep['alert_reason'] = dedup_result['reason']
                     sweeps.append(sweep)
+                    self._mark_cooldown(signal_key)
 
         except Exception as e:
             logger.error(f"Error scanning sweeps for {symbol}: {e}")

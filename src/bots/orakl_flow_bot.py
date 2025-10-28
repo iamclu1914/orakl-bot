@@ -22,13 +22,16 @@ class TradyFlowBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
+        self.MIN_TOTAL_PREMIUM = 250000
+        self.MIN_UNIQUE_CONTRACTS = 2
+        self.MAX_STRIKE_DISTANCE = 8  # percent
 
     async def scan_and_post(self):
         """Scan for repeat and dominant signals using concurrent processing"""
         logger.info(f"{self.name} scanning {len(self.watchlist)} symbols")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
-        if not MarketHours.is_market_open():
+        if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
@@ -62,8 +65,25 @@ class TradyFlowBot(BaseAutoBot):
             if not flows:
                 return signals
 
-            # Process each flow signal
+            filtered_flows = []
+            contract_ids = set()
+            total_premium = 0
             for flow in flows:
+                strike = flow['strike']
+                strike_distance = abs(strike - current_price) / current_price * 100
+                if strike_distance > self.MAX_STRIKE_DISTANCE:
+                    self._log_skip(symbol, f"orakl strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%")
+                    continue
+                filtered_flows.append(flow)
+                contract_ids.add(flow['ticker'])
+                total_premium += flow.get('premium', 0)
+
+            if len(contract_ids) < self.MIN_UNIQUE_CONTRACTS or total_premium < self.MIN_TOTAL_PREMIUM:
+                self._log_skip(symbol, f"orakl aggregate premium ${total_premium:,.0f} with {len(contract_ids)} contracts below thresholds")
+                return signals
+
+            # Process each flow signal
+            for flow in filtered_flows:
                 try:
                     # Extract flow data
                     contract_ticker = flow['ticker']
@@ -121,9 +141,14 @@ class TradyFlowBot(BaseAutoBot):
 
                     # Check if already posted (deduplication)
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
+                    if self._cooldown_active(signal_key):
+                        self._log_skip(symbol, f"orakl cooldown {signal_key}")
+                        continue
+
                     if signal_key not in self.signal_history:
                         signals.append(signal)
                         self.signal_history[signal_key] = datetime.now()
+                        self._mark_cooldown(signal_key)
                         logger.info(
                             f"ORAKL Flow detected: {symbol} {opt_type} ${strike} "
                             f"(Premium: ${premium:,.0f}, Repeats: {repeat_count}, "

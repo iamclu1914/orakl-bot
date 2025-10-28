@@ -32,6 +32,7 @@ US_MARKET_HOLIDAYS_2026 = [
 ]
 
 ALL_MARKET_HOLIDAYS = US_MARKET_HOLIDAYS_2025 + US_MARKET_HOLIDAYS_2026
+EST = pytz.timezone('America/New_York')
 
 
 class MarketHours:
@@ -52,14 +53,12 @@ class MarketHours:
         Returns:
             True if market is open (regular or extended hours), False otherwise
         """
-        est = pytz.timezone('America/New_York')
-
         if check_time is None:
-            check_time = datetime.datetime.now(est)
+            check_time = datetime.datetime.now(EST)
         elif check_time.tzinfo is None:
-            check_time = est.localize(check_time)
+            check_time = EST.localize(check_time)
         else:
-            check_time = check_time.astimezone(est)
+            check_time = check_time.astimezone(EST)
 
         # Check if it's a weekend
         if check_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
@@ -92,8 +91,7 @@ class MarketHours:
             True if it's a trading day, False otherwise
         """
         if check_date is None:
-            est = pytz.timezone('America/New_York')
-            check_date = datetime.datetime.now(est).date()
+            check_date = datetime.datetime.now(EST).date()
         
         # Check if it's a weekend
         if check_date.weekday() >= 5:  # Saturday = 5, Sunday = 6
@@ -155,8 +153,7 @@ class MarketHours:
         Returns:
             Next market open datetime in EST
         """
-        est = pytz.timezone('America/New_York')
-        now = datetime.datetime.now(est)
+        now = datetime.datetime.now(EST)
         
         # Start with next potential open (9:30 AM)
         next_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -210,3 +207,23 @@ class MarketHours:
             status['session'] = 'Closed'
         
         return status
+
+    @staticmethod
+    def now_est() -> datetime.datetime:
+        """Get current time in US/Eastern timezone"""
+        return datetime.datetime.now(EST)
+
+    @staticmethod
+    def minutes_since_midnight(check_time: Optional[datetime.datetime] = None) -> int:
+        """
+        Helper to convert a datetime into minutes since midnight in EST.
+        Useful for window-based scheduling.
+        """
+        if check_time is None:
+            check_time = MarketHours.now_est()
+        elif check_time.tzinfo is None:
+            check_time = EST.localize(check_time)
+        else:
+            check_time = check_time.astimezone(EST)
+
+        return check_time.hour * 60 + check_time.minute

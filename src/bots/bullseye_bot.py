@@ -29,13 +29,17 @@ class BullseyeBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_PREMIUM = 500000  #  minimum premium for Bullseye signals
+        self.MIN_PREMIUM = 500000  # minimum premium for Bullseye signals
+        self.MIN_VOLUME = 200
+        self.MIN_OI_RATIO = 2.0
+        self.MIN_DTE = 15
+        self.MAX_DTE = 45
 
     async def scan_and_post(self):
         """Scan for high-conviction swing trades"""
         logger.info(f"{self.name} scanning for swing trade opportunities")
 
-        if not MarketHours.is_market_open():
+        if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
@@ -46,8 +50,8 @@ class BullseyeBot(BaseAutoBot):
         
         flat_signals = [signal for sublist in all_signals if isinstance(sublist, list) for signal in sublist]
         
-        # Rank and post top signals
-        top_signals = sorted(flat_signals, key=lambda x: x['bullseye_score'], reverse=True)[:5] # Post top 5
+        # Rank and post top signals (limit to best two ideas)
+        top_signals = sorted(flat_signals, key=lambda x: x['bullseye_score'], reverse=True)[:2]
         
         for signal in top_signals:
             await self._post_signal(signal)
@@ -71,7 +75,7 @@ class BullseyeBot(BaseAutoBot):
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
                 min_premium=self.MIN_PREMIUM,
-                min_volume_delta=5  # At least 5 contracts of volume change (was 10)
+                min_volume_delta=self.MIN_VOLUME_DELTA
             )
 
             # Price Action Confirmation
@@ -87,9 +91,12 @@ class BullseyeBot(BaseAutoBot):
                 expiration = flow['expiration']
                 premium = flow['premium']
                 if premium < self.MIN_PREMIUM:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
+                    self._log_skip(symbol, f"bullseye premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
                     continue
                 total_volume = flow['total_volume']
+                if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
+                    self._log_skip(symbol, f"bullseye volume too small ({total_volume}/{volume_delta})")
+                    continue
                 volume_delta = flow['volume_delta']
                 open_interest = flow.get('open_interest', 0)
                 delta = flow.get('delta', 0)
@@ -104,31 +111,32 @@ class BullseyeBot(BaseAutoBot):
                 days_to_expiry = (exp_date - datetime.now()).days
 
                 # Filter 1: DTE range (7-60 days for swing trades)
-                if days_to_expiry < 7 or days_to_expiry > 60:
+                if days_to_expiry < self.MIN_DTE or days_to_expiry > self.MAX_DTE:
+                    self._log_skip(symbol, f'bullseye DTE {days_to_expiry} outside {self.MIN_DTE}-{self.MAX_DTE}')
                     continue
 
                 # Filter 2: Liquidity guards (Phase 1 - with diagnostic logging)
-                # Minimum open interest ≥ 500
-                if open_interest < 500:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: OI {open_interest} < 500")
+                # Minimum open interest ratio
+                required_oi = max(500, total_volume * self.MIN_OI_RATIO)
+                if open_interest < required_oi:
+                    self._log_skip(symbol, f'bullseye OI {open_interest} < required {required_oi:.0f}')
                     continue
-
                 # Bid-ask spread ≤ 5% (spread / mid-price)
                 if bid > 0 and ask > 0:
                     mid_price = (bid + ask) / 2
                     spread_pct = ((ask - bid) / mid_price) * 100 if mid_price > 0 else 100
                     if spread_pct > 5.0:
-                        logger.debug(f"Rejected {symbol} ${strike} {opt_type}: spread {spread_pct:.2f}% > 5%")
+                        self._log_skip(symbol, f"bullseye spread {spread_pct:.2f}% > 5%")
                         continue
 
                 # Filter 3: VOI ratio (volume/OI > 3.0)
-                if open_interest == 0 or total_volume < 100:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: insufficient volume {total_volume}")
+                if open_interest == 0 or total_volume < self.MIN_VOLUME:
+                    self._log_skip(symbol, f'bullseye insufficient volume {total_volume} or OI zero')
                     continue
 
                 voi_ratio = total_volume / open_interest
                 if voi_ratio < 3.0:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: VOI {voi_ratio:.1f}x < 3.0x")
+                    self._log_skip(symbol, f'bullseye VOI {voi_ratio:.1f}x < 3.0x')
                     continue
 
                 # Filter 4: ATM options only (delta 0.4-0.6 range)
@@ -139,7 +147,7 @@ class BullseyeBot(BaseAutoBot):
                 # Filter 5: Strike distance (within 15% of current price)
                 strike_distance = abs(strike - current_price) / current_price
                 if strike_distance > 0.15:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: strike {strike_distance*100:.1f}% from price")
+                    self._log_skip(symbol, f"bullseye strike {strike_distance*100:.1f}% from price")
                     continue
 
                 # Filter 6: ITM Probability (Phase 1 - Tuned)
@@ -235,10 +243,14 @@ class BullseyeBot(BaseAutoBot):
                     }
 
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
+                    if self._cooldown_active(signal_key):
+                        self._log_skip(symbol, f'bullseye cooldown {signal_key}')
+                        continue
                     if signal_key not in self.signal_history or \
                        (datetime.now() - self.signal_history[signal_key]).total_seconds() > 3600 * 4:
                         signals.append(signal)
                         self.signal_history[signal_key] = datetime.now()
+                        self._mark_cooldown(signal_key)
 
         except Exception as e:
             logger.error(f"Error scanning for swing trades on {symbol}: {e}")
