@@ -29,6 +29,7 @@ class BullseyeBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
+        self.MIN_PREMIUM = 500000  #  minimum premium for Bullseye signals
 
     async def scan_and_post(self):
         """Scan for high-conviction swing trades"""
@@ -69,7 +70,7 @@ class BullseyeBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=500,  # $500 minimum for testing (was Config.BULLSEYE_MIN_PREMIUM $5K)
+                min_premium=self.MIN_PREMIUM,
                 min_volume_delta=5  # At least 5 contracts of volume change (was 10)
             )
 
@@ -85,6 +86,9 @@ class BullseyeBot(BaseAutoBot):
                 strike = flow['strike']
                 expiration = flow['expiration']
                 premium = flow['premium']
+                if premium < self.MIN_PREMIUM:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
+                    continue
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
                 open_interest = flow.get('open_interest', 0)
