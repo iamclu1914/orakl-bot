@@ -587,55 +587,47 @@ class ScalpsBot(BaseAutoBot):
     async def _post_signal(self, signal: Dict):
         """Post enhanced Scalps signal to Discord"""
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
-        
+
         # Format priority
         priority_level = "HIGH" if signal.get('priority_score', 0) >= 80 else "MEDIUM"
-        
+
         # Get market context
         market = signal.get('market_context', {})
         market_status = f"{market.get('momentum', {}).get('direction', 'neutral').title()}, {market.get('volatility', {}).get('level', 'normal').title()} VIX"
 
-        # Flow intensity emoji
-        flow_emoji = {
-            "AGGRESSIVE": "🔥",
-            "STRONG": "⚡",
-            "MODERATE": "📈",
-            "NORMAL": "📊"
-        }.get(signal.get('flow_intensity', 'NORMAL'), "📊")
-
         # Format flow intensity display
         flow_intensity = signal.get('flow_intensity', 'NORMAL')
         volume_velocity = signal.get('volume_velocity', 0)
-        flow_display = f"{flow_emoji} {flow_intensity}"
+        flow_display = f"{flow_intensity}"
         if volume_velocity > 0:
-            flow_display += f"\n({volume_velocity:.1f} c/min)"
+            flow_display += f" ({volume_velocity:.1f} c/min)"
 
-        # Build fields
+        # Build fields - clean without excessive emojis
         fields = [
-            {"name": "📊 Contract", "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE", "inline": True},
-            {"name": "⚡ Score", "value": f"**{signal['scalp_score']}/100**", "inline": True},
-            {"name": "🎯 Priority", "value": f"{signal.get('priority_score', 0):.0f}", "inline": True},
-            {"name": "💵 Entry Zone", "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}", "inline": True},
-            {"name": "🛑 Stop Loss", "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})", "inline": True},
-            {"name": "✅ Target 1", "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})", "inline": True},
-            {"name": "🎯 Target 2", "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})", "inline": True},
-            {"name": "📊 R:R Ratios", "value": f"T1: {signal['risk_reward_1']:.1f}:1\nT2: {signal['risk_reward_2']:.1f}:1", "inline": True},
-            {"name": "📈 Pattern", "value": f"{signal['pattern']} ({signal['pattern_strength']})", "inline": True},
-            {"name": "💰 Volume/Premium", "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}", "inline": True},
-            {"name": "📍 Distance", "value": f"{signal['strike_distance']:.1f}%", "inline": True},
-            {"name": "🔥 Flow Intensity", "value": flow_display, "inline": True},
-            {"name": "🌍 Market", "value": market_status, "inline": True},
-            {"name": "📋 Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False},
-            {"name": "⚠️ Management", "value": signal['exit_strategy']['management'], "inline": False}
+            {"name": "Contract", "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE", "inline": True},
+            {"name": "Score", "value": f"**{signal['scalp_score']}/100**", "inline": True},
+            {"name": "Priority", "value": f"{signal.get('priority_score', 0):.0f}", "inline": True},
+            {"name": "Entry Zone", "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}", "inline": True},
+            {"name": "Stop Loss", "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})", "inline": True},
+            {"name": "Target 1", "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})", "inline": True},
+            {"name": "Target 2", "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})", "inline": True},
+            {"name": "R:R Ratios", "value": f"T1: {signal['risk_reward_1']:.1f}:1\nT2: {signal['risk_reward_2']:.1f}:1", "inline": True},
+            {"name": "Pattern", "value": f"{signal['pattern']} ({signal['pattern_strength']})", "inline": True},
+            {"name": "Volume/Premium", "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}", "inline": True},
+            {"name": "Distance", "value": f"{signal['strike_distance']:.1f}%", "inline": True},
+            {"name": "Flow Intensity", "value": flow_display, "inline": True},
+            {"name": "Market", "value": market_status, "inline": True},
+            {"name": "Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False},
+            {"name": "Management", "value": signal['exit_strategy']['management'], "inline": False}
         ]
 
         # Create embed with auto-disclaimer
         embed = self.create_signal_embed_with_disclaimer(
-            title=f"⚡ Scalp: {signal['ticker']}",
-            description=f"{signal['pattern']} | Quick {signal['type']} Setup\n**Priority: {priority_level}**",
+            title=f"⚡ {signal['ticker']} {signal['type']} - Scalp Setup",
+            description=f"**{signal['pattern']}** | Priority: **{priority_level}**",
             color=color,
             fields=fields,
-            footer=f"Scalps Bot | Pattern: {signal['pattern']} | Score: {signal['scalp_score']}"
+            footer=f"ORAKL Scalps Bot • Pattern: {signal['pattern']} • Score: {signal['scalp_score']}"
         )
 
         await self.post_to_discord(embed)
