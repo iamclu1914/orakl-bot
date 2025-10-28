@@ -29,6 +29,7 @@ class SweepsBot(BaseAutoBot):
         self.signal_history = {}
         self.MIN_SWEEP_PREMIUM = Config.SWEEPS_MIN_PREMIUM
         self.MIN_SCORE = Config.MIN_SWEEP_SCORE
+        self.MIN_CONTRACT_VOLUME = 100
 
         # Enhanced analysis tools
         self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
@@ -135,8 +136,8 @@ class SweepsBot(BaseAutoBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
-                # Filter: Minimum volume threshold (100+ contracts)
-                if total_volume < 100:
+                # Filter: Minimum volume threshold (>= MIN_CONTRACT_VOLUME contracts)
+                if total_volume < self.MIN_CONTRACT_VOLUME or volume_delta < self.MIN_CONTRACT_VOLUME:
                     continue
 
                 # Calculate DTE
