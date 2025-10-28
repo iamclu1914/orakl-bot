@@ -277,7 +277,7 @@ class GoldenSweepsBot(BaseAutoBot):
 
     async def _post_signal(self, sweep: Dict) -> bool:
         """Post enhanced golden sweep signal to Discord"""
-        color = 0xFFD700  # Gold color
+        color = 0x00FF00 if sweep['type'] == 'CALL' else 0xFF0000
 
         # Format time
         now = datetime.now()

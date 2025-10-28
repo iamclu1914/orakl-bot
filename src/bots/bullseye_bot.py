@@ -476,7 +476,7 @@ class BullseyeBot(BaseAutoBot):
 
     async def _post_signal(self, signal: Dict):
         """Post Bullseye swing trade signal with unique ORAKL branding"""
-        color = 0xFF6B35  # ORAKL Orange
+        color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
 
         # ORAKL-style title and description
         title = f"🎯 {signal['ticker']} ${signal['strike']} {signal['type']} - Bullseye Signal"
