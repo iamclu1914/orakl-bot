@@ -279,9 +279,7 @@ class SweepsBot(BaseAutoBot):
             {"name": "⚡ Fills", "value": f"{sweep['num_fills']} rapid fills", "inline": True},
             {"name": "🎯 Strike", "value": f"${sweep['strike']:.2f} ({sweep['moneyness']})", "inline": True},
             {"name": "📍 Distance", "value": f"{sweep['strike_distance']:+.2f}%", "inline": True},
-            {"name": "⏰ DTE", "value": f"{sweep['days_to_expiry']} days", "inline": True},
-            {"name": "🎲 Probability ITM", "value": f"{sweep['probability_itm']:.1f}%", "inline": True},
-            {"name": "⏱️ Time Span", "value": f"{int(sweep['time_span'])}s sweep", "inline": True}
+            {"name": "⏰ DTE", "value": f"{sweep['days_to_expiry']} days", "inline": True}
         ]
 
         # Add enhanced analysis fields
@@ -296,11 +294,9 @@ class SweepsBot(BaseAutoBot):
         if 'needed_move' in sweep:
             fields.append({"name": "🎯 Break-Even Analysis", "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%", "inline": False})
 
-        # Add accumulation warning or insight
+        # Add accumulation warning
         if alert_type == 'ACCUMULATION':
             fields.append({"name": "🔥 ACCUMULATION ALERT 🔥", "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}", "inline": False})
-        else:
-            fields.append({"name": "💡 Insight", "value": f"Large sweep shows conviction - {sweep['num_fills']} fills in {int(sweep['time_span'])}s", "inline": False})
 
         # Create embed with auto-disclaimer
         embed = self.create_signal_embed_with_disclaimer(

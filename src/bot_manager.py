@@ -1,7 +1,7 @@
 """Bot Manager - Orchestrates all auto-posting bots"""
 import asyncio
 import logging
-from typing import List
+from typing import List, Dict
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
@@ -47,15 +47,18 @@ class BotManager:
     def _initialize_bots(self):
         """Initialize all auto-posting bots with dedicated webhooks"""
         logger.info("Initializing auto-posting bots with dedicated channels...")
+        self.bot_overrides: Dict[object, List[str]] = {}
 
         # Orakl Flow Bot (formerly Trady Flow)
+        orakl_watchlist = list(Config.ORAKL_FLOW_WATCHLIST)
         self.orakl_flow_bot = TradyFlowBot(
             Config.ORAKL_FLOW_WEBHOOK,
-            self.watchlist,
+            orakl_watchlist,
             self.fetcher,
             self.analyzer
         )
         self.bots.append(self.orakl_flow_bot)
+        self.bot_overrides[self.orakl_flow_bot] = orakl_watchlist
         logger.info(f"  ✓ Orakl Flow Bot → Channel ID: {Config.ORAKL_FLOW_WEBHOOK.split('/')[-2]}")
 
         # Bullseye Bot (AI Intraday)
@@ -69,33 +72,39 @@ class BotManager:
         logger.info(f"  ✓ Bullseye Bot → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}")
 
         # Scalps Bot (The Strat)
+        scalps_watchlist = list(Config.SCALPS_WATCHLIST)
         self.scalps_bot = ScalpsBot(
             Config.SCALPS_WEBHOOK,
-            self.watchlist,
+            scalps_watchlist,
             self.fetcher,
             self.analyzer
         )
         self.bots.append(self.scalps_bot)
+        self.bot_overrides[self.scalps_bot] = scalps_watchlist
         logger.info(f"  ✓ Scalps Bot → Channel ID: {Config.SCALPS_WEBHOOK.split('/')[-2]}")
 
         # Sweeps Bot (Large Options Sweeps)
+        sweeps_watchlist = list(Config.SWEEPS_WATCHLIST)
         self.sweeps_bot = SweepsBot(
             Config.SWEEPS_WEBHOOK,
-            self.watchlist,
+            sweeps_watchlist,
             self.fetcher,
             self.analyzer
         )
         self.bots.append(self.sweeps_bot)
+        self.bot_overrides[self.sweeps_bot] = sweeps_watchlist
         logger.info(f"  ✓ Sweeps Bot → Channel ID: {Config.SWEEPS_WEBHOOK.split('/')[-2]}")
 
         # Golden Sweeps Bot (1M+ Sweeps)
+        golden_watchlist = list(Config.GOLDEN_SWEEPS_WATCHLIST)
         self.golden_sweeps_bot = GoldenSweepsBot(
             Config.GOLDEN_SWEEPS_WEBHOOK,
-            self.watchlist,
+            golden_watchlist,
             self.fetcher,
             self.analyzer
         )
         self.bots.append(self.golden_sweeps_bot)
+        self.bot_overrides[self.golden_sweeps_bot] = golden_watchlist
         logger.info(f"  ✓ Golden Sweeps Bot → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}")
 
         # Darkpool Bot (Large Darkpool/Blocks)
@@ -180,8 +189,17 @@ class BotManager:
     def _update_bot_watchlists(self):
         """Update watchlist for all bots with comprehensive sector list"""
         for bot in self.bots:
-            if hasattr(bot, 'watchlist'):
-                # All bots now use the same comprehensive watchlist
+            if not hasattr(bot, 'watchlist'):
+                continue
+
+            override = None
+            if hasattr(self, 'bot_overrides'):
+                override = self.bot_overrides.get(bot)
+
+            if override is not None:
+                bot.watchlist = list(override)
+                logger.info(f"  {bot.name}: {len(bot.watchlist)} tickers (custom watchlist)")
+            else:
                 bot.watchlist = self.watchlist
                 logger.info(f"  {bot.name}: {len(self.watchlist)} tickers (full mega/large cap list)")
 

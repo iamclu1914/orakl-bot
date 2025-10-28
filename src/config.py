@@ -87,7 +87,7 @@ class Config:
     MAX_STOCK_PRICE = float(os.getenv('MAX_STOCK_PRICE', '10000'))  # $10K max (filter out Berkshire)
 
     # Static Watchlist (fallback when WATCHLIST_MODE = 'STATIC')
-    STATIC_WATCHLIST = os.getenv('WATCHLIST',
+    _DEFAULT_WATCHLIST = (
         # Indices & ETFs
         'SPY,QQQ,IWM,DIA,'
         # Technology
@@ -103,7 +103,7 @@ class Config:
         # Industrials
         'BA,CAT,GE,HON,UPS,RTX,LMT,DE,MMM,UNP,'
         # Communication Services
-        'T,VZ,CMCSA,TMUS,NFLX,DIS,'
+        'T,VZ,CMCSA,TMUS,DIS,'
         # Consumer Staples
         'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,'
         # Materials
@@ -112,10 +112,48 @@ class Config:
         'AMT,PLD,CCI,EQIX,PSA,'
         # Utilities
         'NEE,DUK,SO,D,AEP'
+    )
+
+    STATIC_WATCHLIST = os.getenv('WATCHLIST', _DEFAULT_WATCHLIST).split(',')
+    _DEFAULT_STATIC_LIST = [ticker.strip().upper() for ticker in _DEFAULT_WATCHLIST.split(',') if ticker.strip()]
+
+    SCALPS_WATCHLIST = os.getenv(
+        'SCALPS_WATCHLIST',
+        (
+            'SPY,QQQ,NVDA,TSLA,AMD,AAPL,MSFT,META,GOOGL,'
+            'AMZN,SMCI,CRM,PLTR,COIN,INTC,SOFI,RIVN,AFRM,'
+            'SNOW,NET,SHOP,LSCC,ON,MRVL,LCID,UPST,ROKU,'
+            'ETSY,AI,BB,CHPT,CLSK,MU,SQ,UBER,ABNB'
+        )
+    ).split(',')
+
+    ORAKL_FLOW_WATCHLIST = os.getenv(
+        'ORAKL_FLOW_WATCHLIST',
+        ','.join(_DEFAULT_STATIC_LIST[:80])
+    ).split(',')
+
+    SWEEPS_WATCHLIST = os.getenv(
+        'SWEEPS_WATCHLIST',
+        ','.join(_DEFAULT_STATIC_LIST[:120])
+    ).split(',')
+
+    GOLDEN_SWEEPS_WATCHLIST = os.getenv(
+        'GOLDEN_SWEEPS_WATCHLIST',
+        ','.join(_DEFAULT_STATIC_LIST[:100])
+    ).split(',')
+
+    SKIP_TICKERS = os.getenv(
+        'SKIP_TICKERS',
+        'ABC,ATVI,BRK-A,BRK-B,SPX,DFS'
     ).split(',')
 
     # Initialize WATCHLIST (will be populated dynamically by WatchlistManager)
     WATCHLIST = [ticker.strip().upper() for ticker in STATIC_WATCHLIST if ticker.strip()]
+    SCALPS_WATCHLIST = [ticker.strip().upper() for ticker in SCALPS_WATCHLIST if ticker.strip()]
+    ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
+    SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
+    GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
+    SKIP_TICKERS = [ticker.strip().upper() for ticker in SKIP_TICKERS if ticker.strip()]
     
     # Auto-start Settings
     AUTO_START = os.getenv('AUTO_START', 'true').lower() == 'true'
