@@ -135,6 +135,10 @@ class SweepsBot(BaseAutoBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
+                # Filter: Minimum volume threshold (100+ contracts)
+                if total_volume < 100:
+                    continue
+
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
