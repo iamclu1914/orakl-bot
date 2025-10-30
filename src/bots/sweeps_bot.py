@@ -31,7 +31,8 @@ class SweepsBot(BaseAutoBot):
         self.MIN_VOLUME = 100
         self.MIN_VOLUME_DELTA = 50
         self.MAX_STRIKE_DISTANCE = 10  # percent
-        self.MIN_SCORE = Config.MIN_SWEEP_SCORE
+        # Require a high conviction sweep score before alerting
+        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 81)
 
         # Enhanced analysis tools
         self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
@@ -88,13 +89,13 @@ class SweepsBot(BaseAutoBot):
                     )
 
                     # Filter by minimum score
-                    if sweep['sweep_score'] >= Config.MIN_SWEEP_SCORE:
+                    if sweep['sweep_score'] >= self.MIN_SCORE:
                         enhanced_sweeps.append(sweep)
 
                 except Exception as e:
                     logger.debug(f"Error enhancing sweep: {e}")
                     # Include unenhanced sweep if it meets threshold
-                    if sweep.get('sweep_score', 0) >= Config.MIN_SWEEP_SCORE:
+                    if sweep.get('sweep_score', 0) >= self.MIN_SCORE:
                         enhanced_sweeps.append(sweep)
 
             # Return top 3 signals per symbol sorted by score
