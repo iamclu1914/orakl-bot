@@ -28,8 +28,10 @@ class GoldenSweepsBot(BaseAutoBot):
         self.analyzer = analyzer
         self.signal_history = {}
         self.MIN_GOLDEN_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
-        self.MIN_CONTRACT_VOLUME = 100
-        self.MIN_VOLUME_DELTA = 100
+        # Million-dollar premiums can occur on contracts with relatively low contract counts,
+        # so keep volume thresholds permissive while still filtering tiny prints.
+        self.MIN_CONTRACT_VOLUME = 25
+        self.MIN_VOLUME_DELTA = 10
         self.MAX_STRIKE_DISTANCE = 5  # percent
         self.MIN_SCORE = Config.MIN_GOLDEN_SCORE
 
@@ -131,8 +133,11 @@ class GoldenSweepsBot(BaseAutoBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
-                if total_volume < 100 or volume_delta < 100:
-                    self._log_skip(symbol, f"golden sweep volume too small ({total_volume} total / {volume_delta} delta)")
+                if total_volume < self.MIN_CONTRACT_VOLUME and volume_delta < self.MIN_VOLUME_DELTA:
+                    self._log_skip(
+                        symbol,
+                        f"golden sweep volume too small ({total_volume} total / {volume_delta} delta)"
+                    )
                     continue
 
                 # Calculate DTE
@@ -185,7 +190,7 @@ class GoldenSweepsBot(BaseAutoBot):
                     'premium': premium,
                     'volume': total_volume,
                     'num_fills': num_fills,
-                    'avg_price': premium / (total_volume * 100) if total_volume > 0 else 0,
+                    'avg_price': premium / (max(volume_delta, 1) * 100),
                     'moneyness': moneyness,
                     'strike_distance': strike_distance,
                     'probability_itm': prob_itm,
