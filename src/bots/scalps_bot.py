@@ -538,10 +538,10 @@ class ScalpsBot(BaseAutoBot):
         Phase 1 Tuning: Relaxed thresholds to increase signal flow while maintaining quality.
         """
         try:
-        # Minimum score threshold (80% enforced)
+            # Minimum score threshold (80% enforced)
             score = signal.get('scalp_score', 0)
-        if score < self.MIN_SCORE:
-            logger.debug(f"Rejected {signal.get('ticker')}: score {score} < {self.MIN_SCORE}")
+            if score < self.MIN_SCORE:
+                logger.debug(f"Rejected {signal.get('ticker')}: score {score} < {self.MIN_SCORE}")
                 return False
 
             # Minimum volume requirement (50 contracts - lowered from 75 for Phase 1)
