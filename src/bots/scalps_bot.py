@@ -34,6 +34,7 @@ class ScalpsBot(BaseAutoBot):
         self.MIN_VOLUME_DELTA = 75
         self.MAX_SPREAD = 0.15
         self.active_windows = [(570, 630), (900, 960)]  # 9:30-10:30 and 15:00-16:00 ET
+        self.MIN_SCORE = max(Config.MIN_SCALP_SCORE, 80)
 
     def should_run_now(self) -> bool:
         """Only run during regular hours and within high-probability scalping windows."""
@@ -55,9 +56,9 @@ class ScalpsBot(BaseAutoBot):
         market_context = await MarketContext.get_market_context(self.fetcher)
         logger.info(f"{self.name} - Market: {market_context['regime']}, Bias: {market_context['trading_bias']}")
         
-        # Adjust threshold based on market conditions (minimum 50%)
-        base_threshold = 50  # Base scalp score threshold (50% minimum)
-        adjusted_threshold = max(50, MarketContext.adjust_signal_threshold(base_threshold, market_context))
+        # Adjust threshold based on market conditions (minimum enforced to MIN_SCORE)
+        base_threshold = self.MIN_SCORE
+        adjusted_threshold = max(self.MIN_SCORE, MarketContext.adjust_signal_threshold(base_threshold, market_context))
         logger.debug(f"{self.name} - Adjusted threshold: {adjusted_threshold} (base: {base_threshold})")
         
         # Prioritize watchlist by recent activity
@@ -537,10 +538,10 @@ class ScalpsBot(BaseAutoBot):
         Phase 1 Tuning: Relaxed thresholds to increase signal flow while maintaining quality.
         """
         try:
-            # Minimum score threshold (45% - lowered from 50% for Phase 1)
+        # Minimum score threshold (80% enforced)
             score = signal.get('scalp_score', 0)
-            if score < 45:
-                logger.debug(f"Rejected {signal.get('ticker')}: score {score} < 45")
+        if score < self.MIN_SCORE:
+            logger.debug(f"Rejected {signal.get('ticker')}: score {score} < {self.MIN_SCORE}")
                 return False
 
             # Minimum volume requirement (50 contracts - lowered from 75 for Phase 1)

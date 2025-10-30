@@ -18,11 +18,13 @@ class DarkpoolBot(BaseAutoBot):
     """
 
     # Configuration constants
-    MIN_BLOCK_SIZE = 5000  # Minimum 5k shares for block trade detection
+    MIN_BLOCK_SIZE = 4000  # Minimum shares for block trade detection (more realistic)
     KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
     DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.001  # 0.1% threshold for aggressive buying/selling
-    MIN_DOLLAR_VALUE = 5000000  # Minimum $5M trade value
-    MIN_BLOCK_COUNT = 3
+    MIN_DOLLAR_VALUE = 3000000  # Minimum $3M trade value for significant prints
+    MIN_BLOCK_COUNT = 1
+    BLOCK_SIZE_MULTIPLIER = 3  # Trade must be 3x average print size
+    MIN_MARKETCAP_RATIO = 0.0003  # Trade >= 0.03% of market cap
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=Config.DARKPOOL_INTERVAL)
@@ -30,6 +32,7 @@ class DarkpoolBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
+        self.MIN_SCORE = max(getattr(Config, 'MIN_DARKPOOL_SCORE', 45), 45)
 
     def should_run_now(self) -> bool:
         """Override to include pre-market and after-hours darkpool activity."""
@@ -69,6 +72,7 @@ class DarkpoolBot(BaseAutoBot):
             financials = await self.fetcher.get_financials(symbol)
             week_52_high = financials.get('52_week_high') if financials else None
             week_52_low = financials.get('52_week_low') if financials else None
+            market_cap = financials.get('market_cap') if financials else None
 
             # Get recent trades
             trades = await self.fetcher.get_stock_trades(symbol, limit=1000)
@@ -79,7 +83,7 @@ class DarkpoolBot(BaseAutoBot):
             logger.debug(f"{symbol}: Found {len(trades)} trades to analyze")
 
             avg_size = sum(t.get('size', 0) for t in trades) / len(trades) if trades else 0
-            recent_cutoff = datetime.now() - timedelta(minutes=30)  # Extended to 30 minutes for better detection
+            recent_cutoff = datetime.now() - timedelta(minutes=45)  # Capture a wider activity window
             
             for trade in trades:
                 trade_time = datetime.fromtimestamp(trade.get('timestamp', 0) / 1000)
@@ -93,18 +97,28 @@ class DarkpoolBot(BaseAutoBot):
                 price = trade.get('price', current_price)
                 dollar_value = size * price
 
+                size_multiple_ok = avg_size == 0 or size >= (avg_size * self.BLOCK_SIZE_MULTIPLIER)
                 is_block = (
                     size >= self.MIN_BLOCK_SIZE and
-                    size >= (avg_size * 5) and
-                    dollar_value >= self.MIN_DOLLAR_VALUE
+                    dollar_value >= self.MIN_DOLLAR_VALUE and
+                    size_multiple_ok
                 )
 
                 if not is_block:
                     continue
 
+                if not market_cap or market_cap <= 0:
+                    self._log_skip(symbol, 'darkpool missing market cap data')
+                    continue
+
+                market_cap_ratio = dollar_value / market_cap
+                if market_cap_ratio < self.MIN_MARKETCAP_RATIO:
+                    self._log_skip(symbol, f'darkpool market cap ratio {market_cap_ratio*100:.3f}% < {self.MIN_MARKETCAP_RATIO*100:.3f}%')
+                    continue
+
                 price_move_pct = abs(price - current_price) / current_price if current_price else 0
-                if price_move_pct < 0.005:
-                    self._log_skip(symbol, f'darkpool price move {price_move_pct*100:.2f}% < 0.50%')
+                if price_move_pct < 0.002:
+                    self._log_skip(symbol, f'darkpool price move {price_move_pct*100:.2f}% < 0.20%')
                     continue
 
                 # --- ENHANCEMENT 2: Key level and directional bias analysis ---
@@ -119,11 +133,11 @@ class DarkpoolBot(BaseAutoBot):
 
                 # Calculate block score with enhanced context
                 block_score = self._calculate_block_score(
-                    size, dollar_value, avg_30_day_volume, is_darkpool, 
+                    size, dollar_value, avg_30_day_volume, market_cap_ratio, is_darkpool, 
                     key_level_info is not None, directional_bias != "Neutral"
                 )
 
-                if block_score >= 45:  # Adjusted threshold for better detection
+                if block_score >= self.MIN_SCORE:
                     block = {
                         'ticker': symbol,
                         'current_price': current_price,
@@ -137,6 +151,7 @@ class DarkpoolBot(BaseAutoBot):
                         'conditions': conditions,
                         # --- ENHANCEMENT 3: Add new data to signal ---
                         'percent_of_avg_volume': (size / avg_30_day_volume) * 100 if avg_30_day_volume else 0,
+                        'market_cap_ratio': market_cap_ratio,
                         'key_level_info': key_level_info,
                         'directional_bias': directional_bias,
                     }
@@ -163,7 +178,7 @@ class DarkpoolBot(BaseAutoBot):
         return blocks
 
     def _calculate_block_score(self, size: int, dollar_value: float,
-                               avg_30_day_volume: Optional[float], is_darkpool: bool,
+                               avg_30_day_volume: Optional[float], market_cap_ratio: float, is_darkpool: bool,
                                at_key_level: bool, has_bias: bool) -> int:
         """Calculate ENHANCED block trade significance score using generic scoring"""
         # Calculate percent of volume
@@ -183,6 +198,11 @@ class DarkpoolBot(BaseAutoBot):
                 (10000000, 25),  # $10M+ → 25 points (25%)
                 (5000000, 20),   # $5M+ → 20 points
                 (1000000, 15)    # $1M+ → 15 points
+            ]),
+            'market_cap_ratio': (market_cap_ratio * 100, [  # convert to percentage for readability
+                (0.10, 20),  # 0.10%+ of market cap → 20 points
+                (0.05, 15),  # 0.05%+ → 15 points
+                (0.03, 10)   # 0.03%+ → 10 points
             ])
         })
 
@@ -246,6 +266,7 @@ class DarkpoolBot(BaseAutoBot):
             {"name": "📈 Block Score", "value": f"**{block['block_score']}/100**", "inline": True},
             {"name": "💵 Executed Price", "value": f"${block['block_price']:.2f}", "inline": True},
             {"name": "📊 Market Price", "value": f"${block['current_price']:.2f}", "inline": True},
+            {"name": "🏦 % of Market Cap", "value": f"{block['market_cap_ratio']*100:.2f}%", "inline": True},
         ]
 
         # Add key level info if present
@@ -266,4 +287,7 @@ class DarkpoolBot(BaseAutoBot):
         )
 
         await self.post_to_discord(embed)
-        logger.info(f"Posted ENHANCED {trade_type}: {block['ticker']} {block['size']:,} shares @ ${block['block_price']:.2f}")
+        logger.info(
+            f"Posted ENHANCED {trade_type}: {block['ticker']} {block['size']:,} shares @ ${block['block_price']:.2f} "
+            f"({block['market_cap_ratio']*100:.2f}% of market cap)"
+        )

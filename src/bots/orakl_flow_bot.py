@@ -25,6 +25,9 @@ class TradyFlowBot(BaseAutoBot):
         self.MIN_TOTAL_PREMIUM = 250000
         self.MIN_UNIQUE_CONTRACTS = 2
         self.MAX_STRIKE_DISTANCE = 8  # percent
+        self.MIN_PROB_ITM = 60  # Require high probability ITM
+        self.MIN_SUCCESS_RATE = getattr(Config, 'SUCCESS_RATE_THRESHOLD', 0.65)
+        self.DOMINANT_PREMIUM_RATIO = 1.25
 
     async def scan_and_post(self):
         """Scan for repeat and dominant signals using concurrent processing"""
@@ -58,32 +61,57 @@ class TradyFlowBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=1000,  # $1K minimum for testing (was Config.MIN_PREMIUM $10K)
-                min_volume_delta=5  # At least 5 contracts of volume change (was 10)
+                min_premium=max(Config.MIN_PREMIUM, 5000),
+                min_volume_delta=5
             )
 
             if not flows:
                 return signals
 
-            filtered_flows = []
-            contract_ids = set()
-            total_premium = 0
+            flows_by_type = {'CALL': [], 'PUT': []}
+            premium_by_type = {'CALL': 0.0, 'PUT': 0.0}
+            contract_ids_by_type = {'CALL': set(), 'PUT': set()}
+
             for flow in flows:
                 strike = flow['strike']
                 strike_distance = abs(strike - current_price) / current_price * 100
                 if strike_distance > self.MAX_STRIKE_DISTANCE:
                     self._log_skip(symbol, f"orakl strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%")
                     continue
-                filtered_flows.append(flow)
-                contract_ids.add(flow['ticker'])
-                total_premium += flow.get('premium', 0)
+                opt_type = flow['type']
+                flows_by_type[opt_type].append(flow)
+                contract_ids_by_type[opt_type].add(flow['ticker'])
+                premium_by_type[opt_type] += flow.get('premium', 0.0)
 
-            if len(contract_ids) < self.MIN_UNIQUE_CONTRACTS or total_premium < self.MIN_TOTAL_PREMIUM:
-                self._log_skip(symbol, f"orakl aggregate premium ${total_premium:,.0f} with {len(contract_ids)} contracts below thresholds")
+            dominant_type = 'CALL' if premium_by_type['CALL'] >= premium_by_type['PUT'] else 'PUT'
+            dominant_premium = premium_by_type[dominant_type]
+            secondary_premium = premium_by_type['PUT' if dominant_type == 'CALL' else 'CALL']
+
+            if dominant_premium == 0:
                 return signals
 
-            # Process each flow signal
-            for flow in filtered_flows:
+            if dominant_premium < self.MIN_TOTAL_PREMIUM:
+                self._log_skip(symbol, f"orakl dominant {dominant_type} premium ${dominant_premium:,.0f} below ${self.MIN_TOTAL_PREMIUM:,.0f}")
+                return signals
+
+            if secondary_premium > 0 and (dominant_premium / secondary_premium) < self.DOMINANT_PREMIUM_RATIO:
+                self._log_skip(symbol, f"orakl dominant premium ratio {dominant_premium/secondary_premium:.2f} < {self.DOMINANT_PREMIUM_RATIO}")
+                return signals
+
+            dominant_contracts = len(contract_ids_by_type[dominant_type])
+            if dominant_contracts < self.MIN_UNIQUE_CONTRACTS:
+                self._log_skip(symbol, f"orakl only {dominant_contracts} unique {dominant_type} contracts")
+                return signals
+
+            success_rate = self.analyzer.calculate_success_rate(symbol)
+            if success_rate < self.MIN_SUCCESS_RATE:
+                self._log_skip(symbol, f"orakl success rate {success_rate:.2%} below {self.MIN_SUCCESS_RATE:.2%}")
+                return signals
+
+            dominant_flows = flows_by_type[dominant_type]
+
+            # Process each flow signal in dominant direction
+            for flow in dominant_flows:
                 try:
                     # Extract flow data
                     contract_ticker = flow['ticker']
@@ -115,8 +143,8 @@ class TradyFlowBot(BaseAutoBot):
                         opt_type, strike, current_price, days_to_expiry
                     )
 
-                    # High probability threshold (minimum 50%)
-                    if prob_itm < 50:
+                    # High probability threshold (minimum configured)
+                    if prob_itm < self.MIN_PROB_ITM:
                         continue
 
                     # Create signal
@@ -136,7 +164,9 @@ class TradyFlowBot(BaseAutoBot):
                         'repeat_count': repeat_count,
                         'probability_itm': prob_itm,
                         'implied_volatility': flow.get('implied_volatility', 0),
-                        'delta': flow.get('delta', 0)
+                        'delta': flow.get('delta', 0),
+                        'dominant_type': dominant_type,
+                        'success_rate': success_rate
                     }
 
                     # Check if already posted (deduplication)
@@ -152,7 +182,7 @@ class TradyFlowBot(BaseAutoBot):
                         logger.info(
                             f"ORAKL Flow detected: {symbol} {opt_type} ${strike} "
                             f"(Premium: ${premium:,.0f}, Repeats: {repeat_count}, "
-                            f"ITM Prob: {prob_itm:.1f}%)"
+                            f"ITM Prob: {prob_itm:.1f}%, Success:{success_rate:.1%})"
                         )
 
                 except Exception as e:
@@ -173,10 +203,12 @@ class TradyFlowBot(BaseAutoBot):
         fields = [
             {"name": "📊 Contract", "value": f"{signal['type']} ${signal['strike']}\nExp: {signal['expiration']}", "inline": True},
             {"name": "🎲 Probability ITM", "value": f"**{signal['probability_itm']:.1f}%**", "inline": True},
+            {"name": "📈 Success Rate", "value": f"{signal['success_rate']*100:.0f}%", "inline": True},
             {"name": "💰 Premium Flow", "value": f"${signal['premium']:,.0f}", "inline": True},
             {"name": "📈 Current Price", "value": f"${signal['current_price']:.2f}", "inline": True},
             {"name": "📊 Volume", "value": f"{signal['volume']:,}", "inline": True},
             {"name": "🔄 Repeat Signals", "value": f"{signal['repeat_count']} detected", "inline": True},
+            {"name": "🏹 Dominant Flow", "value": signal.get('dominant_type', 'N/A'), "inline": True},
             {"name": "🎯 Target", "value": f"{'Break above' if signal['type'] == 'CALL' else 'Break below'} ${signal['strike']:.2f}", "inline": False},
             {"name": "⏰ Days to Expiry", "value": f"{signal['days_to_expiry']} days", "inline": True}
         ]

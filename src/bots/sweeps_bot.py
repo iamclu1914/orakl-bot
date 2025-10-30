@@ -136,6 +136,9 @@ class SweepsBot(BaseAutoBot):
                 strike = flow['strike']
                 expiration = flow['expiration']
                 premium = flow['premium']
+                if premium >= Config.GOLDEN_MIN_PREMIUM:
+                    self._log_skip(symbol, f"sweep premium ${premium:,.0f} qualifies as golden sweep")
+                    continue
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
