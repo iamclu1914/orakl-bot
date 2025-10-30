@@ -205,7 +205,12 @@ class ScalpsBot(BaseAutoBot):
                 if scalp_score >= adjusted_threshold:
                     # Calculate average price using the contracts actually traded in this sweep
                     traded_contracts = volume_delta if volume_delta and volume_delta > 0 else total_volume
-                    avg_price = premium / (traded_contracts * 100) if traded_contracts else 0
+                    traded_contracts = int(traded_contracts) if traded_contracts else 0
+                    last_price = flow.get('last_price', 0)
+                    if last_price and last_price > 0:
+                        avg_price = last_price
+                    else:
+                        avg_price = premium / (traded_contracts * 100) if traded_contracts else 0
 
                     # Calculate exit strategies
                     exits = ExitStrategies.calculate_exits(
@@ -237,8 +242,13 @@ class ScalpsBot(BaseAutoBot):
                         'exit_strategy': exits,
                         'market_context': market_context,
                         'volume_delta': volume_delta,
+                        'contracts_traded': traded_contracts,
                         'delta': flow.get('delta', 0),
                         'gamma': flow.get('gamma', 0),
+                        'bid': flow.get('bid', 0),
+                        'ask': flow.get('ask', 0),
+                        'bid_size': flow.get('bid_size', 0),
+                        'ask_size': flow.get('ask_size', 0),
                         'rsi': rsi,
                         # Volume velocity metrics (NEW)
                         'volume_velocity': volume_velocity,
@@ -636,20 +646,57 @@ class ScalpsBot(BaseAutoBot):
         if volume_velocity > 0:
             flow_display += f" ({volume_velocity:.1f} c/min)"
 
+        def format_price(value: float) -> str:
+            if isinstance(value, (int, float)) and value and value > 0:
+                return f"${value:.2f}"
+            return "N/A"
+
+        def format_size(value: float) -> str:
+            if isinstance(value, (int, float)) and value and value > 0:
+                return f"{int(value):,}"
+            return "?"
+
+        contracts_traded = signal.get('contracts_traded') or signal.get('volume_delta', 0)
+        if isinstance(contracts_traded, (int, float)) and contracts_traded > 0:
+            contracts_display = f"{int(contracts_traded):,}"
+        else:
+            contracts_display = "N/A"
+
+        premium_display = f"${signal['premium']:,.0f}"
+
+        bid_display = format_price(signal.get('bid', 0))
+        ask_display = format_price(signal.get('ask', 0))
+        bid_size_display = format_size(signal.get('bid_size', 0))
+        ask_size_display = format_size(signal.get('ask_size', 0))
+
+        if bid_display != "N/A" and ask_display != "N/A":
+            bid_ask_display = f"{bid_display} ({bid_size_display}) -> {ask_display} ({ask_size_display})"
+        else:
+            bid_ask_display = "N/A"
+
+        entry_zone = signal.get('exit_strategy', {}).get('entry_zone', {})
+        if entry_zone and 'lower' in entry_zone and 'upper' in entry_zone:
+            algo_entry_display = f"${entry_zone['lower']:.2f} - ${entry_zone['upper']:.2f}"
+        else:
+            algo_entry_display = "N/A"
+
+        contracts_premium_display = f"{contracts_display} / {premium_display}"
+
         # Build fields - clean without excessive emojis
         fields = [
             {"name": "Contract", "value": f"{signal['type']} ${signal['strike']} {signal['days_to_expiry']}DTE", "inline": True},
             {"name": "Score", "value": f"**{signal['scalp_score']}/100**", "inline": True},
             {"name": "Priority", "value": f"{signal.get('priority_score', 0):.0f}", "inline": True},
-            {"name": "Entry Zone", "value": f"${signal['exit_strategy']['entry_zone']['lower']:.2f} - ${signal['exit_strategy']['entry_zone']['upper']:.2f}", "inline": True},
+            {"name": "Bid x Ask", "value": bid_ask_display, "inline": True},
+            {"name": "Algo Entry Zone", "value": algo_entry_display, "inline": True},
+            {"name": "Contracts/Premium", "value": contracts_premium_display, "inline": True},
             {"name": "Stop Loss", "value": f"${signal['stop_loss']:.2f} ({signal['exit_strategy']['stop_pct']})", "inline": True},
             {"name": "Target 1", "value": f"${signal['target_1']:.2f} ({signal['exit_strategy']['target1_pct']})", "inline": True},
             {"name": "Target 2", "value": f"${signal['target_2']:.2f} ({signal['exit_strategy']['target2_pct']})", "inline": True},
             {"name": "Pattern", "value": f"{signal['pattern']} ({signal['pattern_strength']})", "inline": True},
-            {"name": "Volume/Premium", "value": f"{signal['volume']:,} / ${signal['premium']:,.0f}", "inline": True},
             {"name": "Distance", "value": f"{signal['strike_distance']:.1f}%", "inline": True},
             {"name": "Flow Intensity", "value": flow_display, "inline": True},
-            {"name": "Exit Plan", "value": f"• Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n• Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n• Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False}
+            {"name": "Exit Plan", "value": f"- Take {int(signal['exit_strategy']['scale_out']['target_1_size']*100)}% at T1\n- Take {int(signal['exit_strategy']['scale_out']['target_2_size']*100)}% at T2\n- Trail stop: ${signal['exit_strategy']['trail_stop']:.2f}", "inline": False}
         ]
 
         # Create embed with auto-disclaimer

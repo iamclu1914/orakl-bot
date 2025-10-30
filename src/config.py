@@ -137,9 +137,34 @@ class Config:
         ','.join(_DEFAULT_STATIC_LIST[:120])
     ).split(',')
 
+    _DEFAULT_GOLDEN_LIST = (
+        # Mega cap technology & AI leaders
+        'AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AVGO,ADBE,CRM,ORCL,CSCO,INTC,AMD,QCOM,TXN,SMCI,SHOP,PLTR,'  # noqa: E501
+        # Financial heavyweights & crypto-exposed
+        'JPM,BAC,WFC,MS,GS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,'  # noqa: E501
+        # Energy & industrial majors
+        'XOM,CVX,COP,SLB,EOG,MPC,PSX,VLO,OXY,HAL,BA,CAT,GE,DE,UPS,LMT,RTX,UNP,'  # noqa: E501
+        # Discretionary & consumer brands
+        'HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,'  # noqa: E501
+        # Healthcare & biotech momentum names
+        'LLY,UNH,ABBV,MNKD,MRK,PFE,TMO,DHR,ISRG,VRTX,REGN,VRTX,'  # noqa: E501
+        # High-beta tech & growth favorites
+        'NFLX,SNOW,NET,ROKU,CRWD,PANW,ZS,DDOG,OKTA,SPLK,TEAM,ZM,AFRM,RIVN,LCID,MU,ON,MRVL,ARM,'  # noqa: E501
+        # Semiconductors & hardware
+        'ASML,LRCX,MPWR,NXPI,ADI,KLAC,AMAT,TSM,BRCM,STM,'  # noqa: E501
+        # Materials & commodities movers
+        'FCX,NEM,AA,CLF,VALE,CCJ,ALB,LTHM,MP,'  # noqa: E501
+        # Media, telecom & entertainment
+        'CMCSA,TMUS,CHTR,T,TMUS,VZ,PARA,WBD,EA,TTWO,'  # noqa: E501
+        # Travel & reopening plays
+        'UBER,LYFT,ABNB,CCL,RCL,MAR,H,HLT,UAL,DAL,AAL,SBUX,EXPE,'  # noqa: E501
+        # ETFs for mega moves
+        'SPY,QQQ,IWM,DIA,ARKK,SOXL,SMH,XLF,XLE,XLY,XLC'  # noqa: E501
+    )
+
     GOLDEN_SWEEPS_WATCHLIST = os.getenv(
         'GOLDEN_SWEEPS_WATCHLIST',
-        ','.join(_DEFAULT_STATIC_LIST[:100])
+        _DEFAULT_GOLDEN_LIST
     ).split(',')
 
     SKIP_TICKERS = os.getenv(
@@ -153,6 +178,11 @@ class Config:
     ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
+
+    # Ensure Golden Sweeps watches the same high-premium names surfaced by scalps
+    for ticker in SCALPS_WATCHLIST:
+        if ticker not in GOLDEN_SWEEPS_WATCHLIST:
+            GOLDEN_SWEEPS_WATCHLIST.append(ticker)
     SKIP_TICKERS = [ticker.strip().upper() for ticker in SKIP_TICKERS if ticker.strip()]
     
     # Auto-start Settings

@@ -875,6 +875,8 @@ class DataFetcher:
                         continue
 
                     day_data = contract.get('day', {}) or {}
+                    last_trade = contract.get('last_trade') or {}
+                    last_quote = contract.get('last_quote') or {}
                     current_day_volume = day_data.get('volume', 0)
 
                     if current_day_volume > 0:
@@ -883,8 +885,6 @@ class DataFetcher:
                     # Derive last traded price with sensible fallbacks
                     last_price = day_data.get('close')
                     if not last_price or last_price <= 0:
-                        last_trade = contract.get('last_trade') or {}
-                        last_quote = contract.get('last_quote') or {}
                         quote_last = last_quote.get('last')
 
                         price_candidates = [
@@ -982,6 +982,28 @@ class DataFetcher:
                     
                     option_type = 'CALL' if contract_type == 'call' or (isinstance(ticker, str) and 'C' in ticker) else 'PUT'
 
+                    # Extract quote-based metrics for downstream consumers
+                    bid_price = last_quote.get('bid')
+                    if isinstance(bid_price, dict):
+                        bid_price = bid_price.get('price') or bid_price.get('p') or bid_price.get('midpoint')
+                    if bid_price:
+                        try:
+                            bid_price = DataValidator.validate_price(bid_price, 'bid')
+                        except DataValidationException:
+                            bid_price = None
+
+                    ask_price = last_quote.get('ask')
+                    if isinstance(ask_price, dict):
+                        ask_price = ask_price.get('price') or ask_price.get('p') or ask_price.get('midpoint')
+                    if ask_price:
+                        try:
+                            ask_price = DataValidator.validate_price(ask_price, 'ask')
+                        except DataValidationException:
+                            ask_price = None
+
+                    bid_size = last_quote.get('bid_size') or last_quote.get('bidSize') or 0
+                    ask_size = last_quote.get('ask_size') or last_quote.get('askSize') or 0
+
                     # Create flow signal
                     flow = {
                         'ticker': ticker,
@@ -1003,6 +1025,10 @@ class DataFetcher:
                         'underlying_price': underlying_price,
                         'timestamp': datetime.now(),
                         'flow_intensity': flow_intensity,
+                        'bid': bid_price or 0,
+                        'ask': ask_price or 0,
+                        'bid_size': int(bid_size) if isinstance(bid_size, (int, float)) and bid_size is not None else 0,
+                        'ask_size': int(ask_size) if isinstance(ask_size, (int, float)) and ask_size is not None else 0,
                     }
 
                     flows.append(flow)
