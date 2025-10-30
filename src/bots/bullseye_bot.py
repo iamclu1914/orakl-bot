@@ -34,6 +34,7 @@ class BullseyeBot(BaseAutoBot):
         self.MIN_OI_RATIO = 2.0
         self.MIN_DTE = 15
         self.MAX_DTE = 45
+        self.MIN_VOLUME_DELTA = 100
 
     async def scan_and_post(self):
         """Scan for high-conviction swing trades"""
@@ -94,10 +95,10 @@ class BullseyeBot(BaseAutoBot):
                     self._log_skip(symbol, f"bullseye premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
                     continue
                 total_volume = flow['total_volume']
+                volume_delta = flow.get('volume_delta', 0)
                 if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
                     self._log_skip(symbol, f"bullseye volume too small ({total_volume}/{volume_delta})")
                     continue
-                volume_delta = flow['volume_delta']
                 open_interest = flow.get('open_interest', 0)
                 delta = flow.get('delta', 0)
                 bid = flow.get('bid', 0)
