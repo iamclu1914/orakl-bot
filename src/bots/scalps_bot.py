@@ -203,8 +203,9 @@ class ScalpsBot(BaseAutoBot):
                 )
 
                 if scalp_score >= adjusted_threshold:
-                    # Calculate average price from premium and volume
-                    avg_price = premium / (total_volume * 100) if total_volume > 0 else 0
+                    # Calculate average price using the contracts actually traded in this sweep
+                    traded_contracts = volume_delta if volume_delta and volume_delta > 0 else total_volume
+                    avg_price = premium / (traded_contracts * 100) if traded_contracts else 0
 
                     # Calculate exit strategies
                     exits = ExitStrategies.calculate_exits(

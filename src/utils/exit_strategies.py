@@ -75,6 +75,8 @@ class ExitStrategies:
         reward1 = target_1 - entry_price
         reward2 = target_2 - entry_price
         
+        trail_pct = 0.15  # 15% trailing stop reference
+
         return {
             'stop_loss': round(stop_loss, 2),
             'target_1': round(target_1, 2),
@@ -84,7 +86,7 @@ class ExitStrategies:
             'target2_pct': f"+{target2_pct*100:.0f}%",
             'risk_reward_1': round(reward1 / risk, 2) if risk > 0 else 0,
             'risk_reward_2': round(reward2 / risk, 2) if risk > 0 else 0,
-            'trail_stop': round(entry_price * 0.15, 2),  # 15% trailing
+            'trail_stop': round(entry_price * (1 - trail_pct), 2),
             'scale_out': {
                 'target_1_size': 0.75,  # Take 75% at T1
                 'target_2_size': 0.25,  # Take 25% at T2
@@ -125,6 +127,8 @@ class ExitStrategies:
         reward2 = target_2 - entry_price
         reward3 = target_3 - entry_price
         
+        trail_pct = 0.20  # 20% trailing
+
         return {
             'stop_loss': round(stop_loss, 2),
             'target_1': round(target_1, 2),
@@ -137,7 +141,7 @@ class ExitStrategies:
             'risk_reward_1': round(reward1 / risk, 2) if risk > 0 else 0,
             'risk_reward_2': round(reward2 / risk, 2) if risk > 0 else 0,
             'risk_reward_3': round(reward3 / risk, 2) if risk > 0 else 0,
-            'trail_stop': round(entry_price * 0.20, 2),  # 20% trailing
+            'trail_stop': round(entry_price * (1 - trail_pct), 2),
             'scale_out': {
                 'target_1_size': 0.50,  # Take 50% at T1
                 'target_2_size': 0.30,  # Take 30% at T2
@@ -158,6 +162,8 @@ class ExitStrategies:
         target_1 = entry_price * 1.30   # 30% target
         target_2 = entry_price * 1.60   # 60% target
         
+        trail_pct = 0.15
+
         return {
             'stop_loss': round(stop_loss, 2),
             'target_1': round(target_1, 2),
@@ -167,7 +173,7 @@ class ExitStrategies:
             'target2_pct': "+60%",
             'risk_reward_1': 1.2,
             'risk_reward_2': 2.4,
-            'trail_stop': round(entry_price * 0.15, 2),
+            'trail_stop': round(entry_price * (1 - trail_pct), 2),
             'scale_out': {
                 'target_1_size': 0.60,
                 'target_2_size': 0.40,
