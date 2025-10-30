@@ -18,13 +18,13 @@ class DarkpoolBot(BaseAutoBot):
     """
 
     # Configuration constants
-    MIN_BLOCK_SIZE = 4000  # Minimum shares for block trade detection (more realistic)
+    MIN_BLOCK_SIZE = 2000  # Minimum shares for block trade detection (more realistic)
     KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
     DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.001  # 0.1% threshold for aggressive buying/selling
-    MIN_DOLLAR_VALUE = 3000000  # Minimum $3M trade value for significant prints
+    MIN_DOLLAR_VALUE = 1000000  # Minimum $1M trade value for significant prints
     MIN_BLOCK_COUNT = 1
-    BLOCK_SIZE_MULTIPLIER = 3  # Trade must be 3x average print size
-    MIN_MARKETCAP_RATIO = 0.0003  # Trade >= 0.03% of market cap
+    BLOCK_SIZE_MULTIPLIER = 2  # Trade must be 2x average print size
+    MIN_MARKETCAP_RATIO = 0.00005  # Trade >= 0.005% of market cap
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=Config.DARKPOOL_INTERVAL)
@@ -75,7 +75,7 @@ class DarkpoolBot(BaseAutoBot):
             market_cap = financials.get('market_cap') if financials else None
 
             # Get recent trades
-            trades = await self.fetcher.get_stock_trades(symbol, limit=1000)
+            trades = await self.fetcher.get_stock_trades(symbol, limit=400)
             if not trades:
                 logger.debug(f"{symbol}: No trades found")
                 return blocks

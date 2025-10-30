@@ -29,12 +29,13 @@ class BullseyeBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_PREMIUM = 500000  # minimum premium for Bullseye signals
-        self.MIN_VOLUME = 200
-        self.MIN_OI_RATIO = 2.0
+        self.MIN_PREMIUM = 200000  # minimum premium for Bullseye signals
+        self.MIN_VOLUME = 75
+        self.MIN_OPEN_INTEREST = 250
         self.MIN_DTE = 15
         self.MAX_DTE = 45
-        self.MIN_VOLUME_DELTA = 100
+        self.MIN_VOLUME_DELTA = 30
+        self.MIN_VOI_RATIO = 0.75
 
     async def scan_and_post(self):
         """Scan for high-conviction swing trades"""
@@ -117,8 +118,8 @@ class BullseyeBot(BaseAutoBot):
                     continue
 
                 # Filter 2: Liquidity guards (Phase 1 - with diagnostic logging)
-                # Minimum open interest ratio
-                required_oi = max(500, total_volume * self.MIN_OI_RATIO)
+                # Require a baseline of open interest so the contract is tradable
+                required_oi = max(self.MIN_OPEN_INTEREST, total_volume * 0.5)
                 if open_interest < required_oi:
                     self._log_skip(symbol, f'bullseye OI {open_interest} < required {required_oi:.0f}')
                     continue
@@ -130,14 +131,14 @@ class BullseyeBot(BaseAutoBot):
                         self._log_skip(symbol, f"bullseye spread {spread_pct:.2f}% > 5%")
                         continue
 
-                # Filter 3: VOI ratio (volume/OI > 3.0)
-                if open_interest == 0 or total_volume < self.MIN_VOLUME:
-                    self._log_skip(symbol, f'bullseye insufficient volume {total_volume} or OI zero')
+                # Filter 3: VOI ratio (volume_delta / OI)
+                if open_interest == 0:
+                    self._log_skip(symbol, 'bullseye open interest zero')
                     continue
 
-                voi_ratio = total_volume / open_interest
-                if voi_ratio < 3.0:
-                    self._log_skip(symbol, f'bullseye VOI {voi_ratio:.1f}x < 3.0x')
+                voi_ratio = volume_delta / open_interest
+                if voi_ratio < self.MIN_VOI_RATIO:
+                    self._log_skip(symbol, f'bullseye VOI {voi_ratio:.2f}x < {self.MIN_VOI_RATIO:.2f}x')
                     continue
 
                 # Filter 4: ATM options only (delta 0.4-0.6 range)
