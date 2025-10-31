@@ -426,6 +426,27 @@ class STRATPatternBot:
         
         return confidence
 
+    def _get_active_patterns(self, current_time: Optional[datetime] = None) -> set:
+        """Determine which STRAT patterns should be evaluated right now."""
+        now = current_time or datetime.now(self.est)
+        hour = now.hour
+        minute = now.minute
+        active = set()
+
+        # 1-3-1 Miyagi → evaluate once the 20:00 ET bar closes (20:00-21:14 window)
+        if hour == 20 or (hour == 21 and minute < 15):
+            active.add('131')
+
+        # 2-2 Reversal → evaluate after the 8:00 ET 4h candle closes (08:00-09:14 window)
+        if hour == 8 or (hour == 9 and minute < 15):
+            active.add('22')
+
+        # 3-2-2 Reversal → evaluate after the 10:00 ET sequence completes (10:00-11:14 window)
+        if hour == 10 or (hour == 11 and minute < 15):
+            active.add('322')
+
+        return active
+
     def should_alert_pattern(self, pattern_type: str, signal: Dict) -> bool:
         """
         Check if pattern should be alerted based on pattern-specific time windows
@@ -741,7 +762,7 @@ class STRATPatternBot:
 
         return signal
 
-    async def scan_ticker(self, ticker: str) -> List[Dict]:
+    async def scan_ticker(self, ticker: str, active_patterns: Optional[set] = None) -> List[Dict]:
         """
         Scan ticker for all STRAT patterns across multiple timeframes
         
@@ -751,6 +772,10 @@ class STRATPatternBot:
         - 3-2-2 Reversal: 60m bars (8am, 9am, 10am ET)
         """
         signals = []
+        active_patterns = set(active_patterns or {'131', '22', '322'})
+        if not active_patterns:
+            return signals
+
         now = datetime.now(self.est)
 
         try:
@@ -765,76 +790,18 @@ class STRATPatternBot:
                 from_date=start_date.strftime('%Y-%m-%d'),
                 to_date=end_date.strftime('%Y-%m-%d')
             )
-            
-            if bars_60m is None or len(bars_60m) == 0:
-                return signals
-            
-            # Normalize bars
-            if hasattr(bars_60m, 'to_dict'):
-                bars_list = bars_60m.to_dict('records')
-            else:
-                bars_list = bars_60m
-            
+
             normalized_60m = []
-            for bar in bars_list:
-                # Handle timestamp - convert pandas Timestamp to int milliseconds
-                timestamp = bar.get('t', bar.get('timestamp', 0))
-                if hasattr(timestamp, 'timestamp'):
-                    timestamp_ms = int(timestamp.timestamp() * 1000)
-                else:
-                    timestamp_ms = int(timestamp) if timestamp else 0
-                
-                normalized_60m.append({
-                    'o': bar.get('o', bar.get('open', 0)),
-                    'h': bar.get('h', bar.get('high', 0)),
-                    'l': bar.get('l', bar.get('low', 0)),
-                    'c': bar.get('c', bar.get('close', 0)),
-                    'v': bar.get('v', bar.get('volume', 0)),
-                    't': timestamp_ms
-                })
-            
-            # ===== 1. SCAN 3-2-2 REVERSAL (60m: 8am-9am-10am) =====
-            patterns_322 = self.strat_60m_detector.detect_322_reversal_8am_10am(normalized_60m)
-            for sig in patterns_322:
-                signal = {
-                    'pattern': '3-2-2 Reversal',
-                    'symbol': ticker,
-                    'completed_at': sig['completed_at'],
-                    'entry': sig['entry'],
-                    'type': sig['bias'],
-                    'confidence_score': 0.75,
-                    'bars': f"{sig['pattern_sequence']}",
-                    'timeframe': '60m'
-                }
-                signals.append(signal)
-            
-            # ===== 2. SCAN 2-2 REVERSAL (4h: 4am-8am) =====
-            # Try direct 240-minute aggregates first, fall back to composition
-            bars_240m = await self.data_fetcher.get_aggregates(
-                ticker,
-                timespan='minute',
-                multiplier=240,  # 4 hours = 240 minutes
-                from_date=start_date.strftime('%Y-%m-%d'),
-                to_date=end_date.strftime('%Y-%m-%d')
-            )
-            
-            # Check if direct 240m is good, otherwise compose from 60m
-            if bars_240m is not None and len(bars_240m) >= 4:
-                if hasattr(bars_240m, 'to_dict'):
-                    bars_4h_list = bars_240m.to_dict('records')
-                else:
-                    bars_4h_list = bars_240m
-                
-                normalized_240 = []
-                for bar in bars_4h_list:
-                    # Handle timestamp - convert pandas Timestamp to int milliseconds
+            if bars_60m is not None and len(bars_60m) > 0:
+                bars_list = bars_60m.to_dict('records') if hasattr(bars_60m, 'to_dict') else bars_60m
+                for bar in bars_list:
                     timestamp = bar.get('t', bar.get('timestamp', 0))
                     if hasattr(timestamp, 'timestamp'):
                         timestamp_ms = int(timestamp.timestamp() * 1000)
                     else:
                         timestamp_ms = int(timestamp) if timestamp else 0
-                    
-                    normalized_240.append({
+
+                    normalized_60m.append({
                         'o': bar.get('o', bar.get('open', 0)),
                         'h': bar.get('h', bar.get('high', 0)),
                         'l': bar.get('l', bar.get('low', 0)),
@@ -842,29 +809,75 @@ class STRATPatternBot:
                         'v': bar.get('v', bar.get('volume', 0)),
                         't': timestamp_ms
                     })
-                bars_4h = normalized_240
-                logger.debug(f"{ticker}: Using direct 240m bars for 4h")
             else:
-                # Compose from 60m
-                bars_4h = self.strat_4h_detector.compose_4h_bars(normalized_60m)
-                logger.debug(f"{ticker}: Composed 4h bars from 60m")
+                logger.debug(f"{ticker}: No 60m data available for current STRAT scan window")
             
-            patterns_22 = self.strat_4h_detector.detect_22_reversal_4am_8am(bars_4h)
-            for sig in patterns_22:
-                signal = {
-                    'pattern': '2-2 Reversal',
-                    'symbol': ticker,
-                    'completed_at': sig['completed_at'],
-                    'entry': sig['entry'],
-                    'type': sig['direction'],
-                    'confidence_score': 0.70,
-                    'bars': f"{sig['bar_4am']['type']}→{sig['bar_8am']['type']}",
-                    'timeframe': '4h'
-                }
-                signals.append(signal)
+            # ===== 1. SCAN 3-2-2 REVERSAL (60m: 8am-9am-10am) =====
+            if '322' in active_patterns:
+                patterns_322 = self.strat_60m_detector.detect_322_reversal_8am_10am(normalized_60m)
+                for sig in patterns_322:
+                    signal = {
+                        'pattern': '3-2-2 Reversal',
+                        'symbol': ticker,
+                        'completed_at': sig['completed_at'],
+                        'entry': sig['entry'],
+                        'type': sig['bias'],
+                        'confidence_score': 0.75,
+                        'bars': f"{sig['pattern_sequence']}",
+                        'timeframe': '60m'
+                    }
+                    signals.append(signal)
+            
+            # ===== 2. SCAN 2-2 REVERSAL (4h: 4am-8am) =====
+            if '22' in active_patterns:
+                bars_240m = await self.data_fetcher.get_aggregates(
+                    ticker,
+                    timespan='minute',
+                    multiplier=240,  # 4 hours = 240 minutes
+                    from_date=start_date.strftime('%Y-%m-%d'),
+                    to_date=end_date.strftime('%Y-%m-%d')
+                )
+
+                if bars_240m is not None and len(bars_240m) >= 4:
+                    bars_4h_list = bars_240m.to_dict('records') if hasattr(bars_240m, 'to_dict') else bars_240m
+                    normalized_240 = []
+                    for bar in bars_4h_list:
+                        timestamp = bar.get('t', bar.get('timestamp', 0))
+                        if hasattr(timestamp, 'timestamp'):
+                            timestamp_ms = int(timestamp.timestamp() * 1000)
+                        else:
+                            timestamp_ms = int(timestamp) if timestamp else 0
+
+                        normalized_240.append({
+                            'o': bar.get('o', bar.get('open', 0)),
+                            'h': bar.get('h', bar.get('high', 0)),
+                            'l': bar.get('l', bar.get('low', 0)),
+                            'c': bar.get('c', bar.get('close', 0)),
+                            'v': bar.get('v', bar.get('volume', 0)),
+                            't': timestamp_ms
+                        })
+                    bars_4h = normalized_240
+                    logger.debug(f"{ticker}: Using direct 240m bars for 4h")
+                else:
+                    bars_4h = self.strat_4h_detector.compose_4h_bars(normalized_60m)
+                    logger.debug(f"{ticker}: Composed 4h bars from 60m")
+
+                patterns_22 = self.strat_4h_detector.detect_22_reversal_4am_8am(bars_4h)
+                for sig in patterns_22:
+                    signal = {
+                        'pattern': '2-2 Reversal',
+                        'symbol': ticker,
+                        'completed_at': sig['completed_at'],
+                        'entry': sig['entry'],
+                        'type': sig['direction'],
+                        'confidence_score': 0.70,
+                        'bars': f"{sig['bar_4am']['type']}→{sig['bar_8am']['type']}",
+                        'timeframe': '4h'
+                    }
+                    signals.append(signal)
             
             # ===== 3. SCAN 1-3-1 MIYAGI (12h: 08:00 & 20:00) =====
-            if now.hour == 20:
+            if '131' in active_patterns:
                 bars_12h = self.strat_12h_composer.compose_12h_bars(normalized_60m)
                 if len(bars_12h) >= 4:
                     typed_bars_12h = self.strat_12h_detector.attach_types(bars_12h)
@@ -896,51 +909,49 @@ class STRATPatternBot:
                                 'pattern_bars': sig['pattern_bars'],
                                 'timeframe': '12h'
                             }
+                            signals.append(signal)
+
+            # Additional confirmation scans using legacy detectors (only in active windows)
+            if '322' in active_patterns:
+                start_time = now.replace(hour=7, minute=0) if now.hour >= 7 else now - timedelta(days=1)
+                df_60m = await self.data_fetcher.get_aggregates(
+                    ticker, 'minute', 60,
+                    start_time.strftime('%Y-%m-%d'),
+                    now.strftime('%Y-%m-%d')
+                )
+                if df_60m is not None and not df_60m.empty:
+                    bars_60m_latest = df_60m.to_dict('records')
+                    bars_60m_latest = [{
+                        'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                        't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)
+                    } for b in bars_60m_latest]
+                    signal = self.check_322_reversal(bars_60m_latest, ticker)
+                    if signal:
+                        confidence = await self.calculate_dynamic_confidence(
+                            ticker, '3-2-2 Reversal', signal, bars_60m_latest
+                        )
+                        signal['confidence_score'] = confidence
                         signals.append(signal)
-            else:
-                logger.debug(f"{ticker}: Skipping 1-3-1 scan outside 20:00 ET window")
 
-            # 3-2-2 Reversal - Always scan, pattern must have formed after 10am ET
-            # Get data from 7am to current time
-            start_time = now.replace(hour=7, minute=0) if now.hour >= 7 else now - timedelta(days=1)
-            df_60m = await self.data_fetcher.get_aggregates(
-                ticker, 'minute', 60,
-                start_time.strftime('%Y-%m-%d'),
-                now.strftime('%Y-%m-%d')
-            )
-            if not df_60m.empty:
-                bars_60m = df_60m.to_dict('records')
-                bars_60m = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                             't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)} for b in bars_60m]
-                signal = self.check_322_reversal(bars_60m, ticker)
-                if signal:
-                    # Calculate dynamic confidence
-                    confidence = await self.calculate_dynamic_confidence(
-                        ticker, '3-2-2 Reversal', signal, bars_60m
-                    )
-                    signal['confidence_score'] = confidence
-                    signals.append(signal)
-
-            # 2-2 Reversal - Always scan on 4H timeframe
-            # Pattern can complete at any time after 8am
-            # Use 240-minute aggregation (4 hours) per MVP specification
-            df_4h = await self.data_fetcher.get_aggregates(
-                ticker, 'minute', 240,
-                (now - timedelta(days=2)).strftime('%Y-%m-%d'),
-                now.strftime('%Y-%m-%d')
-            )
-            if not df_4h.empty:
-                bars_4h = df_4h.to_dict('records')
-                bars_4h = [{'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
-                           't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)} for b in bars_4h]
-                signal = self.check_22_reversal(bars_4h, ticker)
-                if signal:
-                    # Calculate dynamic confidence
-                    confidence = await self.calculate_dynamic_confidence(
-                        ticker, '2-2 Reversal', signal, bars_4h
-                    )
-                    signal['confidence_score'] = confidence
-                    signals.append(signal)
+            if '22' in active_patterns:
+                df_4h = await self.data_fetcher.get_aggregates(
+                    ticker, 'minute', 240,
+                    (now - timedelta(days=2)).strftime('%Y-%m-%d'),
+                    now.strftime('%Y-%m-%d')
+                )
+                if df_4h is not None and not df_4h.empty:
+                    bars_4h_latest = df_4h.to_dict('records')
+                    bars_4h_latest = [{
+                        'h': b['high'], 'l': b['low'], 'o': b['open'], 'c': b['close'],
+                        't': int(b['timestamp'].timestamp() * 1000), 'v': b.get('volume', 0)
+                    } for b in bars_4h_latest]
+                    signal = self.check_22_reversal(bars_4h_latest, ticker)
+                    if signal:
+                        confidence = await self.calculate_dynamic_confidence(
+                            ticker, '2-2 Reversal', signal, bars_4h_latest
+                        )
+                        signal['confidence_score'] = confidence
+                        signals.append(signal)
 
         except Exception as e:
             logger.error(f"Error scanning {ticker}: {e}")
@@ -1056,11 +1067,11 @@ class STRATPatternBot:
         """PRD Enhanced: Scan with best signal selection - 24/7 monitoring"""
         logger.info(f"{self.name} scan started")
 
-        # STRAT patterns work on any timeframe, so scan 24/7 including weekends
-        # This allows detection of patterns forming outside regular market hours
-        # Note: Actual trading signals should still be validated during market hours
-
         signals_found = []
+        active_patterns = self._get_active_patterns()
+        if not active_patterns:
+            logger.debug("STRAT Pattern Scanner outside alert windows, skipping scan")
+            return
         
         # Use watchlist from BotManager or fallback to complete list
         watchlist = self.watchlist if self.watchlist else STRAT_COMPLETE_WATCHLIST
@@ -1068,7 +1079,7 @@ class STRATPatternBot:
 
         for ticker in watchlist:
             try:
-                signals = await self.scan_ticker(ticker)
+                signals = await self.scan_ticker(ticker, active_patterns)
 
                 # FIX: Process ALL patterns that meet criteria, not just highest confidence
                 # Multiple patterns can alert in their respective time windows
@@ -1233,17 +1244,17 @@ class STRATPatternBot:
         """Calculate optimal scan interval based on current time"""
         now = datetime.now(self.est)
 
-        # Scan more frequently during ALL alert windows (1 minute intervals)
-        # 1-3-1 Miyagi: 8:00 AM and 8:00 PM
-        # 2-2 Reversal: 4:00 AM and 8:00 AM
-        # 3-2-2 Reversal: 10:01 AM
-        alert_hours = [4, 8, 10, 20]
-        if now.hour in alert_hours and now.minute <= 15:
-            return 60  # 1 minute during alert windows
-        elif now.hour == 19 and now.minute >= 55:  # Pre-alert window
-            return 120  # 2 minutes before alert time
-        else:
-            return 300  # Default 5 minutes throughout the day
+        active_patterns = self._get_active_patterns(now)
+        if active_patterns:
+            return 60  # Run every minute while alerts are live
+
+        # Pre-alert staging: ramp up shortly before each window
+        if (now.hour == 7 and now.minute >= 55) or \
+           (now.hour == 9 and now.minute >= 55) or \
+           (now.hour == 19 and now.minute >= 55):
+            return 120
+
+        return 600  # Default to 10 minutes outside alert windows
 
     async def start(self):
         """Start the bot"""
