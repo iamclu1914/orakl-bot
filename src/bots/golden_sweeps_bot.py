@@ -148,35 +148,62 @@ class GoldenSweepsBot(SweepsBot):
         # Get enhanced score
         final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep.get('sweep_score', 0)))
 
-        # Determine contract symbol and sector (if provided)
+        # Build contract string even when ticker is missing
         contract_symbol = (
             sweep.get('contract')
             or sweep.get('option_symbol')
             or sweep.get('contract_symbol')
-            or "--"
+            or f"{sweep['symbol']} {sweep['strike']:.0f} {sweep['type']} {sweep['expiration']}"
         )
+
         sector = sweep.get('sector')
 
-        # Format details string (contracts @ avg_price)
-        details = f"{sweep['volume']:,} @ {sweep['avg_price']:.2f}"
+        size_display = ""
+        volume_value = sweep.get('volume')
+        if isinstance(volume_value, (int, float)) and volume_value > 0:
+            size_display = f"{int(volume_value):,}"
+
+        avg_price_display = ""
+        avg_price = sweep.get('avg_price')
+        if isinstance(avg_price, (int, float)) and avg_price > 0:
+            avg_price_display = f"${avg_price:.2f}"
+
+        details_raw = sweep.get('details')
+        if (not size_display or not avg_price_display) and isinstance(details_raw, str) and '@' in details_raw:
+            size_part, price_part = details_raw.split('@', 1)
+            if not size_display:
+                size_display = size_part.strip()
+            if not avg_price_display:
+                price_part = price_part.strip()
+                avg_price_display = price_part if price_part else avg_price_display
+
+        if not size_display:
+            size_display = "Unavailable"
+        if not avg_price_display:
+            avg_price_display = "Unavailable"
 
         fields = [
             {"name": "Date", "value": date_str, "inline": True},
             {"name": "Time", "value": time_str, "inline": True},
             {"name": "Ticker", "value": sweep['symbol'], "inline": True},
             {"name": "Contract", "value": contract_symbol, "inline": False},
+            {"name": "Premium", "value": f"${sweep['premium']:,.2f}", "inline": True},
+            {"name": "Size", "value": size_display, "inline": True},
+            {"name": "Avg Price", "value": avg_price_display, "inline": True},
             {"name": "Exp", "value": exp_str, "inline": True},
-            {"name": "Strike", "value": f"{sweep['strike']:.0f}", "inline": True},
+            {"name": "Strike", "value": f"${sweep['strike']:.2f}", "inline": True},
             {"name": "C/P", "value": sweep['type'] + "S", "inline": True},
-            {"name": "Spot", "value": f"{sweep['current_price']:.2f}", "inline": True},
-            {"name": "Details", "value": details, "inline": True},
+            {"name": "Spot", "value": f"${sweep['current_price']:.2f}", "inline": True},
             {"name": "Type", "value": "SWEEP", "inline": True},
-            {"name": "Prem", "value": f"${premium_millions:.1f}M", "inline": True},
+            {"name": "Prem (M)", "value": f"${premium_millions:.1f}M", "inline": True},
             {"name": "Algo Score", "value": str(int(final_score)), "inline": True}
         ]
 
         if sector:
             fields.append({"name": "Sector", "value": sector, "inline": True})
+
+        if isinstance(details_raw, str) and details_raw.strip():
+            fields.append({"name": "Details", "value": details_raw.strip(), "inline": True})
 
         embed = self.create_signal_embed_with_disclaimer(
             title=f"🏆 {sweep['ticker']} - Golden Sweep Detected",
