@@ -5,12 +5,89 @@ Validates that Polygon bars align to expected clock hours per MVP specification
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
 import pytz
+from pytz import exceptions as pytz_exceptions
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python <3.9 fallback
+    ZoneInfo = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
-def get_bar_for_hour(bars: List[Dict], target_hour: int, tz=pytz.timezone('America/New_York')) -> Optional[Dict]:
+def _get_default_et_timezone():
+    """Return the default US Eastern timezone using zoneinfo when available."""
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo("America/New_York")
+        except Exception:  # pragma: no cover - safety net
+            pass
+    return pytz.timezone('America/New_York')
+
+
+def _get_utc_timezone():
+    """Return a UTC timezone object compatible with the active timezone backend."""
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo("UTC")
+        except Exception:  # pragma: no cover - safety net
+            pass
+    return pytz.timezone('UTC')
+
+
+DEFAULT_ET_TZ = _get_default_et_timezone()
+UTC_TZ = _get_utc_timezone()
+
+
+def _convert_timestamp_to_tz(timestamp_ms: int, tz) -> datetime:
+    """Convert a millisecond timestamp to the specified timezone."""
+    seconds = timestamp_ms / 1000.0
+    dt_utc = datetime.fromtimestamp(seconds, tz=UTC_TZ)
+
+    if tz is None or tz == UTC_TZ:
+        return dt_utc
+
+    if hasattr(tz, 'normalize'):
+        # pytz timezone
+        return tz.normalize(dt_utc.astimezone(tz))
+
+    return dt_utc.astimezone(tz)
+
+
+def _build_target_time(bar_start: datetime, target_hour: int, tz) -> Optional[datetime]:
+    """Create a timezone-aware datetime for the target hour on the bar's date."""
+    naive_target = datetime(
+        bar_start.year,
+        bar_start.month,
+        bar_start.day,
+        target_hour,
+        0,
+        0,
+        0,
+    )
+
+    if hasattr(tz, 'localize'):
+        try:
+            return tz.localize(naive_target, is_dst=None)
+        except pytz_exceptions.AmbiguousTimeError:
+            # Prefer the first occurrence (DST=True) during fall-back transitions
+            return tz.localize(naive_target, is_dst=True)
+        except pytz_exceptions.NonExistentTimeError:
+            return None
+
+    target = naive_target.replace(tzinfo=tz, fold=0)
+    try:
+        # This call validates the datetime; zoneinfo raises on nonexistent times
+        tz.utcoffset(target)
+    except Exception:
+        return None
+
+    return target
+
+
+def get_bar_for_hour(bars: List[Dict], target_hour: int, tz=DEFAULT_ET_TZ) -> Optional[Dict]:
     """
     Get bar that CONTAINS the target hour (e.g., 8:00 AM - 8:59:59 AM)
 
@@ -26,18 +103,27 @@ def get_bar_for_hour(bars: List[Dict], target_hour: int, tz=pytz.timezone('Ameri
         # Get 8:00 AM bar (any bar containing 8:00:00 - 8:59:59)
         bar_8am = get_bar_for_hour(bars, 8, pytz.timezone('America/New_York'))
     """
+    timezone = tz or DEFAULT_ET_TZ
+
     for bar in bars:
         if 't' not in bar:
             continue
 
-        bar_start = datetime.fromtimestamp(bar['t'] / 1000, tz=tz)
+        try:
+            bar_start = _convert_timestamp_to_tz(bar['t'], timezone)
+        except Exception as exc:
+            logger.warning(f"Failed to convert bar timestamp for hour {target_hour}: {exc}")
+            continue
 
         # For 60-minute bars, end is start + 60 minutes
         # For other timeframes, this needs to be parameterized
         bar_end = bar_start + timedelta(minutes=60)
 
         # Create target time at the specified hour
-        target_time = bar_start.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        target_time = _build_target_time(bar_start, target_hour, timezone)
+
+        if target_time is None:
+            continue
 
         # Check if target hour falls within this bar's range
         if bar_start <= target_time < bar_end:
@@ -50,7 +136,7 @@ def get_bar_for_hour(bars: List[Dict], target_hour: int, tz=pytz.timezone('Ameri
 
 def get_bars_for_hours(bars: List[Dict], target_hours: List[int],
                        timeframe_minutes: int = 60,
-                       tz=pytz.timezone('America/New_York')) -> Dict[int, Optional[Dict]]:
+                       tz=DEFAULT_ET_TZ) -> Dict[int, Optional[Dict]]:
     """
     Get bars for multiple target hours with alignment validation
 
@@ -69,6 +155,8 @@ def get_bars_for_hours(bars: List[Dict], target_hours: List[int],
     """
     result = {}
 
+    timezone = tz or DEFAULT_ET_TZ
+
     for target_hour in target_hours:
         found_bar = None
 
@@ -76,11 +164,18 @@ def get_bars_for_hours(bars: List[Dict], target_hours: List[int],
             if 't' not in bar:
                 continue
 
-            bar_start = datetime.fromtimestamp(bar['t'] / 1000, tz=tz)
+            try:
+                bar_start = _convert_timestamp_to_tz(bar['t'], timezone)
+            except Exception as exc:
+                logger.warning(f"Failed to convert bar timestamp for hour {target_hour}: {exc}")
+                continue
+
             bar_end = bar_start + timedelta(minutes=timeframe_minutes)
 
             # Create target time at the specified hour
-            target_time = bar_start.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+            target_time = _build_target_time(bar_start, target_hour, timezone)
+            if target_time is None:
+                continue
 
             # Check if target hour falls within this bar's range
             if bar_start <= target_time < bar_end:

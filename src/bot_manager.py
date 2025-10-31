@@ -93,7 +93,10 @@ class BotManager:
         )
         self.bots.append(self.sweeps_bot)
         self.bot_overrides[self.sweeps_bot] = sweeps_watchlist
-        logger.info(f"  ✓ Sweeps Bot → Channel ID: {Config.SWEEPS_WEBHOOK.split('/')[-2]}")
+        logger.info(
+            f"  ✓ Sweeps Bot → Channel ID: {Config.SWEEPS_WEBHOOK.split('/')[-2]}"
+            f" | Watchlist: {len(sweeps_watchlist)} tickers"
+        )
 
         # Golden Sweeps Bot (1M+ Sweeps)
         golden_watchlist = list(Config.GOLDEN_SWEEPS_WATCHLIST)
@@ -105,17 +108,25 @@ class BotManager:
         )
         self.bots.append(self.golden_sweeps_bot)
         self.bot_overrides[self.golden_sweeps_bot] = golden_watchlist
-        logger.info(f"  ✓ Golden Sweeps Bot → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}")
+        logger.info(
+            f"  ✓ Golden Sweeps Bot → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}"
+            f" | Watchlist: {len(golden_watchlist)} tickers"
+        )
 
         # Darkpool Bot (Large Darkpool/Blocks)
+        darkpool_watchlist = list(Config.DARKPOOL_WATCHLIST)
         self.darkpool_bot = DarkpoolBot(
             Config.DARKPOOL_WEBHOOK,
-            self.watchlist,
+            darkpool_watchlist,
             self.fetcher,
             self.analyzer
         )
         self.bots.append(self.darkpool_bot)
-        logger.info(f"  ✓ Darkpool Bot → Channel ID: {Config.DARKPOOL_WEBHOOK.split('/')[-2]}")
+        self.bot_overrides[self.darkpool_bot] = darkpool_watchlist
+        logger.info(
+            f"  ✓ Darkpool Bot → Channel ID: {Config.DARKPOOL_WEBHOOK.split('/')[-2]}"
+            f" | Watchlist: {len(darkpool_watchlist)} tickers"
+        )
 
         # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
         self.strat_bot = STRATPatternBot(self.fetcher)

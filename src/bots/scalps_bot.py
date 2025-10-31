@@ -649,18 +649,18 @@ class ScalpsBot(BaseAutoBot):
         def format_price(value: float) -> str:
             if isinstance(value, (int, float)) and value and value > 0:
                 return f"${value:.2f}"
-            return "N/A"
+            return "--"
 
         def format_size(value: float) -> str:
             if isinstance(value, (int, float)) and value and value > 0:
                 return f"{int(value):,}"
-            return "?"
+            return "--"
 
         contracts_traded = signal.get('contracts_traded') or signal.get('volume_delta', 0)
         if isinstance(contracts_traded, (int, float)) and contracts_traded > 0:
             contracts_display = f"{int(contracts_traded):,}"
         else:
-            contracts_display = "N/A"
+            contracts_display = "--"
 
         premium_display = f"${signal['premium']:,.0f}"
 
@@ -669,16 +669,16 @@ class ScalpsBot(BaseAutoBot):
         bid_size_display = format_size(signal.get('bid_size', 0))
         ask_size_display = format_size(signal.get('ask_size', 0))
 
-        if bid_display != "N/A" and ask_display != "N/A":
+        if bid_display != "--" and ask_display != "--":
             bid_ask_display = f"{bid_display} ({bid_size_display}) -> {ask_display} ({ask_size_display})"
         else:
-            bid_ask_display = "N/A"
+            bid_ask_display = "--"
 
         entry_zone = signal.get('exit_strategy', {}).get('entry_zone', {})
         if entry_zone and 'lower' in entry_zone and 'upper' in entry_zone:
             algo_entry_display = f"${entry_zone['lower']:.2f} - ${entry_zone['upper']:.2f}"
         else:
-            algo_entry_display = "N/A"
+            algo_entry_display = "--"
 
         contracts_premium_display = f"{contracts_display} / {premium_display}"
 

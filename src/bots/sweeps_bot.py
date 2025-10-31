@@ -278,14 +278,14 @@ class SweepsBot(BaseAutoBot):
             confidence_parts.append(f"{volume_ratio:.1f}x Vol")
         if price_aligned:
             confidence_parts.append("Price Aligned")
-        confidence = " | ".join(confidence_parts) if confidence_parts else "N/A"
+        confidence = " | ".join(confidence_parts)
 
         alert_type = sweep.get('alert_type', 'NEW')
         description_parts = [f"**{sentiment}**"]
         if alert_type == 'ACCUMULATION':
             description_parts.append("🔥 **ACCUMULATION** 🔥")
         description_parts.append(f"Score: {int(final_score)}/100")
-        if confidence != 'N/A':
+        if confidence:
             description_parts.append(confidence)
 
         # Build base fields

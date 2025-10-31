@@ -63,6 +63,7 @@ class Config:
     # Bot-specific Thresholds
     GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M
     DARKPOOL_MIN_BLOCK_SIZE = int(os.getenv('DARKPOOL_MIN_BLOCK_SIZE', '10000'))
+    DARKPOOL_BATCH_SIZE = int(os.getenv('DARKPOOL_BATCH_SIZE', '120'))
     SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '50000'))  # $50k
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '5000'))  # $5k for intraday
     SCALPS_MIN_PREMIUM = float(os.getenv('SCALPS_MIN_PREMIUM', '2000'))  # $2k for scalps
@@ -137,6 +138,11 @@ class Config:
         ','.join(_DEFAULT_STATIC_LIST[:120])
     ).split(',')
 
+    DARKPOOL_WATCHLIST = os.getenv(
+        'DARKPOOL_WATCHLIST',
+        ','.join(_DEFAULT_STATIC_LIST[:120])
+    ).split(',')
+
     _DEFAULT_GOLDEN_LIST = (
         # Mega cap technology & AI leaders
         'AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AVGO,ADBE,CRM,ORCL,CSCO,INTC,AMD,QCOM,TXN,SMCI,SHOP,PLTR,'  # noqa: E501
@@ -177,6 +183,7 @@ class Config:
     SCALPS_WATCHLIST = [ticker.strip().upper() for ticker in SCALPS_WATCHLIST if ticker.strip()]
     ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
+    DARKPOOL_WATCHLIST = [ticker.strip().upper() for ticker in DARKPOOL_WATCHLIST if ticker.strip()]
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
 
     # Ensure Golden Sweeps watches the same high-premium names surfaced by scalps

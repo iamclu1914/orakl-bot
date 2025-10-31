@@ -864,38 +864,41 @@ class STRATPatternBot:
                 signals.append(signal)
             
             # ===== 3. SCAN 1-3-1 MIYAGI (12h: 08:00 & 20:00) =====
-            bars_12h = self.strat_12h_composer.compose_12h_bars(normalized_60m)
-            if len(bars_12h) >= 4:
-                typed_bars_12h = self.strat_12h_detector.attach_types(bars_12h)
-                patterns_131 = self.strat_12h_detector.detect_131_miyagi(typed_bars_12h)
-                
-                for sig in patterns_131:
-                    if sig['kind'] == '131-complete':
-                        # Pattern MUST complete at 20:00 PM to be valid for next trading day
-                        timestamp_ms = sig['completed_at']
-                        pattern_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
-                        
-                        # Strict: must close at 20:00 on current trading day
-                        if pattern_time.hour != 20:
-                            logger.debug(f"{ticker}: Pattern completes at {pattern_time.strftime('%H:%M')}, not 20:00")
-                            continue
-                        
-                        # Must be from today
-                        if pattern_time.date() != now.date():
-                            logger.debug(f"{ticker}: Pattern from {pattern_time.date()}, not today")
-                            continue
-                        
-                        signal = {
-                            'pattern': '1-3-1 Miyagi',
-                            'symbol': ticker,
-                            'completed_at': sig['completed_at'],
-                            'entry': sig['entry'],
-                            'type': 'Pending 4th bar',
-                            'confidence_score': 0.75,
-                            'pattern_bars': sig['pattern_bars'],
-                            'timeframe': '12h'
-                        }
-                    signals.append(signal)
+            if now.hour == 20:
+                bars_12h = self.strat_12h_composer.compose_12h_bars(normalized_60m)
+                if len(bars_12h) >= 4:
+                    typed_bars_12h = self.strat_12h_detector.attach_types(bars_12h)
+                    patterns_131 = self.strat_12h_detector.detect_131_miyagi(typed_bars_12h)
+                    
+                    for sig in patterns_131:
+                        if sig['kind'] == '131-complete':
+                            # Pattern MUST complete at 20:00 PM to be valid for next trading day
+                            timestamp_ms = sig['completed_at']
+                            pattern_time = datetime.fromtimestamp(timestamp_ms / 1000, tz=pytz.UTC).astimezone(ET)
+                            
+                            # Strict: must close at 20:00 on current trading day
+                            if pattern_time.hour != 20:
+                                logger.debug(f"{ticker}: Pattern completes at {pattern_time.strftime('%H:%M')}, not 20:00")
+                                continue
+                            
+                            # Must be from today
+                            if pattern_time.date() != now.date():
+                                logger.debug(f"{ticker}: Pattern from {pattern_time.date()}, not today")
+                                continue
+                            
+                            signal = {
+                                'pattern': '1-3-1 Miyagi',
+                                'symbol': ticker,
+                                'completed_at': sig['completed_at'],
+                                'entry': sig['entry'],
+                                'type': 'Pending 4th bar',
+                                'confidence_score': 0.75,
+                                'pattern_bars': sig['pattern_bars'],
+                                'timeframe': '12h'
+                            }
+                        signals.append(signal)
+            else:
+                logger.debug(f"{ticker}: Skipping 1-3-1 scan outside 20:00 ET window")
 
             # 3-2-2 Reversal - Always scan, pattern must have formed after 10am ET
             # Get data from 7am to current time

@@ -33,6 +33,8 @@ class DarkpoolBot(BaseAutoBot):
         self.analyzer = analyzer
         self.signal_history = {}
         self.MIN_SCORE = max(getattr(Config, 'MIN_DARKPOOL_SCORE', 45), 45)
+        self._batch_index = 0
+        self._last_watchlist_size = 0
 
     def should_run_now(self) -> bool:
         """Override to include pre-market and after-hours darkpool activity."""
@@ -48,9 +50,51 @@ class DarkpoolBot(BaseAutoBot):
         if not MarketHours.is_market_open(include_extended=True):
             logger.info(f"{self.name} - Outside extended hours (4 AM - 8 PM EST), skipping scan")
             return
-        
-        # Use base class concurrent implementation
-        await super().scan_and_post()
+
+        full_watchlist = getattr(self, 'watchlist', []) or []
+        if not full_watchlist:
+            logger.info(f"{self.name} watchlist empty, skipping scan")
+            return
+
+        batch_size = max(getattr(Config, 'DARKPOOL_BATCH_SIZE', 120), 1)
+        total_symbols = len(full_watchlist)
+
+        if total_symbols != self._last_watchlist_size:
+            self._batch_index = 0
+            self._last_watchlist_size = total_symbols
+
+        total_batches = max((total_symbols + batch_size - 1) // batch_size, 1)
+        if self._batch_index >= total_batches:
+            self._batch_index = 0
+
+        start = self._batch_index * batch_size
+        end = min(start + batch_size, total_symbols)
+        batch_symbols = full_watchlist[start:end]
+
+        if not batch_symbols:
+            # Fallback to first batch if slicing produced empty list (e.g. watchlist shrank)
+            self._batch_index = 0
+            total_batches = max((total_symbols + batch_size - 1) // batch_size, 1)
+            start = 0
+            end = min(batch_size, total_symbols)
+            batch_symbols = full_watchlist[start:end]
+
+        batch_label = f"batch {self._batch_index + 1}/{total_batches}" if total_batches > 1 else "single batch"
+        logger.info(
+            f"{self.name} scanning {batch_label}: {len(batch_symbols)} symbols "
+            f"({start + 1}-{start + len(batch_symbols)} of {total_symbols})"
+        )
+
+        original_watchlist = self.watchlist
+
+        try:
+            self.watchlist = batch_symbols
+            # Use base class concurrent implementation on the batch
+            await super().scan_and_post()
+        finally:
+            self.watchlist = original_watchlist
+            if total_batches > 0:
+                self._batch_index = (self._batch_index + 1) % total_batches
     
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         """Scan a symbol for darkpool/block trades"""

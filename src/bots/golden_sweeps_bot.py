@@ -315,7 +315,7 @@ class GoldenSweepsBot(BaseAutoBot):
             sweep.get('contract')
             or sweep.get('option_symbol')
             or sweep.get('contract_symbol')
-            or "N/A"
+            or "--"
         )
         sector = sweep.get('sector')
 

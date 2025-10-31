@@ -338,19 +338,19 @@ class BaseAutoBot(ABC):
             self.metrics.webhook_failure_count += 1
             return False
 
-    def _sanitize_value(self, value) -> str:
+    def _sanitize_value(self, value, placeholder: str = "--") -> str:
         """Sanitize value for Discord embed"""
         if value is None:
-            return "N/A"
+            return placeholder
         
         # Handle numeric values
         if isinstance(value, (int, float)):
             # Check for NaN
             if value != value:
-                return "N/A"
+                return placeholder
             # Check for infinity
             if value == float('inf') or value == float('-inf'):
-                return "N/A"
+                return placeholder
             # Format floats nicely
             if isinstance(value, float):
                 return f"{value:.2f}"
@@ -358,7 +358,7 @@ class BaseAutoBot(ABC):
         
         # Convert to string and ensure not empty
         str_value = str(value)
-        return str_value if str_value.strip() else "N/A"
+        return str_value if str_value.strip() else placeholder
 
     def create_embed(
         self,
@@ -386,12 +386,12 @@ class BaseAutoBot(ABC):
             Discord embed dictionary
         """
         # Validate and sanitize inputs
-        title = self._sanitize_value(title)
-        if not title or title == "N/A":
+        title = self._sanitize_value(title, placeholder="Alert")
+        if not title or title.strip() == "":
             title = "Alert"
         title = title[:256]
         
-        description = self._sanitize_value(description)
+        description = self._sanitize_value(description, placeholder="")
         if description and len(description) > 4096:
             description = description[:4093] + "..."
         
@@ -412,15 +412,17 @@ class BaseAutoBot(ABC):
             for field in fields[:25]:  # Discord limit is 25 fields
                 if isinstance(field, dict) and 'name' in field and 'value' in field:
                     # Sanitize field values
-                    field_name = self._sanitize_value(field['name'])[:256]
+                    field_name = self._sanitize_value(field['name'], placeholder=" ")[:256]
                     field_value = self._sanitize_value(field['value'])[:1024]
                     
-                    # Skip fields with both empty name and value
-                    if field_name == "N/A" and field_value == "N/A":
+                    # Skip fields with no meaningful content
+                    if (not field_value or field_value.strip() == "--") and (not field_name or field_name.strip() == ""):
+                        continue
+                    if not field_value or field_value.strip() == "--":
                         continue
                     
                     embed["fields"].append({
-                        "name": field_name,
+                        "name": field_name if field_name.strip() else " ",
                         "value": field_value,
                         "inline": bool(field.get('inline', True))
                     })
