@@ -1,20 +1,18 @@
 """Golden Sweeps Bot - 1 Million+ premium sweeps"""
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict
-import pandas as pd
-from .base_bot import BaseAutoBot
+
+from .sweeps_bot import SweepsBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
-from src.utils.monitoring import signals_generated, timed
-from src.utils.exceptions import DataException, handle_exception
-from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
+from src.utils.monitoring import timed
 from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
 
-class GoldenSweepsBot(BaseAutoBot):
+class GoldenSweepsBot(SweepsBot):
     """
     Golden Sweeps Bot
     Tracks unusually large sweeps with premiums worth over 1 million dollars
@@ -22,22 +20,11 @@ class GoldenSweepsBot(BaseAutoBot):
     """
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
-        super().__init__(webhook_url, "Golden Sweeps Bot", scan_interval=Config.GOLDEN_SWEEPS_INTERVAL)
-        self.watchlist = watchlist
-        self.fetcher = fetcher
-        self.analyzer = analyzer
-        self.signal_history = {}
-        self.MIN_GOLDEN_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
-        # Million-dollar premiums can occur on contracts with relatively low contract counts,
-        # so keep volume thresholds permissive while still filtering tiny prints.
-        self.MIN_CONTRACT_VOLUME = 25
-        self.MIN_VOLUME_DELTA = 10
-        self.MAX_STRIKE_DISTANCE = 5  # percent
-        self.MIN_SCORE = Config.MIN_GOLDEN_SCORE
-
-        # Enhanced analysis tools
-        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
-        self.deduplicator = SmartDeduplicator()
+        super().__init__(webhook_url, watchlist, fetcher, analyzer)
+        self.name = "Golden Sweeps Bot"
+        self.scan_interval = Config.GOLDEN_SWEEPS_INTERVAL
+        self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
+        self.MIN_SCORE = max(Config.MIN_GOLDEN_SCORE, self.MIN_SCORE)
 
     @timed()
     async def scan_and_post(self):
@@ -52,80 +39,21 @@ class GoldenSweepsBot(BaseAutoBot):
         # Use base class concurrent implementation
         await super().scan_and_post()
     
-    async def _scan_symbol(self, symbol: str) -> List[Dict]:
-        """Scan a symbol for golden sweeps with enhancements"""
-        try:
-            sweeps = await self._scan_golden_sweeps(symbol)
-
-            enhanced_sweeps: List[Dict] = []
-            for sweep in sweeps:
-                try:
-                    volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
-                        symbol, sweep['volume']
-                    )
-                    sweep['volume_ratio'] = volume_ratio
-
-                    volume_boost = 0
-                    if volume_ratio > 10:
-                        volume_boost = 0.20
-                    elif volume_ratio > 5:
-                        volume_boost = 0.10
-
-                    boosted_score = sweep.get('golden_score', 50) + int(volume_boost * 100)
-                    sweep['golden_score'] = min(boosted_score, 100)
-                except Exception as enhancement_error:
-                    logger.debug(f"Golden sweep enhancement error for {symbol}: {enhancement_error}")
-
-                signal_key = f"{symbol}_{sweep.get('type')}_{sweep.get('strike')}_{sweep.get('expiration')}"
-                dedup_result = self.deduplicator.should_alert(signal_key, sweep.get('premium', 0))
-
-                if not dedup_result.get('should_alert', True):
-                    self._log_skip(symbol, dedup_result.get('reason', 'golden sweep deduplicated'))
-                    continue
-
-                if self._cooldown_active(signal_key):
-                    self._log_skip(symbol, f'golden sweep cooldown {signal_key}')
-                    continue
-
-                sweep['alert_type'] = dedup_result.get('type', 'NEW')
-                sweep['alert_reason'] = dedup_result.get('reason', '')
-                self._mark_cooldown(signal_key)
-
-                if sweep.get('golden_score', 0) >= self.MIN_SCORE:
-                    enhanced_sweeps.append(sweep)
-
-            return sorted(enhanced_sweeps, key=lambda x: x.get('golden_score', 0), reverse=True)[:3]
-        except Exception as e:
-            logger.error(f"Error scanning {symbol}: {e}")
-            return []
-
-    async def _scan_golden_sweeps(self, symbol: str) -> List[Dict]:
-        """
-        Scan for 1M+ premium sweeps using efficient REST flow detection.
-
-        NEW APPROACH (REST):
-        - Uses detect_unusual_flow() with $1M premium threshold
-        - Volume delta analysis for massive flow detection
-        - Smart strike filtering (≤5% OTM/ITM)
-        """
-        sweeps = []
+    async def _scan_sweeps(self, symbol: str) -> List[Dict]:
+        sweeps: List[Dict] = []
 
         try:
-            # Get current price for context
             current_price = await self.fetcher.get_stock_price(symbol)
             if not current_price:
                 return sweeps
 
-            # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=self.MIN_GOLDEN_PREMIUM,  # $1M minimum
-                min_volume_delta=10  # At least 10 contracts of volume change
+                min_premium=self.MIN_SWEEP_PREMIUM,
+                min_volume_delta=self.MIN_VOLUME_DELTA
             )
 
-            # Process each flow signal
             for flow in flows:
-                # Extract flow data
                 opt_type = flow['type']
                 strike = flow['strike']
                 expiration = flow['expiration']
@@ -133,55 +61,37 @@ class GoldenSweepsBot(BaseAutoBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
-                if total_volume < self.MIN_CONTRACT_VOLUME and volume_delta < self.MIN_VOLUME_DELTA:
-                    self._log_skip(
-                        symbol,
-                        f"golden sweep volume too small ({total_volume} total / {volume_delta} delta)"
-                    )
+                if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
+                    self._log_skip(symbol, f"golden sweep volume too small ({total_volume} total / {volume_delta} delta)")
                     continue
 
-                # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
-
-                # Filter: Valid DTE range (1-180 days for golden sweeps)
-                if days_to_expiry <= 0 or days_to_expiry > 180:
+                if days_to_expiry <= 0 or days_to_expiry > 90:
                     continue
 
-                # Calculate strike distance
-                strike_distance = ((strike - current_price) / current_price) * 100
-
-                # Smart strike filtering (≤5% OTM/ITM only - no lottery tickets)
-                if not self.is_smart_strike(strike, current_price, opt_type):
-                    self._log_skip(symbol, f"golden sweep lottery strike distance {strike_distance:.1f}%")
-                    continue
-
-                # Calculate probability ITM
                 prob_itm = self.analyzer.calculate_probability_itm(
                     opt_type, strike, current_price, days_to_expiry
                 )
 
-                # Moneyness analysis
+                strike_distance = ((strike - current_price) / current_price) * 100
+                if abs(strike_distance) > self.MAX_STRIKE_DISTANCE:
+                    self._log_skip(symbol, f'golden sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
+                    continue
+
                 if opt_type == 'CALL':
                     moneyness = 'ITM' if strike < current_price else 'OTM' if strike > current_price else 'ATM'
                 else:
                     moneyness = 'ITM' if strike > current_price else 'OTM' if strike < current_price else 'ATM'
 
-                # Calculate golden score (estimate fills from volume)
-                num_fills = max(5, int(volume_delta / 100))  # Estimate fills for massive orders
-                golden_score = self._calculate_golden_score(
-                    premium, total_volume, abs(strike_distance), days_to_expiry
+                num_fills = max(3, int(volume_delta / 50))
+                sweep_score = self._calculate_sweep_score(
+                    premium, total_volume, num_fills, abs(strike_distance)
                 )
 
-                # Only proceed if score meets minimum threshold
-                if golden_score < self.MIN_SCORE:
-                    continue
-
-                # Create golden sweep signal
                 sweep = {
                     'ticker': symbol,
                     'symbol': symbol,
-                    'contract': flow.get('ticker'),
                     'type': opt_type,
                     'strike': strike,
                     'expiration': expiration,
@@ -190,107 +100,35 @@ class GoldenSweepsBot(BaseAutoBot):
                     'premium': premium,
                     'volume': total_volume,
                     'num_fills': num_fills,
-                    'avg_price': premium / (max(volume_delta, 1) * 100),
                     'moneyness': moneyness,
                     'strike_distance': strike_distance,
                     'probability_itm': prob_itm,
-                    'golden_score': golden_score,
-                    'time_span': 0,  # Not available in REST
-                    'volume_ratio': total_volume / 100,
+                    'sweep_score': sweep_score,
+                    'time_span': 0,
                     'volume_delta': volume_delta,
                     'delta': flow.get('delta', 0),
                     'gamma': flow.get('gamma', 0),
                     'vega': flow.get('vega', 0),
-                    # Note: Multi-exchange and urgency not available in REST snapshots
-                    'exchanges_hit': 0,
-                    'urgency': 'UNKNOWN',
-                    'contracts_per_second': 0,
-                    'urgency_score': 0
+                    'avg_price': premium / (max(volume_delta, 1) * 100)
                 }
 
-                # CRITICAL FEATURE #4: Smart Deduplication (catches accumulation)
                 signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
                 dedup_result = self.deduplicator.should_alert(signal_key, premium)
 
                 if dedup_result['should_alert']:
-                    sweep['alert_type'] = dedup_result['type']  # NEW, ACCUMULATION, REFRESH
+                    if self._cooldown_active(signal_key):
+                        self._log_skip(symbol, f'golden sweep cooldown {signal_key}')
+                        continue
+
+                    sweep['alert_type'] = dedup_result['type']
                     sweep['alert_reason'] = dedup_result['reason']
                     sweeps.append(sweep)
-
-                    logger.info(f"✅ Golden Sweep detected: {symbol} {opt_type} ${strike} - "
-                              f"Premium:${premium:,.0f}, Score:{golden_score}/100")
+                    self._mark_cooldown(signal_key)
 
         except Exception as e:
             logger.error(f"Error scanning golden sweeps for {symbol}: {e}")
 
         return sweeps
-
-    def detect_multi_exchange(self, trades_df: pd.DataFrame) -> int:
-        """PRD Enhancement: Count unique exchanges hit"""
-        if 'exchange' not in trades_df.columns:
-            return 1
-        return trades_df['exchange'].nunique()
-
-    def calculate_urgency(self, trades_df: pd.DataFrame) -> Dict:
-        """PRD Enhancement: Calculate execution urgency (contracts per second)"""
-        time_span = (trades_df['timestamp'].max() - trades_df['timestamp'].min()).total_seconds()
-        total_contracts = trades_df['volume'].sum()
-
-        contracts_per_sec = total_contracts / max(time_span, 1)
-
-        if contracts_per_sec >= 200:
-            return {'urgency': 'VERY HIGH', 'score': 1.0, 'cps': contracts_per_sec}
-        elif contracts_per_sec >= 100:
-            return {'urgency': 'HIGH', 'score': 0.8, 'cps': contracts_per_sec}
-        elif contracts_per_sec >= 50:
-            return {'urgency': 'MEDIUM', 'score': 0.6, 'cps': contracts_per_sec}
-        else:
-            return {'urgency': 'LOW', 'score': 0.4, 'cps': contracts_per_sec}
-
-    def is_smart_strike(self, strike: float, current_price: float, option_type: str) -> bool:
-        """PRD Enhancement: Filter lottery tickets (only ≤5% OTM/ITM allowed)"""
-        distance_pct = abs((strike - current_price) / current_price) * 100
-
-        # Only allow near-money strikes (≤5%)
-        if distance_pct > 5.0:
-            return False
-        return True
-
-    def _calculate_golden_score(self, premium: float, volume: int,
-                                strike_distance: float, dte: int) -> int:
-        """Calculate golden sweep score (0-100) using generic scoring system"""
-        score = self.calculate_score({
-            'premium': (premium, [
-                (10000000, 50),  # $10M+ → 50 points (50%)
-                (5000000, 45),   # $5M+ → 45 points
-                (2500000, 40),   # $2.5M+ → 40 points
-                (1000000, 35)    # $1M+ → 35 points
-            ]),
-            'volume': (volume, [
-                (2000, 20),  # 2000+ → 20 points (20%)
-                (1000, 17),  # 1000+ → 17 points
-                (500, 14),   # 500+ → 14 points
-                (0, 10)      # Default → 10 points
-            ])
-        })
-
-        # Strike proximity (15%) - lower distance = higher score
-        if strike_distance <= 3:
-            score += 15
-        elif strike_distance <= 7:
-            score += 12
-        elif strike_distance <= 15:
-            score += 8
-
-        # DTE factor (15%)
-        if 7 <= dte <= 45:
-            score += 15
-        elif dte <= 90:
-            score += 10
-        else:
-            score += 5
-
-        return score
 
     async def _post_signal(self, sweep: Dict) -> bool:
         """Post enhanced golden sweep signal to Discord"""
@@ -308,7 +146,7 @@ class GoldenSweepsBot(BaseAutoBot):
         premium_millions = sweep['premium'] / 1000000
 
         # Get enhanced score
-        final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep['golden_score']))
+        final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep.get('sweep_score', 0)))
 
         # Determine contract symbol and sector (if provided)
         contract_symbol = (
