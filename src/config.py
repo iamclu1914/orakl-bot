@@ -184,6 +184,8 @@ class Config:
     ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
     DARKPOOL_WATCHLIST = [ticker.strip().upper() for ticker in DARKPOOL_WATCHLIST if ticker.strip()]
+    if not DARKPOOL_WATCHLIST:
+        DARKPOOL_WATCHLIST = list(SWEEPS_WATCHLIST)
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
 
     # Ensure Golden Sweeps watches the same high-premium names surfaced by scalps

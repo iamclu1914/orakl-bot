@@ -61,15 +61,23 @@ class BotManager:
         self.bot_overrides[self.orakl_flow_bot] = orakl_watchlist
         logger.info(f"  ✓ Orakl Flow Bot → Channel ID: {Config.ORAKL_FLOW_WEBHOOK.split('/')[-2]}")
 
+        # Shared large-cap watchlist used by sweeps/golden/darkpool/bullseye/strat
+        shared_large_cap_watchlist = list(Config.SWEEPS_WATCHLIST)
+
         # Bullseye Bot (AI Intraday)
+        bullseye_watchlist = list(shared_large_cap_watchlist)
         self.bullseye_bot = BullseyeBot(
             Config.BULLSEYE_WEBHOOK,
-            self.watchlist,
+            bullseye_watchlist,
             self.fetcher,
             self.analyzer
         )
         self.bots.append(self.bullseye_bot)
-        logger.info(f"  ✓ Bullseye Bot → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}")
+        self.bot_overrides[self.bullseye_bot] = bullseye_watchlist
+        logger.info(
+            f"  ✓ Bullseye Bot → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}"
+            f" | Watchlist: {len(bullseye_watchlist)} tickers"
+        )
 
         # Scalps Bot (The Strat)
         scalps_watchlist = list(Config.SCALPS_WATCHLIST)
@@ -84,7 +92,7 @@ class BotManager:
         logger.info(f"  ✓ Scalps Bot → Channel ID: {Config.SCALPS_WEBHOOK.split('/')[-2]}")
 
         # Sweeps Bot (Large Options Sweeps)
-        sweeps_watchlist = list(Config.SWEEPS_WATCHLIST)
+        sweeps_watchlist = list(shared_large_cap_watchlist)
         self.sweeps_bot = SweepsBot(
             Config.SWEEPS_WEBHOOK,
             sweeps_watchlist,
@@ -99,7 +107,7 @@ class BotManager:
         )
 
         # Golden Sweeps Bot (1M+ Sweeps)
-        golden_watchlist = list(Config.GOLDEN_SWEEPS_WATCHLIST)
+        golden_watchlist = list(shared_large_cap_watchlist)
         self.golden_sweeps_bot = GoldenSweepsBot(
             Config.GOLDEN_SWEEPS_WEBHOOK,
             golden_watchlist,
@@ -114,7 +122,9 @@ class BotManager:
         )
 
         # Darkpool Bot (Large Darkpool/Blocks)
-        darkpool_watchlist = list(Config.DARKPOOL_WATCHLIST)
+        darkpool_watchlist = list(Config.DARKPOOL_WATCHLIST or shared_large_cap_watchlist)
+        if not darkpool_watchlist:
+            darkpool_watchlist = list(shared_large_cap_watchlist)
         self.darkpool_bot = DarkpoolBot(
             Config.DARKPOOL_WEBHOOK,
             darkpool_watchlist,
@@ -130,8 +140,13 @@ class BotManager:
 
         # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)
         self.strat_bot = STRATPatternBot(self.fetcher)
+        self.strat_bot.watchlist = list(shared_large_cap_watchlist)
+        self.bot_overrides[self.strat_bot] = list(shared_large_cap_watchlist)
         self.bots.append(self.strat_bot)
-        logger.info(f"  ✓ STRAT Pattern Bot → Channel ID: {Config.STRAT_WEBHOOK.split('/')[-2]}")
+        logger.info(
+            f"  ✓ STRAT Pattern Bot → Channel ID: {Config.STRAT_WEBHOOK.split('/')[-2]}"
+            f" | Watchlist: {len(shared_large_cap_watchlist)} tickers"
+        )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")
 
