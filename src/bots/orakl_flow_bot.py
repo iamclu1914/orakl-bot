@@ -28,6 +28,7 @@ class TradyFlowBot(BaseAutoBot):
         self.MIN_PROB_ITM = 75  # Require high probability ITM
         self.MIN_SUCCESS_RATE = getattr(Config, 'SUCCESS_RATE_THRESHOLD', 0.8)
         self.DOMINANT_PREMIUM_RATIO = 1.5
+        self.MIN_TRADE_PREMIUM = 50000
 
     async def scan_and_post(self):
         """Scan for repeat and dominant signals using concurrent processing"""
@@ -61,8 +62,8 @@ class TradyFlowBot(BaseAutoBot):
             # NEW: Use efficient flow detection (single API call)
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
-                min_premium=max(Config.MIN_PREMIUM, 5000),
-                min_volume_delta=5
+                min_premium=self.MIN_TRADE_PREMIUM,
+                min_volume_delta=10
             )
 
             if not flows:
@@ -73,6 +74,10 @@ class TradyFlowBot(BaseAutoBot):
             contract_ids_by_type = {'CALL': set(), 'PUT': set()}
 
             for flow in flows:
+                premium = flow.get('premium', 0.0)
+                if premium < self.MIN_TRADE_PREMIUM:
+                    self._log_skip(symbol, f"orakl flow premium ${premium:,.0f} below ${self.MIN_TRADE_PREMIUM:,.0f}")
+                    continue
                 strike = flow['strike']
                 strike_distance = abs(strike - current_price) / current_price * 100
                 if strike_distance > self.MAX_STRIKE_DISTANCE:
@@ -81,7 +86,7 @@ class TradyFlowBot(BaseAutoBot):
                 opt_type = flow['type']
                 flows_by_type[opt_type].append(flow)
                 contract_ids_by_type[opt_type].add(flow['ticker'])
-                premium_by_type[opt_type] += flow.get('premium', 0.0)
+                premium_by_type[opt_type] += premium
 
             dominant_type = 'CALL' if premium_by_type['CALL'] >= premium_by_type['PUT'] else 'PUT'
             dominant_premium = premium_by_type[dominant_type]
