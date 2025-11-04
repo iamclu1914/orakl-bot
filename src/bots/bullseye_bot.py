@@ -30,10 +30,10 @@ class BullseyeBot(BaseAutoBot):
         self.analyzer = analyzer
         self.signal_history = {}
         self.MIN_PREMIUM = 200000  # minimum premium for Bullseye signals
-        self.MIN_VOLUME = 75
-        self.MIN_OPEN_INTEREST = 250
-        self.MIN_DTE = 15
-        self.MAX_DTE = 45
+        self.MIN_VOLUME = 10000
+        self.MIN_OPEN_INTEREST = 10000
+        self.MIN_DTE = 1
+        self.MAX_DTE = 10
         self.MIN_VOLUME_DELTA = 30
         self.MIN_VOI_RATIO = 0.75
 
@@ -65,7 +65,7 @@ class BullseyeBot(BaseAutoBot):
         NEW APPROACH (REST):
         - Uses detect_unusual_flow() with $5K premium threshold
         - ATM filtering (delta 0.4-0.6 range)
-        - 7-60 day DTE range for swing trades
+        - 1-3 day DTE range for short-dated trades
         """
         signals = []
         try:
@@ -112,7 +112,7 @@ class BullseyeBot(BaseAutoBot):
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
 
-                # Filter 1: DTE range (7-60 days for swing trades)
+                # Filter 1: DTE range (1-3 days for short-dated trades)
                 if days_to_expiry < self.MIN_DTE or days_to_expiry > self.MAX_DTE:
                     self._log_skip(symbol, f'bullseye DTE {days_to_expiry} outside {self.MIN_DTE}-{self.MAX_DTE}')
                     continue
