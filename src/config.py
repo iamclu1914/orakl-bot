@@ -63,8 +63,8 @@ class Config:
     # Bot-specific Thresholds
     GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M
     DARKPOOL_MIN_BLOCK_SIZE = int(os.getenv('DARKPOOL_MIN_BLOCK_SIZE', '10000'))
-    DARKPOOL_MIN_TOTAL_SHARES = int(os.getenv('DARKPOOL_MIN_TOTAL_SHARES', '50000'))
-    DARKPOOL_MIN_TOTAL_DOLLAR = float(os.getenv('DARKPOOL_MIN_TOTAL_DOLLAR', '2000000'))
+    DARKPOOL_MIN_TOTAL_SHARES = int(os.getenv('DARKPOOL_MIN_TOTAL_SHARES', '10000'))
+    DARKPOOL_MIN_TOTAL_DOLLAR = float(os.getenv('DARKPOOL_MIN_TOTAL_DOLLAR', '1000000'))
     DARKPOOL_BATCH_SIZE = int(os.getenv('DARKPOOL_BATCH_SIZE', '120'))
     SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '50000'))  # $50k
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '5000'))  # $5k for intraday
@@ -75,7 +75,7 @@ class Config:
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '65'))
     MIN_SWEEP_SCORE = int(os.getenv('MIN_SWEEP_SCORE', '60'))
-    MIN_DARKPOOL_SCORE = int(os.getenv('MIN_DARKPOOL_SCORE', '60'))
+    MIN_DARKPOOL_SCORE = int(os.getenv('MIN_DARKPOOL_SCORE', '30'))
     MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '70'))
     MIN_SCALP_SCORE = int(os.getenv('MIN_SCALP_SCORE', '88'))
     

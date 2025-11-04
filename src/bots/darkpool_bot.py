@@ -18,13 +18,13 @@ class DarkpoolBot(BaseAutoBot):
     """
 
     # Configuration constants
-    MIN_BLOCK_SIZE = 2000  # Minimum shares for block trade detection (more realistic)
+    MIN_BLOCK_SIZE = 10000  # Minimum shares for institutional-scale blocks
     KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
     DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.0005  # 0.05% threshold for aggressive buying/selling
-    MIN_DOLLAR_VALUE = 750000  # Minimum $750K trade value for significant prints
+    MIN_DOLLAR_VALUE = 1000000  # Minimum $1M trade value for significant prints
     MIN_BLOCK_COUNT = 1
-    BLOCK_SIZE_MULTIPLIER = 1.5  # Trade must be 1.5x average print size
-    MIN_MARKETCAP_RATIO = 0.00002  # Trade >= 0.002% of market cap
+    BLOCK_SIZE_MULTIPLIER = 1.0  # Trade must meet raw size without multiplier
+    MIN_MARKETCAP_RATIO = 0.0  # Informational only; no longer a hard filter
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=Config.DARKPOOL_INTERVAL)
@@ -32,7 +32,7 @@ class DarkpoolBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SCORE = max(getattr(Config, 'MIN_DARKPOOL_SCORE', 45), 45)
+        self.MIN_SCORE = max(getattr(Config, 'MIN_DARKPOOL_SCORE', 30), 30)
         self._batch_index = 0
         self._last_watchlist_size = 0
         self.min_total_shares = getattr(Config, 'DARKPOOL_MIN_TOTAL_SHARES', 100000)
@@ -153,19 +153,7 @@ class DarkpoolBot(BaseAutoBot):
                 if not is_block:
                     continue
 
-                if not market_cap or market_cap <= 0:
-                    self._log_skip(symbol, 'darkpool missing market cap data')
-                    continue
-
-                market_cap_ratio = dollar_value / market_cap
-                if market_cap_ratio < self.MIN_MARKETCAP_RATIO:
-                    self._log_skip(symbol, f'darkpool market cap ratio {market_cap_ratio*100:.3f}% < {self.MIN_MARKETCAP_RATIO*100:.3f}%')
-                    continue
-
-                price_move_pct = abs(price - current_price) / current_price if current_price else 0
-                if price_move_pct < 0.0005:
-                    self._log_skip(symbol, f'darkpool price move {price_move_pct*100:.2f}% < 0.05%')
-                    continue
+                market_cap_ratio = (dollar_value / market_cap) if market_cap and market_cap > 0 else 0
 
                 # --- ENHANCEMENT 2: Key level and directional bias analysis ---
                 key_level_info = self._check_key_levels(price, week_52_high, week_52_low)
@@ -222,7 +210,7 @@ class DarkpoolBot(BaseAutoBot):
             return []
 
         total_shares = sum(block['size'] for block in blocks)
-        total_dollar_value = total_shares * current_price
+        total_dollar_value = sum(block['dollar_value'] for block in blocks)
 
         if total_shares < self.min_total_shares:
             self._log_skip(symbol, f'darkpool cumulative shares {total_shares:,} below {self.min_total_shares:,}')
@@ -262,9 +250,9 @@ class DarkpoolBot(BaseAutoBot):
                 (0.5, 20)    # 0.5%+ → 20 points
             ]),
             'dollar_value': (dollar_value, [
-                (10000000, 25),  # $10M+ → 25 points (25%)
-                (5000000, 20),   # $5M+ → 20 points
-                (1000000, 15)    # $1M+ → 15 points
+                (10000000, 30),  # $10M+ → 30 points
+                (5000000, 25),   # $5M+ → 25 points
+                (1000000, 20)    # $1M+ → 20 points
             ]),
             'market_cap_ratio': (market_cap_ratio * 100, [  # convert to percentage for readability
                 (0.10, 20),  # 0.10%+ of market cap → 20 points
@@ -342,8 +330,8 @@ class DarkpoolBot(BaseAutoBot):
 
         if total_shares and total_dollar_value:
             fields.append({
-                "name": "📦 Cumulative Size",
-                "value": f"{total_shares:,} shares (~${total_dollar_value:,.0f} at current price)",
+                "name": "📦 Cumulative Flow",
+                "value": f"{total_shares:,} shares | Premium ${total_dollar_value:,.0f}",
                 "inline": False
             })
 
