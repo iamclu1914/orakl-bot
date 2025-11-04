@@ -58,7 +58,7 @@ class Config:
     MIN_VOLUME = int(os.getenv('MIN_VOLUME', '100'))
     UNUSUAL_VOLUME_MULTIPLIER = float(os.getenv('UNUSUAL_VOLUME_MULTIPLIER', '3'))
     REPEAT_SIGNAL_THRESHOLD = int(os.getenv('REPEAT_SIGNAL_THRESHOLD', '3'))
-    SUCCESS_RATE_THRESHOLD = float(os.getenv('SUCCESS_RATE_THRESHOLD', '0.65'))
+    SUCCESS_RATE_THRESHOLD = float(os.getenv('SUCCESS_RATE_THRESHOLD', '0.80'))
     
     # Bot-specific Thresholds
     GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M
@@ -77,7 +77,7 @@ class Config:
     MIN_SWEEP_SCORE = int(os.getenv('MIN_SWEEP_SCORE', '60'))
     MIN_DARKPOOL_SCORE = int(os.getenv('MIN_DARKPOOL_SCORE', '60'))
     MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '70'))
-    MIN_SCALP_SCORE = int(os.getenv('MIN_SCALP_SCORE', '65'))
+    MIN_SCALP_SCORE = int(os.getenv('MIN_SCALP_SCORE', '88'))
     
     # Watchlist Mode - Dynamic or Static
     WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC

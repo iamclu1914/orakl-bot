@@ -22,12 +22,12 @@ class TradyFlowBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_TOTAL_PREMIUM = 250000
-        self.MIN_UNIQUE_CONTRACTS = 2
-        self.MAX_STRIKE_DISTANCE = 8  # percent
-        self.MIN_PROB_ITM = 60  # Require high probability ITM
-        self.MIN_SUCCESS_RATE = getattr(Config, 'SUCCESS_RATE_THRESHOLD', 0.65)
-        self.DOMINANT_PREMIUM_RATIO = 1.25
+        self.MIN_TOTAL_PREMIUM = 750000
+        self.MIN_UNIQUE_CONTRACTS = 3
+        self.MAX_STRIKE_DISTANCE = 5  # percent
+        self.MIN_PROB_ITM = 75  # Require high probability ITM
+        self.MIN_SUCCESS_RATE = getattr(Config, 'SUCCESS_RATE_THRESHOLD', 0.8)
+        self.DOMINANT_PREMIUM_RATIO = 1.5
 
     async def scan_and_post(self):
         """Scan for repeat and dominant signals using concurrent processing"""
@@ -125,8 +125,8 @@ class TradyFlowBot(BaseAutoBot):
                     exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                     days_to_expiry = (exp_date - datetime.now()).days
 
-                    # Filter: Valid DTE range (1-45 days)
-                    if days_to_expiry <= 0 or days_to_expiry > 45:
+                    # Filter: Valid DTE range (1-21 days)
+                    if days_to_expiry <= 0 or days_to_expiry > 21:
                         continue
 
                     # Check for repeat signals

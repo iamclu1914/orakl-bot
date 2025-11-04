@@ -34,7 +34,8 @@ class ScalpsBot(BaseAutoBot):
         self.MIN_VOLUME_DELTA = 75
         self.MAX_SPREAD = 0.15
         self.active_windows = [(570, 630), (900, 960)]  # 9:30-10:30 and 15:00-16:00 ET
-        self.MIN_SCORE = max(Config.MIN_SCALP_SCORE, 80)
+        self.MIN_SCORE = max(Config.MIN_SCALP_SCORE, 88)
+        self.MIN_PRIORITY = 85
 
     def should_run_now(self) -> bool:
         """Only run during regular hours and within high-probability scalping windows."""
@@ -83,6 +84,7 @@ class ScalpsBot(BaseAutoBot):
         # Apply quality filters and rank signals
         filtered_signals = [sig for sig in all_signals if self.apply_quality_filters(sig)]
         top_signals = self.rank_signals(filtered_signals)
+        top_signals = [sig for sig in top_signals if sig.get('priority_score', 0) >= self.MIN_PRIORITY]
         
         # Post top signals
         for signal in top_signals:
@@ -588,40 +590,48 @@ class ScalpsBot(BaseAutoBot):
     def rank_signals(self, signals: List[Dict]) -> List[Dict]:
         """Rank signals by priority and return top 5"""
         try:
-            # Calculate priority score for each signal
             for signal in signals:
-                priority = 0
+                priority = 0.0
 
-                # Scalp score (40%)
-                priority += signal.get('scalp_score', 0) * 0.4
-
-                # Pattern strength (30%)
-                priority += signal.get('pattern_strength', 0) * 0.3
-
-                # Volume factor (20%)
+                scalp_score = signal.get('scalp_score', 0)
+                pattern_strength = signal.get('pattern_strength', 0)
                 volume = signal.get('volume', 0)
-                if volume >= 300:
-                    priority += 20
-                elif volume >= 150:
-                    priority += 15
-                elif volume >= 75:
-                    priority += 10
-
-                # Risk/reward (10%)
                 rr1 = signal.get('risk_reward_1', 0)
-                if rr1 >= 3.0:
+
+                # Core quality metrics
+                priority += scalp_score * 0.5
+                priority += pattern_strength * 0.35
+
+                # Volume conviction bonus
+                if volume >= 400:
                     priority += 10
+                elif volume >= 250:
+                    priority += 8
+                elif volume >= 150:
+                    priority += 6
+
+                # Risk/reward bonus
+                if rr1 >= 3.0:
+                    priority += 8
+                elif rr1 >= 2.5:
+                    priority += 6
                 elif rr1 >= 2.0:
-                    priority += 7
-                elif rr1 >= 1.5:
-                    priority += 5
+                    priority += 4
 
-                signal['priority_score'] = priority
+                # Elite confidence bonus
+                if scalp_score >= 92 and pattern_strength >= 88:
+                    priority += 8
 
-            # Sort by priority (descending)
+                if signal.get('flow_intensity') in {'HIGH', 'VERY HIGH'}:
+                    priority += 4
+                if signal.get('volume_velocity', 0) >= 50:
+                    priority += 3
+
+                # Scale and cap
+                priority_score = min(priority * 1.05, 110)
+                signal['priority_score'] = priority_score
+
             ranked = sorted(signals, key=lambda x: x.get('priority_score', 0), reverse=True)
-
-            # Return top 5
             return ranked[:5]
 
         except Exception as e:
@@ -633,7 +643,13 @@ class ScalpsBot(BaseAutoBot):
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
 
         # Format priority
-        priority_level = "HIGH" if signal.get('priority_score', 0) >= 80 else "MEDIUM"
+        priority_value = signal.get('priority_score', 0)
+        if priority_value >= 95:
+            priority_level = "ELITE"
+        elif priority_value >= 85:
+            priority_level = "HIGH"
+        else:
+            priority_level = "MEDIUM"
 
         # Get market context
         market = signal.get('market_context', {})
