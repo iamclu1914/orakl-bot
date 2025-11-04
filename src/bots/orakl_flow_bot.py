@@ -134,8 +134,8 @@ class TradyFlowBot(BaseAutoBot):
                         symbol, strike, opt_type, expiration, premium
                     )
 
-                    # Must have at least 3 repeat signals for ORAKL Flow
-                    if repeat_count < 3:
+                # Must have at least 10 repeat signals for ORAKL Flow
+                if repeat_count < 10:
                         continue
 
                     # Calculate probability ITM
