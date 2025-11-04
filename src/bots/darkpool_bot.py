@@ -35,6 +35,8 @@ class DarkpoolBot(BaseAutoBot):
         self.MIN_SCORE = max(getattr(Config, 'MIN_DARKPOOL_SCORE', 45), 45)
         self._batch_index = 0
         self._last_watchlist_size = 0
+        self.min_total_shares = getattr(Config, 'DARKPOOL_MIN_TOTAL_SHARES', 100000)
+        self.min_total_dollar = getattr(Config, 'DARKPOOL_MIN_TOTAL_DOLLAR', 5000000.0)
 
     def should_run_now(self) -> bool:
         """Override to include pre-market and after-hours darkpool activity."""
@@ -219,7 +221,24 @@ class DarkpoolBot(BaseAutoBot):
                 self._log_skip(symbol, f'darkpool only {len(blocks)} qualifying blocks (< {self.MIN_BLOCK_COUNT})')
             return []
 
-        return blocks
+        total_shares = sum(block['size'] for block in blocks)
+        total_dollar_value = total_shares * current_price
+
+        if total_shares < self.min_total_shares:
+            self._log_skip(symbol, f'darkpool cumulative shares {total_shares:,} below {self.min_total_shares:,}')
+            return []
+
+        if total_dollar_value < self.min_total_dollar:
+            self._log_skip(symbol, f'darkpool cumulative value ${total_dollar_value:,.0f} below ${self.min_total_dollar:,.0f}')
+            return []
+
+        top_block = max(blocks, key=lambda b: b.get('block_score', 0))
+        top_block = dict(top_block)  # copy to avoid mutating reference in history
+        top_block['total_shares'] = total_shares
+        top_block['total_dollar_value'] = total_dollar_value
+        top_block['trade_count'] = len(blocks)
+
+        return [top_block]
 
     def _calculate_block_score(self, size: int, dollar_value: float,
                                avg_30_day_volume: Optional[float], market_cap_ratio: float, is_darkpool: bool,
@@ -312,6 +331,20 @@ class DarkpoolBot(BaseAutoBot):
             {"name": "📊 Market Price", "value": f"${block['current_price']:.2f}", "inline": True},
             {"name": "🏦 % of Market Cap", "value": f"{block['market_cap_ratio']*100:.2f}%", "inline": True},
         ]
+
+        total_shares = block.get('total_shares')
+        total_dollar_value = block.get('total_dollar_value')
+        trade_count = block.get('trade_count')
+
+        if total_shares and total_dollar_value:
+            fields.append({
+                "name": "📦 Cumulative Size",
+                "value": f"{total_shares:,} shares (~${total_dollar_value:,.0f} at current price)",
+                "inline": False
+            })
+
+        if trade_count:
+            fields.append({"name": "🧾 Prints Aggregated", "value": str(trade_count), "inline": True})
 
         # Add key level info if present
         if block['key_level_info']:
