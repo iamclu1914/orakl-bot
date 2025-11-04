@@ -238,6 +238,10 @@ class DarkpoolBot(BaseAutoBot):
         top_block['total_dollar_value'] = total_dollar_value
         top_block['trade_count'] = len(blocks)
 
+        gamma_profile = await self.fetcher.get_gamma_profile(symbol)
+        if gamma_profile:
+            top_block['gamma_profile'] = gamma_profile
+
         return [top_block]
 
     def _calculate_block_score(self, size: int, dollar_value: float,
@@ -346,6 +350,62 @@ class DarkpoolBot(BaseAutoBot):
         if trade_count:
             fields.append({"name": "🧾 Prints Aggregated", "value": str(trade_count), "inline": True})
 
+        gamma_profile = block.get('gamma_profile')
+        if gamma_profile:
+            call_gamma = gamma_profile.get('call_gamma_total', 0.0)
+            put_gamma = gamma_profile.get('put_gamma_total', 0.0)
+            net_gamma = gamma_profile.get('net_gamma_total', 0.0)
+            fields.append({
+                "name": "🧮 Gamma Exposure",
+                "value": (
+                    f"Net: {self._format_gamma_value(net_gamma)}\n"
+                    f"Call: {self._format_gamma_value(call_gamma)} | "
+                    f"Put: {self._format_gamma_value(put_gamma)}"
+                ),
+                "inline": False
+            })
+
+            put_wall = gamma_profile.get('put_wall')
+            if put_wall:
+                fields.append({
+                    "name": "🧱 Put Wall",
+                    "value": (
+                        f"{put_wall['strike']:.2f} | {self._format_gamma_value(put_wall['gamma'])}\n"
+                        f"OI: {int(put_wall.get('oi', 0)):,}"
+                    ),
+                    "inline": True
+                })
+
+            call_wall = gamma_profile.get('call_wall')
+            if call_wall:
+                fields.append({
+                    "name": "🛡️ Call Wall",
+                    "value": (
+                        f"{call_wall['strike']:.2f} | {self._format_gamma_value(call_wall['gamma'])}\n"
+                        f"OI: {int(call_wall.get('oi', 0)):,}"
+                    ),
+                    "inline": True
+                })
+
+            total_call_oi = gamma_profile.get('total_call_oi')
+            total_put_oi = gamma_profile.get('total_put_oi')
+            if total_call_oi or total_put_oi:
+                fields.append({
+                    "name": "📊 Total OI (Call/Put)",
+                    "value": f"{int(total_call_oi or 0):,} / {int(total_put_oi or 0):,}",
+                    "inline": True
+                })
+
+            expected_move = gamma_profile.get('expected_move')
+            if expected_move:
+                pct = gamma_profile.get('expected_move_pct')
+                pct_display = f" ({pct*100:.2f}%)" if pct is not None else ""
+                fields.append({
+                    "name": "📉 1D Expected Move",
+                    "value": f"±${expected_move:,.2f}{pct_display}",
+                    "inline": True
+                })
+
         # Add key level info if present
         if block['key_level_info']:
             fields.append({"name": "🎯 Key Level", "value": block['key_level_info'], "inline": False})
@@ -368,3 +428,17 @@ class DarkpoolBot(BaseAutoBot):
             f"Posted ENHANCED {trade_type}: {block['ticker']} {block['size']:,} shares @ ${block['block_price']:.2f} "
             f"({block['market_cap_ratio']*100:.2f}% of market cap)"
         )
+
+    @staticmethod
+    def _format_gamma_value(value: float) -> str:
+        if value is None:
+            return "N/A"
+
+        abs_value = abs(value)
+        if abs_value >= 1e9:
+            return f"{value/1e9:+.1f}B"
+        if abs_value >= 1e6:
+            return f"{value/1e6:+.1f}M"
+        if abs_value >= 1e3:
+            return f"{value/1e3:+.0f}K"
+        return f"{value:+,.0f}"

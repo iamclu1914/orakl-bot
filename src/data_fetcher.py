@@ -24,6 +24,7 @@ from src.utils.validation import DataValidator, SafeCalculations
 from src.utils.cache import cached, cache_manager, MarketDataCache
 from src.utils.ticker_translation import translate_ticker
 from src.utils.volume_cache import volume_cache
+from src.utils.gamma_profile import compute_gamma_profile
 
 logger = logging.getLogger(__name__)
 
@@ -736,6 +737,36 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"Error fetching option chain snapshot for {underlying}: {e}")
             return []
+
+    async def get_gamma_profile(self, underlying: str) -> Optional[Dict]:
+        """Compute aggregated gamma exposure profile for an underlying."""
+
+        try:
+            contracts = await self.get_option_chain_snapshot(underlying)
+            if not contracts:
+                return None
+
+            spot_price = None
+            for contract in contracts:
+                asset = contract.get('underlying_asset') or {}
+                price_candidate = asset.get('price') or asset.get('close') or asset.get('prev_close')
+                try:
+                    if price_candidate and float(price_candidate) > 0:
+                        spot_price = float(price_candidate)
+                        break
+                except (TypeError, ValueError):
+                    continue
+
+            if spot_price is None:
+                spot_price = await self.get_stock_price(underlying)
+
+            if not spot_price:
+                return None
+
+            return compute_gamma_profile(contracts, spot_price)
+        except Exception as exc:
+            logger.error(f"Error computing gamma profile for {underlying}: {exc}")
+            return None
 
     async def get_option_trades(
         self,
