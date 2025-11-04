@@ -190,6 +190,16 @@ class Config:
         DARKPOOL_WATCHLIST = list(SWEEPS_WATCHLIST)
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
 
+    # Ensure core index ETFs are always monitored by flow-focused bots
+    _REQUIRED_INDEX_ETFS = ['SPY', 'QQQ', 'IWM']
+    for _core_symbol in _REQUIRED_INDEX_ETFS:
+        if _core_symbol not in SWEEPS_WATCHLIST:
+            SWEEPS_WATCHLIST.insert(0, _core_symbol)
+        if _core_symbol not in GOLDEN_SWEEPS_WATCHLIST:
+            GOLDEN_SWEEPS_WATCHLIST.insert(0, _core_symbol)
+        if _core_symbol not in DARKPOOL_WATCHLIST:
+            DARKPOOL_WATCHLIST.insert(0, _core_symbol)
+
     # Ensure Golden Sweeps watches the same high-premium names surfaced by scalps
     for ticker in SCALPS_WATCHLIST:
         if ticker not in GOLDEN_SWEEPS_WATCHLIST:

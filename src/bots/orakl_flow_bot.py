@@ -201,6 +201,15 @@ class TradyFlowBot(BaseAutoBot):
 
     async def _post_signal(self, signal: Dict):
         """Post Orakl Flow signal to Discord"""
+        if signal.get('premium', 0) < self.MIN_TRADE_PREMIUM:
+            logger.warning(
+                "Skipping Orakl Flow alert for %s: premium $%s below $%s",
+                signal.get('ticker'),
+                f"{signal.get('premium', 0):,.0f}",
+                f"{self.MIN_TRADE_PREMIUM:,.0f}"
+            )
+            return False
+
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
         emoji = "🟢" if signal['type'] == 'CALL' else "🔴"
 
