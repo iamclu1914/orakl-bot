@@ -35,8 +35,8 @@ class DarkpoolBot(BaseAutoBot):
         self.MIN_SCORE = max(getattr(Config, 'MIN_DARKPOOL_SCORE', 30), 30)
         self._batch_index = 0
         self._last_watchlist_size = 0
-        self.min_total_shares = getattr(Config, 'DARKPOOL_MIN_TOTAL_SHARES', 100000)
-        self.min_total_dollar = getattr(Config, 'DARKPOOL_MIN_TOTAL_DOLLAR', 5000000.0)
+        self.min_total_shares = getattr(Config, 'DARKPOOL_MIN_TOTAL_SHARES', 10000)
+        self.min_total_dollar = getattr(Config, 'DARKPOOL_MIN_TOTAL_DOLLAR', 1000000.0)
 
     def should_run_now(self) -> bool:
         """Override to include pre-market and after-hours darkpool activity."""
