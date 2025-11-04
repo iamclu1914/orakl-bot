@@ -434,7 +434,7 @@ class STRATPatternBot:
         active = set()
 
         # 1-3-1 Miyagi → evaluate once the 20:00 ET bar closes (20:00-21:14 window)
-        if hour == 20 or (hour == 21 and minute < 15):
+        if (hour == 20 and minute >= 5) or (hour == 21 and minute < 15):
             active.add('131')
 
         # 2-2 Reversal → evaluate after the 8:00 ET 4h candle closes (08:00-09:14 window)
