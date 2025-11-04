@@ -20,11 +20,11 @@ class DarkpoolBot(BaseAutoBot):
     # Configuration constants
     MIN_BLOCK_SIZE = 2000  # Minimum shares for block trade detection (more realistic)
     KEY_LEVEL_TOLERANCE_PCT = 0.02  # 2% tolerance for 52-week high/low detection
-    DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.001  # 0.1% threshold for aggressive buying/selling
-    MIN_DOLLAR_VALUE = 1000000  # Minimum $1M trade value for significant prints
+    DIRECTIONAL_BIAS_THRESHOLD_PCT = 0.0005  # 0.05% threshold for aggressive buying/selling
+    MIN_DOLLAR_VALUE = 750000  # Minimum $750K trade value for significant prints
     MIN_BLOCK_COUNT = 1
-    BLOCK_SIZE_MULTIPLIER = 2  # Trade must be 2x average print size
-    MIN_MARKETCAP_RATIO = 0.00005  # Trade >= 0.005% of market cap
+    BLOCK_SIZE_MULTIPLIER = 1.5  # Trade must be 1.5x average print size
+    MIN_MARKETCAP_RATIO = 0.00002  # Trade >= 0.002% of market cap
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
         super().__init__(webhook_url, "Darkpool Bot", scan_interval=Config.DARKPOOL_INTERVAL)
@@ -163,8 +163,8 @@ class DarkpoolBot(BaseAutoBot):
                     continue
 
                 price_move_pct = abs(price - current_price) / current_price if current_price else 0
-                if price_move_pct < 0.002:
-                    self._log_skip(symbol, f'darkpool price move {price_move_pct*100:.2f}% < 0.20%')
+                if price_move_pct < 0.0005:
+                    self._log_skip(symbol, f'darkpool price move {price_move_pct*100:.2f}% < 0.05%')
                     continue
 
                 # --- ENHANCEMENT 2: Key level and directional bias analysis ---
