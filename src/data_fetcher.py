@@ -267,22 +267,46 @@ class DataFetcher:
             if data and 'ticker' in data:
                 ticker_data = data['ticker']
 
-                # Priority 1: Current day's latest price (most recent trade)
-                if 'day' in ticker_data and ticker_data['day']:
-                    day_data = ticker_data['day']
-                    # Use last trade price if available (most current)
-                    if 'c' in day_data and day_data['c'] is not None:
-                        price = DataValidator.validate_price(day_data['c'])
-                        await self.market_cache.set_stock_price(symbol, price)
-                        return price
+                price_candidates = []
 
-                # Priority 2: Previous day close as fallback
-                if 'prevDay' in ticker_data and ticker_data['prevDay']:
-                    prev_day = ticker_data['prevDay']
-                    if 'c' in prev_day and prev_day['c'] is not None:
-                        price = DataValidator.validate_price(prev_day['c'])
+                day_data = ticker_data.get('day') or {}
+                if day_data:
+                    price_candidates.extend([
+                        day_data.get('c'),
+                        day_data.get('vw'),
+                    ])
+
+                last_trade = ticker_data.get('lastTrade') or ticker_data.get('last_trade') or {}
+                if last_trade:
+                    price_candidates.extend([
+                        last_trade.get('price'),
+                        last_trade.get('p'),
+                    ])
+
+                last_quote = ticker_data.get('lastQuote') or ticker_data.get('last_quote') or {}
+                if last_quote:
+                    price_candidates.extend([
+                        last_quote.get('midpoint'),
+                        last_quote.get('bid'),
+                        last_quote.get('ask'),
+                    ])
+
+                prev_day = ticker_data.get('prevDay') or ticker_data.get('prev_day') or {}
+                if prev_day:
+                    price_candidates.extend([
+                        prev_day.get('c'),
+                        prev_day.get('vw'),
+                    ])
+
+                for candidate in price_candidates:
+                    if candidate is None:
+                        continue
+                    try:
+                        price = DataValidator.validate_price(candidate)
                         await self.market_cache.set_stock_price(symbol, price)
                         return price
+                    except DataValidationException:
+                        continue
 
             logger.warning(f"No price data available for {symbol}")
             return None
