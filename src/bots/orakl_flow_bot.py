@@ -223,9 +223,16 @@ class TradyFlowBot(BaseAutoBot):
             {"name": "📊 Volume", "value": f"{signal['volume']:,}", "inline": True},
             {"name": "🔄 Repeat Signals", "value": f"{signal['repeat_count']} detected", "inline": True},
             {"name": "🏹 Dominant Flow", "value": signal.get('dominant_type', 'N/A'), "inline": True},
-            {"name": "🎯 Target", "value": f"{'Break above' if signal['type'] == 'CALL' else 'Break below'} ${signal['strike']:.2f}", "inline": False},
             {"name": "⏰ Days to Expiry", "value": f"{signal['days_to_expiry']} days", "inline": True}
         ]
+
+        target_price = self._calculate_target(signal)
+        if target_price:
+            fields.append({
+                "name": "🎯 Target",
+                "value": target_price,
+                "inline": False
+            })
 
         # Create embed with auto-disclaimer
         embed = self.create_signal_embed_with_disclaimer(
@@ -238,3 +245,22 @@ class TradyFlowBot(BaseAutoBot):
 
         await self.post_to_discord(embed)
         logger.info(f"Posted Orakl Flow signal: {signal['ticker']} {signal['type']} ${signal['strike']}")
+
+    def _calculate_target(self, signal: Dict) -> str:
+        """Provide a realistic price target above/below current price."""
+
+        current_price = signal.get('current_price')
+        strike = signal.get('strike')
+        opt_type = signal.get('type')
+
+        if not current_price or not strike or not opt_type:
+            return "Target unavailable"
+
+        reward_threshold = 0.02  # 2% move default
+
+        if opt_type == 'CALL':
+            base_target = max(strike, current_price * (1 + reward_threshold))
+            return f"Break above ${base_target:.2f} (≥{((base_target/current_price)-1)*100:.1f}% move)"
+
+        base_target = min(strike, current_price * (1 - reward_threshold))
+        return f"Break below ${base_target:.2f} (≤{(1-(base_target/current_price))*100:.1f}% move)"
