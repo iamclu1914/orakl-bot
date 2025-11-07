@@ -32,11 +32,8 @@ class Config:
     # Individual Bot Webhooks (Each bot posts to its own dedicated channel)
     SWEEPS_WEBHOOK = os.getenv('SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     GOLDEN_SWEEPS_WEBHOOK = os.getenv('GOLDEN_SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
-    SCALPS_WEBHOOK = os.getenv('SCALPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
-    DARKPOOL_WEBHOOK = os.getenv('DARKPOOL_WEBHOOK', DISCORD_WEBHOOK_URL)
     ORAKL_FLOW_WEBHOOK = os.getenv('ORAKL_FLOW_WEBHOOK', DISCORD_WEBHOOK_URL)
-    STRAT_WEBHOOK = os.getenv('STRAT_WEBHOOK', DISCORD_WEBHOOK_URL)
     
     # Discord Settings
     DISCORD_COMMAND_PREFIX = os.getenv('DISCORD_COMMAND_PREFIX', 'ok-')
@@ -46,11 +43,8 @@ class Config:
     # Bot Scan Intervals (seconds) - Original intervals restored
     TRADY_FLOW_INTERVAL = int(os.getenv('TRADY_FLOW_INTERVAL', '300'))  # 5 minutes
     BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '180'))  # 3 minutes
-    SCALPS_INTERVAL = int(os.getenv('SCALPS_INTERVAL', '120'))  # 2 minutes
     SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '900'))  # 15 minutes
-    DARKPOOL_INTERVAL = int(os.getenv('DARKPOOL_INTERVAL', '900'))  # 15 minutes
-    STRAT_INTERVAL = int(os.getenv('STRAT_INTERVAL', '300'))  # 5 minutes
     
     # ORAKL Flow Settings
     SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', '5'))
@@ -62,22 +56,15 @@ class Config:
     
     # Bot-specific Thresholds
     GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M
-    DARKPOOL_MIN_BLOCK_SIZE = int(os.getenv('DARKPOOL_MIN_BLOCK_SIZE', '10000'))
-    DARKPOOL_MIN_TOTAL_SHARES = int(os.getenv('DARKPOOL_MIN_TOTAL_SHARES', '10000'))
-    DARKPOOL_MIN_TOTAL_DOLLAR = float(os.getenv('DARKPOOL_MIN_TOTAL_DOLLAR', '1000000'))
-    DARKPOOL_BATCH_SIZE = int(os.getenv('DARKPOOL_BATCH_SIZE', '120'))
     SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '50000'))  # $50k
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '5000'))  # $5k for intraday
-    SCALPS_MIN_PREMIUM = float(os.getenv('SCALPS_MIN_PREMIUM', '2000'))  # $2k for scalps
     MIN_VOLUME_RATIO = float(os.getenv('MIN_VOLUME_RATIO', '3.0'))  # 3x volume for unusual
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
 
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '65'))
     MIN_SWEEP_SCORE = int(os.getenv('MIN_SWEEP_SCORE', '60'))
-    MIN_DARKPOOL_SCORE = int(os.getenv('MIN_DARKPOOL_SCORE', '30'))
     MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '70'))
-    MIN_SCALP_SCORE = int(os.getenv('MIN_SCALP_SCORE', '88'))
     
     # Watchlist Mode - Dynamic or Static
     WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC
@@ -120,16 +107,6 @@ class Config:
     STATIC_WATCHLIST = os.getenv('WATCHLIST', _DEFAULT_WATCHLIST).split(',')
     _DEFAULT_STATIC_LIST = [ticker.strip().upper() for ticker in _DEFAULT_WATCHLIST.split(',') if ticker.strip()]
 
-    SCALPS_WATCHLIST = os.getenv(
-        'SCALPS_WATCHLIST',
-        (
-            'SPY,QQQ,NVDA,TSLA,AMD,AAPL,MSFT,META,GOOGL,'
-            'AMZN,SMCI,CRM,PLTR,COIN,INTC,SOFI,RIVN,AFRM,'
-            'SNOW,NET,SHOP,LSCC,ON,MRVL,LCID,UPST,ROKU,'
-            'ETSY,AI,BB,CHPT,CLSK,MU,SQ,UBER,ABNB'
-        )
-    ).split(',')
-
     ORAKL_FLOW_WATCHLIST = os.getenv(
         'ORAKL_FLOW_WATCHLIST',
         ','.join(_DEFAULT_STATIC_LIST[:80])
@@ -137,11 +114,6 @@ class Config:
 
     SWEEPS_WATCHLIST = os.getenv(
         'SWEEPS_WATCHLIST',
-        ','.join(_DEFAULT_STATIC_LIST[:120])
-    ).split(',')
-
-    DARKPOOL_WATCHLIST = os.getenv(
-        'DARKPOOL_WATCHLIST',
         ','.join(_DEFAULT_STATIC_LIST[:120])
     ).split(',')
 
@@ -182,12 +154,8 @@ class Config:
 
     # Initialize WATCHLIST (will be populated dynamically by WatchlistManager)
     WATCHLIST = [ticker.strip().upper() for ticker in STATIC_WATCHLIST if ticker.strip()]
-    SCALPS_WATCHLIST = [ticker.strip().upper() for ticker in SCALPS_WATCHLIST if ticker.strip()]
     ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
-    DARKPOOL_WATCHLIST = [ticker.strip().upper() for ticker in DARKPOOL_WATCHLIST if ticker.strip()]
-    if not DARKPOOL_WATCHLIST:
-        DARKPOOL_WATCHLIST = list(SWEEPS_WATCHLIST)
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
 
     # Ensure core index ETFs are always monitored by flow-focused bots
@@ -197,13 +165,7 @@ class Config:
             SWEEPS_WATCHLIST.insert(0, _core_symbol)
         if _core_symbol not in GOLDEN_SWEEPS_WATCHLIST:
             GOLDEN_SWEEPS_WATCHLIST.insert(0, _core_symbol)
-        if _core_symbol not in DARKPOOL_WATCHLIST:
-            DARKPOOL_WATCHLIST.insert(0, _core_symbol)
 
-    # Ensure Golden Sweeps watches the same high-premium names surfaced by scalps
-    for ticker in SCALPS_WATCHLIST:
-        if ticker not in GOLDEN_SWEEPS_WATCHLIST:
-            GOLDEN_SWEEPS_WATCHLIST.append(ticker)
     SKIP_TICKERS = [ticker.strip().upper() for ticker in SKIP_TICKERS if ticker.strip()]
     
     # Auto-start Settings
@@ -343,10 +305,8 @@ class Config:
         logger.info("-" * 60)
         logger.info("Bot-specific Settings:")
         logger.info(f"  Golden Sweeps: ${cls.GOLDEN_MIN_PREMIUM:,.0f} (Score: {cls.MIN_GOLDEN_SCORE})")
-        logger.info(f"  Darkpool: {cls.DARKPOOL_MIN_BLOCK_SIZE:,} shares (Score: {cls.MIN_DARKPOOL_SCORE})")
         logger.info(f"  Sweeps: ${cls.SWEEPS_MIN_PREMIUM:,.0f} (Score: {cls.MIN_SWEEP_SCORE})")
         logger.info(f"  Bullseye: ${cls.BULLSEYE_MIN_PREMIUM:,.0f} (Score: {cls.MIN_BULLSEYE_SCORE})")
-        logger.info(f"  Scalps: ${cls.SCALPS_MIN_PREMIUM:,.0f} (Score: {cls.MIN_SCALP_SCORE})")
         logger.info("=" * 60)
         
         return True

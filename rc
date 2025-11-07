@@ -1,0 +1,75 @@
+[1mdiff --git a/src/bot_manager.py b/src/bot_manager.py[m
+[1mindex 44dd69d..9e69a68 100644[m
+[1m--- a/src/bot_manager.py[m
+[1m+++ b/src/bot_manager.py[m
+[36m@@ -14,8 +14,6 @@[m [mfrom src.bots import ([m
+     GoldenSweepsBot,[m
+     DarkpoolBot[m
+ )[m
+[31m-from src.bots.strat_bot import STRATPatternBot[m
+[31m-from src.utils.sector_watchlist import STRAT_COMPLETE_WATCHLIST[m
+ [m
+ logger = logging.getLogger(__name__)[m
+ [m
+[36m@@ -61,7 +59,7 @@[m [mclass BotManager:[m
+         self.bot_overrides[self.orakl_flow_bot] = orakl_watchlist[m
+         logger.info(f"  ✓ Orakl Flow Bot → Channel ID: {Config.ORAKL_FLOW_WEBHOOK.split('/')[-2]}")[m
+ [m
+[31m-        # Shared large-cap watchlist used by sweeps/golden/darkpool/bullseye/strat[m
+[32m+[m[32m        # Shared large-cap watchlist used by sweeps/golden/darkpool/bullseye[m
+         shared_large_cap_watchlist = list(Config.SWEEPS_WATCHLIST)[m
+ [m
+         # Bullseye Bot (AI Intraday)[m
+[36m@@ -138,16 +136,6 @@[m [mclass BotManager:[m
+             f" | Watchlist: {len(darkpool_watchlist)} tickers"[m
+         )[m
+ [m
+[31m-        # STRAT Pattern Bot (3-2-2, 2-2, 1-3-1 Patterns)[m
+[31m-        self.strat_bot = STRATPatternBot(self.fetcher)[m
+[31m-        self.strat_bot.watchlist = list(shared_large_cap_watchlist)[m
+[31m-        self.bot_overrides[self.strat_bot] = list(shared_large_cap_watchlist)[m
+[31m-        self.bots.append(self.strat_bot)[m
+[31m-        logger.info([m
+[31m-            f"  ✓ STRAT Pattern Bot → Channel ID: {Config.STRAT_WEBHOOK.split('/')[-2]}"[m
+[31m-            f" | Watchlist: {len(shared_large_cap_watchlist)} tickers"[m
+[31m-        )[m
+[31m-[m
+         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")[m
+ [m
+     async def start_all(self):[m
+[36m@@ -162,12 +150,12 @@[m [mclass BotManager:[m
+         # Load watchlist based on WATCHLIST_MODE setting[m
+         if Config.WATCHLIST_MODE == 'STATIC':[m
+             logger.info("🔄 Loading STATIC watchlist from configuration...")[m
+[31m-            self.watchlist = Config.STATIC_WATCHLIST[m
+[32m+[m[32m            self.watchlist = list(Config.STATIC_WATCHLIST)[m
+             logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (static configuration)")[m
+         else:[m
+[31m-            logger.info("🔄 Loading ALL_MARKET watchlist (comprehensive sector list)...")[m
+[31m-            self.watchlist = STRAT_COMPLETE_WATCHLIST[m
+[31m-            logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (all mega/large caps)")[m
+[32m+[m[32m            logger.info("🔄 Loading dynamic watchlist from Polygon...")[m
+[32m+[m[32m            self.watchlist = await self.watchlist_manager.get_watchlist()[m
+[32m+[m[32m            logger.info(f"✅ Watchlist loaded: {len(self.watchlist)} tickers (dynamic market universe)")[m
+         [m
+         # Update all bots with the comprehensive watchlist[m
+         self._update_bot_watchlists()[m
+[36m@@ -204,9 +192,15 @@[m [mclass BotManager:[m
+                 # Wait for refresh interval[m
+                 await asyncio.sleep(Config.WATCHLIST_REFRESH_INTERVAL)[m
+ [m
+[31m-                # No need to refresh - using static comprehensive watchlist[m
+[31m-                logger.info("🔄 Using static comprehensive watchlist...")[m
+[31m-                logger.info(f"✅ All bots using: {len(self.watchlist)} mega/large cap tickers")[m
+[32m+[m[32m                if Config.WATCHLIST_MODE == 'STATIC':[m
+[32m+[m[32m                    logger.info("🔄 Using static watchlist configuration (no refresh needed)...")[m
+[32m+[m[32m                    logger.info(f"✅ All bots using: {len(self.watchlist)} configured tickers")[m
+[32m+[m[32m                    continue[m
+[32m+[m
+[32m+[m[32m                await self.watchlist_manager.refresh_watchlist()[m
+[32m+[m[32m                self.watchlist = await self.watchlist_manager.get_watchlist()[m
+[32m+[m[32m                logger.info(f"✅ Dynamic watchlist refreshed: {len(self.watchlist)} tickers")[m
+[32m+[m[32m                self._update_bot_watchlists()[m
+ [m
+             except Exception as e:[m
+                 logger.error(f"Error in watchlist refresh loop: {e}")[m

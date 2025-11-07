@@ -22,13 +22,15 @@ class TradyFlowBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_TOTAL_PREMIUM = 750000
-        self.MIN_UNIQUE_CONTRACTS = 3
-        self.MAX_STRIKE_DISTANCE = 5  # percent
-        self.MIN_PROB_ITM = 75  # Require high probability ITM
-        self.MIN_SUCCESS_RATE = getattr(Config, 'SUCCESS_RATE_THRESHOLD', 0.8)
-        self.DOMINANT_PREMIUM_RATIO = 1.5
-        self.MIN_TRADE_PREMIUM = 50000
+        self.MIN_TOTAL_PREMIUM = 1_500_000
+        self.MIN_UNIQUE_CONTRACTS = 4
+        self.MAX_STRIKE_DISTANCE = 4  # percent
+        self.MIN_PROB_ITM = 82  # Require very high probability ITM
+        self.MIN_SUCCESS_RATE = max(getattr(Config, 'SUCCESS_RATE_THRESHOLD', 0.8), 0.85)
+        self.DOMINANT_PREMIUM_RATIO = 2.0
+        self.MIN_TRADE_PREMIUM = 100_000
+        self.MIN_VOLUME_DELTA = 20
+        self.MIN_REPEAT_COUNT = 15
 
     async def scan_and_post(self):
         """Scan for repeat and dominant signals using concurrent processing"""
@@ -63,7 +65,7 @@ class TradyFlowBot(BaseAutoBot):
             flows = await self.fetcher.detect_unusual_flow(
                 underlying=symbol,
                 min_premium=self.MIN_TRADE_PREMIUM,
-                min_volume_delta=10
+                min_volume_delta=self.MIN_VOLUME_DELTA
             )
 
             if not flows:
@@ -139,8 +141,8 @@ class TradyFlowBot(BaseAutoBot):
                         symbol, strike, opt_type, expiration, premium
                     )
 
-                    # Must have at least 10 repeat signals for ORAKL Flow
-                    if repeat_count < 10:
+                    # Must have at least configured repeat signals for ORAKL Flow
+                    if repeat_count < self.MIN_REPEAT_COUNT:
                         continue
 
                     # Calculate probability ITM
@@ -185,9 +187,9 @@ class TradyFlowBot(BaseAutoBot):
                         self.signal_history[signal_key] = datetime.now()
                         self._mark_cooldown(signal_key)
                         logger.info(
-                            f"ORAKL Flow detected: {symbol} {opt_type} ${strike} "
-                            f"(Premium: ${premium:,.0f}, Repeats: {repeat_count}, "
-                            f"ITM Prob: {prob_itm:.1f}%, Success:{success_rate:.1%})"
+                    f"ORAKL Flow detected: {symbol} {opt_type} ${strike} "
+                    f"(Premium: ${premium:,.0f}, Repeats: {repeat_count}, "
+                    f"ITM Prob: {prob_itm:.1f}%, Success:{success_rate:.1%})"
                         )
 
                 except Exception as e:
@@ -217,14 +219,15 @@ class TradyFlowBot(BaseAutoBot):
         fields = [
             {"name": "📊 Contract", "value": f"{signal['type']} ${signal['strike']}\nExp: {signal['expiration']}", "inline": True},
             {"name": "🎲 Probability ITM", "value": f"**{signal['probability_itm']:.1f}%**", "inline": True},
-            {"name": "📈 Success Rate", "value": f"{signal['success_rate']*100:.0f}%", "inline": True},
             {"name": "💰 Premium Flow", "value": f"${signal['premium']:,.0f}", "inline": True},
             {"name": "📈 Current Price", "value": f"${signal['current_price']:.2f}", "inline": True},
-            {"name": "📊 Volume", "value": f"{signal['volume']:,}", "inline": True},
             {"name": "🔄 Repeat Signals", "value": f"{signal['repeat_count']} detected", "inline": True},
-            {"name": "🏹 Dominant Flow", "value": signal.get('dominant_type', 'N/A'), "inline": True},
             {"name": "⏰ Days to Expiry", "value": f"{signal['days_to_expiry']} days", "inline": True}
         ]
+
+        open_interest = signal.get('open_interest')
+        if open_interest:
+            fields.append({"name": "📉 Open Interest", "value": f"{int(open_interest):,}", "inline": True})
 
         target_price = self._calculate_target(signal)
         if target_price:
