@@ -57,11 +57,12 @@ class BotManager:
         self.bot_overrides[self.orakl_flow_bot] = orakl_watchlist
         logger.info(f"  ✓ Orakl Flow Bot → Channel ID: {Config.ORAKL_FLOW_WEBHOOK.split('/')[-2]}")
 
-        # Shared large-cap watchlist used by sweeps/golden/bullseye
-        shared_large_cap_watchlist = list(Config.SWEEPS_WATCHLIST)
+        # UNIFIED WATCHLIST - All bots now use the same comprehensive watchlist
+        # Includes mega-caps + small account friendly tickers (under $75)
+        unified_watchlist = list(Config.SWEEPS_WATCHLIST)
 
-        # Bullseye Bot (AI Intraday)
-        bullseye_watchlist = list(shared_large_cap_watchlist)
+        # Bullseye Bot (Institutional Swing Scanner)
+        bullseye_watchlist = list(unified_watchlist)
         self.bullseye_bot = BullseyeBot(
             Config.BULLSEYE_WEBHOOK,
             bullseye_watchlist,
@@ -71,12 +72,12 @@ class BotManager:
         self.bots.append(self.bullseye_bot)
         self.bot_overrides[self.bullseye_bot] = bullseye_watchlist
         logger.info(
-            f"  ✓ Bullseye Bot → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}"
+            f"  ✓ Bullseye Bot (Institutional) → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}"
             f" | Watchlist: {len(bullseye_watchlist)} tickers"
         )
 
         # Sweeps Bot (Large Options Sweeps)
-        sweeps_watchlist = list(shared_large_cap_watchlist)
+        sweeps_watchlist = list(unified_watchlist)
         self.sweeps_bot = SweepsBot(
             Config.SWEEPS_WEBHOOK,
             sweeps_watchlist,
@@ -91,7 +92,7 @@ class BotManager:
         )
 
         # Golden Sweeps Bot (1M+ Sweeps)
-        golden_watchlist = list(shared_large_cap_watchlist)
+        golden_watchlist = list(unified_watchlist)
         self.golden_sweeps_bot = GoldenSweepsBot(
             Config.GOLDEN_SWEEPS_WEBHOOK,
             golden_watchlist,
@@ -102,7 +103,7 @@ class BotManager:
         self.bot_overrides[self.golden_sweeps_bot] = golden_watchlist
         logger.info(
             f"  ✓ Golden Sweeps Bot → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}"
-            f" | Watchlist: {len(golden_watchlist)} tickers"
+            f" | Watchlist: {len(golden_watchlist)} tickers (same as all bots)"
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")

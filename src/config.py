@@ -76,75 +76,63 @@ class Config:
     MIN_STOCK_PRICE = float(os.getenv('MIN_STOCK_PRICE', '5.0'))  # $5 minimum (avoid penny stocks)
     MAX_STOCK_PRICE = float(os.getenv('MAX_STOCK_PRICE', '10000'))  # $10K max (filter out Berkshire)
 
-    # Static Watchlist (fallback when WATCHLIST_MODE = 'STATIC')
-    _DEFAULT_WATCHLIST = (
+    # Unified Watchlist - ALL BOTS (includes small account friendly tickers under $75)
+    _UNIFIED_WATCHLIST = (
         # Indices & ETFs
-        'SPY,QQQ,IWM,DIA,'
-        # Technology
+        'SPY,QQQ,IWM,DIA,XLF,XLE,XLK,XLV,XLY,XLC,SMH,ARKK,SOXL,'
+        # Technology (existing + new under $75)
         'AAPL,MSFT,NVDA,GOOGL,META,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,TXN,PLTR,CRWD,PANW,'
-        # Consumer Discretionary
-        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,'
-        # Financial Services
-        'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,'
-        # Healthcare
-        'UNH,JNJ,LLY,ABBV,MRK,PFE,TMO,ABT,DHR,BMY,AMGN,CVS,GILD,'
-        # Energy
+        'SHOP,SMCI,NET,ROKU,ZS,DDOG,OKTA,SPLK,TEAM,ZM,SNOW,AFRM,MU,ON,MRVL,ARM,'
+        # Consumer Discretionary (existing + new)
+        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,'
+        # Financial Services (existing + new under $75)
+        'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,SOFI,'
+        # Healthcare (existing + new)
+        'UNH,JNJ,LLY,ABBV,MRK,PFE,TMO,ABT,DHR,BMY,AMGN,CVS,GILD,MNKD,ISRG,VRTX,REGN,'
+        # Energy (existing)
         'XOM,CVX,COP,SLB,EOG,MPC,PSX,VLO,OXY,HAL,'
-        # Industrials
+        # Industrials (existing)
         'BA,CAT,GE,HON,UPS,RTX,LMT,DE,MMM,UNP,'
-        # Communication Services
-        'T,VZ,CMCSA,TMUS,DIS,'
-        # Consumer Staples
+        # Communication Services (existing + new under $75)
+        'T,VZ,CMCSA,TMUS,DIS,CHTR,PARA,WBD,EA,TTWO,SNAP,'
+        # Consumer Staples (existing)
         'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,'
-        # Materials
-        'LIN,APD,ECL,DD,NEM,FCX,DOW,'
-        # Real Estate
+        # Materials & Commodities (existing + new under $75)
+        'LIN,APD,ECL,DD,NEM,FCX,DOW,AA,CLF,VALE,CCJ,ALB,LTHM,MP,GOLD,'
+        # Real Estate (existing)
         'AMT,PLD,CCI,EQIX,PSA,'
-        # Utilities
-        'NEE,DUK,SO,D,AEP'
+        # Utilities (existing)
+        'NEE,DUK,SO,D,AEP,'
+        # Auto & EV (new small account friendly under $75)
+        'F,GM,RIVN,LCID,NIO,'
+        # Travel & Reopening (new under $75)
+        'UBER,LYFT,ABNB,CCL,RCL,MAR,H,HLT,UAL,DAL,AAL,EXPE,'
+        # Semiconductors (new)
+        'ASML,LRCX,MPWR,NXPI,ADI,KLAC,AMAT,TSM,BRCM,STM,'
+        # Meme & High Beta (new under $75)
+        'AMC,GME'
     )
+    
+    # Legacy variable for backwards compatibility
+    _DEFAULT_WATCHLIST = _UNIFIED_WATCHLIST
 
-    STATIC_WATCHLIST = os.getenv('WATCHLIST', _DEFAULT_WATCHLIST).split(',')
-    _DEFAULT_STATIC_LIST = [ticker.strip().upper() for ticker in _DEFAULT_WATCHLIST.split(',') if ticker.strip()]
+    STATIC_WATCHLIST = os.getenv('WATCHLIST', _UNIFIED_WATCHLIST).split(',')
+    _UNIFIED_LIST = [ticker.strip().upper() for ticker in _UNIFIED_WATCHLIST.split(',') if ticker.strip()]
 
+    # ALL BOTS NOW USE THE SAME UNIFIED WATCHLIST
     ORAKL_FLOW_WATCHLIST = os.getenv(
         'ORAKL_FLOW_WATCHLIST',
-        ','.join(_DEFAULT_STATIC_LIST[:80])
+        ','.join(_UNIFIED_LIST)
     ).split(',')
 
     SWEEPS_WATCHLIST = os.getenv(
         'SWEEPS_WATCHLIST',
-        ','.join(_DEFAULT_STATIC_LIST[:120])
+        ','.join(_UNIFIED_LIST)
     ).split(',')
-
-    _DEFAULT_GOLDEN_LIST = (
-        # Mega cap technology & AI leaders
-        'AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AVGO,ADBE,CRM,ORCL,CSCO,INTC,AMD,QCOM,TXN,SMCI,SHOP,PLTR,'  # noqa: E501
-        # Financial heavyweights & crypto-exposed
-        'JPM,BAC,WFC,MS,GS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,'  # noqa: E501
-        # Energy & industrial majors
-        'XOM,CVX,COP,SLB,EOG,MPC,PSX,VLO,OXY,HAL,BA,CAT,GE,DE,UPS,LMT,RTX,UNP,'  # noqa: E501
-        # Discretionary & consumer brands
-        'HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,'  # noqa: E501
-        # Healthcare & biotech momentum names
-        'LLY,UNH,ABBV,MNKD,MRK,PFE,TMO,DHR,ISRG,VRTX,REGN,VRTX,'  # noqa: E501
-        # High-beta tech & growth favorites
-        'NFLX,SNOW,NET,ROKU,CRWD,PANW,ZS,DDOG,OKTA,SPLK,TEAM,ZM,AFRM,RIVN,LCID,MU,ON,MRVL,ARM,'  # noqa: E501
-        # Semiconductors & hardware
-        'ASML,LRCX,MPWR,NXPI,ADI,KLAC,AMAT,TSM,BRCM,STM,'  # noqa: E501
-        # Materials & commodities movers
-        'FCX,NEM,AA,CLF,VALE,CCJ,ALB,LTHM,MP,'  # noqa: E501
-        # Media, telecom & entertainment
-        'CMCSA,TMUS,CHTR,T,TMUS,VZ,PARA,WBD,EA,TTWO,'  # noqa: E501
-        # Travel & reopening plays
-        'UBER,LYFT,ABNB,CCL,RCL,MAR,H,HLT,UAL,DAL,AAL,SBUX,EXPE,'  # noqa: E501
-        # ETFs for mega moves
-        'SPY,QQQ,IWM,DIA,ARKK,SOXL,SMH,XLF,XLE,XLY,XLC'  # noqa: E501
-    )
 
     GOLDEN_SWEEPS_WATCHLIST = os.getenv(
         'GOLDEN_SWEEPS_WATCHLIST',
-        _DEFAULT_GOLDEN_LIST
+        ','.join(_UNIFIED_LIST)
     ).split(',')
 
     SKIP_TICKERS = os.getenv(
@@ -153,10 +141,18 @@ class Config:
     ).split(',')
 
     # Initialize WATCHLIST (will be populated dynamically by WatchlistManager)
+    # All watchlists now use the unified list
     WATCHLIST = [ticker.strip().upper() for ticker in STATIC_WATCHLIST if ticker.strip()]
     ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
+    
+    # Verify all bots have same watchlist count
+    logger.info(f"Unified Watchlist: {len(_UNIFIED_LIST)} tickers")
+    logger.info(f"  - ORAKL Flow: {len(ORAKL_FLOW_WATCHLIST)} tickers")
+    logger.info(f"  - Sweeps: {len(SWEEPS_WATCHLIST)} tickers")
+    logger.info(f"  - Golden Sweeps: {len(GOLDEN_SWEEPS_WATCHLIST)} tickers")
+    logger.info(f"  - Bullseye: Uses SWEEPS_WATCHLIST")
 
     # Ensure core index ETFs are always monitored by flow-focused bots
     _REQUIRED_INDEX_ETFS = ['SPY', 'QQQ', 'IWM']
