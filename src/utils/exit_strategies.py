@@ -102,19 +102,24 @@ class ExitStrategies:
     @staticmethod
     def _calculate_bullseye_exits(entry_price: float, atr: float,
                                  option_type: str, dte: int) -> Dict:
-        """Calculate exits for bullseye trades (intraday swings)"""
+        """
+        Calculate exits for institutional swing trades.
+        These aren't scalps - institutions expect MOVES.
+        """
         
-        # More room for bullseye trades
-        if dte <= 1:  # 0-1 DTE
-            stop_pct = 0.25  # 25% stop
-            target1_pct = 0.40  # 40% target
-            target2_pct = 0.80  # 80% target
-            target3_pct = 1.50  # 150% runner
-        else:  # 2-3 DTE
+        # INSTITUTIONAL SWING EXITS - Much wider than scalps
+        if dte <= 2:  # 0-2 DTE swings
+            # Tighter stops, quicker targets
             stop_pct = 0.30  # 30% stop
-            target1_pct = 0.50  # 50% target
-            target2_pct = 1.00  # 100% target
-            target3_pct = 2.00  # 200% runner
+            target1_pct = 0.75    # 75% gain
+            target2_pct = 1.50    # 150% gain
+            target3_pct = 3.00    # 300% runner
+        else:  # 3-5 DTE swings  
+            # More room to work
+            stop_pct = 0.40  # 40% stop
+            target1_pct = 1.00    # 100% gain
+            target2_pct = 2.00    # 200% gain
+            target3_pct = 4.00    # 400% runner
         
         stop_loss = entry_price * (1 - stop_pct)
         target_1 = entry_price * (1 + target1_pct)
@@ -127,7 +132,7 @@ class ExitStrategies:
         reward2 = target_2 - entry_price
         reward3 = target_3 - entry_price
         
-        trail_pct = 0.20  # 20% trailing
+        trail_pct = 0.25  # 25% trailing for swings
 
         return {
             'stop_loss': round(stop_loss, 2),

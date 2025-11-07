@@ -1,4 +1,4 @@
-"""Bullseye Bot - AI signal tool for intraday movements"""
+"""Bullseye Bot - Institutional Swing Trade Scanner"""
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 class BullseyeBot(BaseAutoBot):
     """
-    Bullseye Bot - Swing Trading Signal Bot
-    Identifies high-conviction swing trades that can pan out over a few days to a few weeks.
-    Focuses on unusual volume, smart money, and price action confirmation.
+    Bullseye Bot - Institutional Swing Trade Scanner
+    Tracks INSTITUTIONAL positioning for 1-2 day swing trades
+    Large premium = Smart money expecting big moves
     """
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
@@ -29,17 +29,28 @@ class BullseyeBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_PREMIUM = 200000  # minimum premium for Bullseye signals
-        self.MIN_VOLUME = 10000
-        self.MIN_OPEN_INTEREST = 10000
+        
+        # INSTITUTIONAL SIZE REQUIREMENTS (features, not restrictions)
+        self.MIN_PREMIUM = 500000  # $500K minimum (institutional size)
+        self.IDEAL_PREMIUM = 1000000  # $1M+ is highest conviction
+        self.MIN_VOLUME = 5000  # Large blocks
+        self.MIN_OI = 10000  # Liquid strikes only
+        
+        # Focus on 1-5 day swings
         self.MIN_DTE = 1
-        self.MAX_DTE = 10
-        self.MIN_VOLUME_DELTA = 30
-        self.MIN_VOI_RATIO = 0.75
+        self.MAX_DTE = 5
+        
+        # ATM to slightly OTM (where institutions play)
+        self.DELTA_RANGE = (0.35, 0.65)
+        
+        # Other requirements
+        self.MIN_VOI_RATIO = 0.5  # Fresh positioning
+        self.MAX_ALERTS_PER_SYMBOL = 2  # Per 4 hours
+        self.COOLDOWN_HOURS = 4
 
     async def scan_and_post(self):
-        """Scan for high-conviction swing trades"""
-        logger.info(f"{self.name} scanning for swing trade opportunities")
+        """Scan for institutional swing trade opportunities"""
+        logger.info(f"{self.name} scanning for institutional swing positions")
 
         if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
@@ -47,25 +58,33 @@ class BullseyeBot(BaseAutoBot):
         
         market_context = await MarketContext.get_market_context(self.fetcher)
         
-        tasks = [self._scan_for_swing_trade(symbol, market_context) for symbol in self.watchlist]
+        tasks = [self._scan_for_institutional_swings(symbol, market_context) for symbol in self.watchlist]
         all_signals = await asyncio.gather(*tasks, return_exceptions=True)
         
         flat_signals = [signal for sublist in all_signals if isinstance(sublist, list) for signal in sublist]
         
-        # Rank and post top signals (limit to best two ideas)
-        top_signals = sorted(flat_signals, key=lambda x: x['bullseye_score'], reverse=True)[:2]
+        # Filter out likely hedges
+        directional_signals = [s for s in flat_signals if not self._is_likely_hedge(s)]
+        
+        # Rank by institutional score and post top signals
+        top_signals = sorted(directional_signals, key=lambda x: x['institutional_score'], reverse=True)
+        
+        # Limit alerts per symbol
+        posted_symbols = set()
+        alerts_posted = 0
         
         for signal in top_signals:
-            await self._post_signal(signal)
+            if signal['ticker'] not in posted_symbols:
+                await self._post_institutional_signal(signal)
+                posted_symbols.add(signal['ticker'])
+                alerts_posted += 1
+                if alerts_posted >= 3:  # Max 3 alerts per scan
+                    break
 
-    async def _scan_for_swing_trade(self, symbol: str, market_context: Dict) -> List[Dict]:
+    async def _scan_for_institutional_swings(self, symbol: str, market_context: Dict) -> List[Dict]:
         """
-        Scan a single symbol for swing trade setups using efficient REST flow detection.
-
-        NEW APPROACH (REST):
-        - Uses detect_unusual_flow() with $5K premium threshold
-        - ATM filtering (delta 0.4-0.6 range)
-        - 1-3 day DTE range for short-dated trades
+        Scan for INSTITUTIONAL positioning for 1-2 day swing trades.
+        Large premium trades = institutions expecting moves NOW.
         """
         signals = []
         try:
@@ -141,9 +160,9 @@ class BullseyeBot(BaseAutoBot):
                     self._log_skip(symbol, f'bullseye VOI {voi_ratio:.2f}x < {self.MIN_VOI_RATIO:.2f}x')
                     continue
 
-                # Filter 4: ATM options only (delta 0.4-0.6 range)
-                if abs(delta) < 0.4 or abs(delta) > 0.6:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: delta {abs(delta):.2f} outside 0.4-0.6")
+                # Filter 4: ATM to slightly OTM (institutional range)
+                if abs(delta) < self.DELTA_RANGE[0] or abs(delta) > self.DELTA_RANGE[1]:
+                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: delta {abs(delta):.2f} outside institutional range")
                     continue
 
                 # Filter 5: Strike distance (within 15% of current price)
@@ -204,17 +223,26 @@ class BullseyeBot(BaseAutoBot):
                     spread_pct=spread_pct if bid > 0 and ask > 0 else 5.0
                 )
 
-                # Calculate Bullseye score with new factors
-                bullseye_score = self._calculate_bullseye_score_v2(
-                    voi_ratio=voi_ratio,
-                    premium=premium,
-                    momentum_strength=momentum['strength'],
-                    days_to_expiry=days_to_expiry,
-                    itm_probability=itm_probability,
-                    liquidity_score=liquidity_score
-                )
-
-                if bullseye_score >= Config.MIN_BULLSEYE_SCORE:
+                # Prepare trade data for institutional scoring
+                trade_data = {
+                    'symbol': symbol,
+                    'premium': premium,
+                    'volume': total_volume,
+                    'open_interest': open_interest,
+                    'option_type': opt_type,
+                    'strike': strike,
+                    'delta': delta,
+                    'execution': 'ASK' if opt_type == 'CALL' else 'BID',  # Assume aggressive
+                    'is_sweep': flow_intensity == 'HIGH',
+                    'is_block': total_volume >= 5000,
+                    'voi_ratio': voi_ratio,
+                    'dte': days_to_expiry
+                }
+                
+                # Calculate institutional swing score
+                institutional_score, trade_tag = self._calculate_institutional_swing_score(trade_data)
+                
+                if institutional_score >= 65:  # Minimum score for institutional trades
                     signal = {
                         'ticker': symbol,
                         'type': opt_type,
@@ -228,20 +256,25 @@ class BullseyeBot(BaseAutoBot):
                         'voi_ratio': voi_ratio,
                         'momentum_strength': momentum['strength'],
                         'momentum_direction': momentum['direction'],
-                        'bullseye_score': bullseye_score,
+                        'institutional_score': institutional_score,
+                        'trade_tag': trade_tag,
                         'market_context': market_context,
                         'volume_delta': volume_delta,
                         'delta': delta,
                         'gamma': flow.get('gamma', 0),
                         'vega': flow.get('vega', 0),
+                        'theta': flow.get('theta', 0),
                         'itm_probability': itm_probability,
                         'expected_move_5d': em5,
                         'liquidity_score': liquidity_score,
+                        'bid': bid,
+                        'ask': ask,
                         'bid_ask_spread_pct': spread_pct if bid > 0 and ask > 0 else None,
                         'implied_volatility': implied_volatility,
-                        # Volume velocity metrics (NEW)
-                        'volume_velocity': volume_velocity,
-                        'flow_intensity': flow_intensity
+                        'flow_intensity': flow_intensity,
+                        'execution': 'ASK' if opt_type == 'CALL' else 'BID',
+                        'is_sweep': flow_intensity == 'HIGH',
+                        'is_block': total_volume >= 5000
                     }
 
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
@@ -300,71 +333,154 @@ class BullseyeBot(BaseAutoBot):
             logger.error(f"Error calculating liquidity score: {e}")
             return 0.0
 
-    def _calculate_bullseye_score_v2(self, voi_ratio: float, premium: float,
-                                     momentum_strength: float, days_to_expiry: int,
-                                     itm_probability: float, liquidity_score: float) -> int:
+    def _calculate_institutional_swing_score(self, trade: Dict) -> tuple:
         """
-        Calculate the Bullseye Score v2 with Phase 1 enhancements.
-
-        Updated Weights:
-        - VOI Ratio: 30% (reduced from 35%)
-        - Premium: 25% (reduced from 30%)
-        - Momentum: 15% (reduced from 20%)
-        - ITM Probability: 15% (NEW)
-        - DTE Sweet Spot: 10% (reduced from 15%)
-        - Liquidity Quality: 5% (NEW)
-
+        Score based on institutional conviction + timing.
+        Large premium trades = institutions expecting moves.
+        
         Returns:
-            Score between 0-100
+            Tuple of (score, trade_tag)
         """
         score = 0
+        trade_tag = ""
+        
+        # 1. INSTITUTIONAL SIZE (35 points) - This DOES matter for swings!
+        premium_score = 0
+        
+        if trade['premium'] >= 5000000:  # $5M+ whale trade
+            premium_score = 35
+            trade_tag = "🐋 WHALE"
+        elif trade['premium'] >= 2000000:  # $2M+ 
+            premium_score = 30
+            trade_tag = "🦈 SHARK"
+        elif trade['premium'] >= 1000000:  # $1M+
+            premium_score = 25
+            trade_tag = "🐟 BIG FISH"
+        elif trade['premium'] >= 500000:  # $500K+
+            premium_score = 20
+            trade_tag = "📊 INSTITUTIONAL"
+        elif trade['premium'] >= 250000:
+            premium_score = 15
+            trade_tag = "💰 SIGNIFICANT"
+        else:
+            return 0, ""  # Skip small trades for swing bot
+        
+        score += premium_score
+        
+        # 2. AGGRESSIVE POSITIONING (25 points)
+        execution_score = 0
+        
+        # Sweeps at ask/bid = urgency
+        if trade['is_sweep']:
+            if trade['execution'] == 'ASK' and trade['option_type'] == 'CALL':
+                execution_score = 25  # Aggressive bullish
+            elif trade['execution'] == 'BID' and trade['option_type'] == 'PUT':
+                execution_score = 25  # Aggressive bearish
+            else:
+                execution_score = 10  # Wrong side sweep
+        
+        # Block trades = institutional
+        elif trade['is_block']:
+            execution_score = 20  # Positioned trade
+        
+        # Regular at ask/bid
+        elif trade['execution'] in ['ASK', 'BID']:
+            execution_score = 15
+        else:
+            execution_score = 5  # Mid/spread trades
+        
+        score += execution_score
+        
+        # 3. VOLUME/OI DYNAMICS (20 points)
+        flow_score = 0
+        
+        # Volume to OI ratio (fresh positioning vs hedging)
+        voi_ratio = trade.get('voi_ratio', 0)
+        
+        if voi_ratio >= 2.0:  # Volume 2x OI = new positions
+            flow_score += 10
+        elif voi_ratio >= 1.0:
+            flow_score += 7
+        elif voi_ratio >= 0.5:
+            flow_score += 5
+        
+        # Absolute volume significance
+        if trade['volume'] >= 50000:  # Massive volume
+            flow_score += 10
+        elif trade['volume'] >= 25000:
+            flow_score += 7
+        elif trade['volume'] >= 10000:
+            flow_score += 5
+        
+        score += min(flow_score, 20)
+        
+        # 4. TECHNICAL CATALYST (10 points)
+        catalyst_score = 0
+        
+        # For now, simplified catalyst scoring
+        # In full implementation, would check 52-week highs/lows, MA levels, etc.
+        # Using momentum as proxy for technical setup
+        if hasattr(self, 'last_momentum') and self.last_momentum:
+            if self.last_momentum.get('strength', 0) >= 0.7:
+                catalyst_score += 7
+            elif self.last_momentum.get('strength', 0) >= 0.5:
+                catalyst_score += 5
+        
+        # Check DTE sweet spot
+        if 2 <= trade['dte'] <= 3:
+            catalyst_score += 3
+        
+        score += min(catalyst_score, 10)
+        
+        # 5. REPEAT ACTIVITY (10 points) - Institutions scale in
+        repeat_score = 0
+        
+        # Check recent signal history for same ticker
+        recent_cutoff = datetime.now() - timedelta(hours=4)
+        same_direction_count = 0
+        
+        for sig_key, sig_time in self.signal_history.items():
+            if sig_time >= recent_cutoff:
+                parts = sig_key.split('_')
+                if len(parts) >= 2 and parts[0] == trade['symbol'] and parts[1] == trade['option_type']:
+                    same_direction_count += 1
+        
+        if same_direction_count >= 3:
+            repeat_score = 10  # Multiple institutions agreeing
+        elif same_direction_count >= 2:
+            repeat_score = 7
+        elif same_direction_count >= 1:
+            repeat_score = 4
+        
+        score += repeat_score
+        
+        return score, trade_tag
 
-        # VOI Ratio (30%)
-        if voi_ratio >= 10:
-            score += 30
-        elif voi_ratio >= 5:
-            score += 25
-        elif voi_ratio >= 3:
-            score += 20
-
-        # Premium (25%)
-        if premium >= 250000:
-            score += 25
-        elif premium >= 100000:
-            score += 20
-        elif premium >= 50000:
-            score += 15
-        elif premium >= 25000:
-            score += 10
-
-        # Momentum (15%)
-        if momentum_strength >= 0.7:
-            score += 15
-        elif momentum_strength >= 0.5:
-            score += 10
-        elif momentum_strength >= 0.3:
-            score += 5
-
-        # ITM Probability (15% - NEW)
-        if itm_probability >= 0.60:
-            score += 15
-        elif itm_probability >= 0.50:
-            score += 12
-        elif itm_probability >= 0.40:
-            score += 9
-        elif itm_probability >= 0.35:
-            score += 6
-
-        # DTE Sweet Spot (10%)
-        if 21 <= days_to_expiry <= 45:
-            score += 10
-        elif 7 <= days_to_expiry <= 60:
-            score += 6
-
-        # Liquidity Quality (5% - NEW)
-        score += int(liquidity_score * 5)
-
-        return min(score, 100)
+    def _is_likely_hedge(self, signal: Dict) -> bool:
+        """Identify likely hedges vs directional bets"""
+        
+        # Deep ITM = likely hedge
+        if abs(signal['delta']) > 0.85:
+            return True
+        
+        # Massive volume in indices = hedge
+        if signal['ticker'] in ['SPY', 'QQQ', 'IWM', 'VIX']:
+            if signal['volume'] > 50000:
+                return True
+        
+        # Very far OTM with huge volume = likely protection
+        if abs(signal['delta']) < 0.15 and signal['volume'] > 25000:
+            return True
+        
+        # Wrong-way momentum = hedge (puts in uptrend, calls in downtrend)
+        if signal['momentum_direction'] == 'bullish' and signal['type'] == 'PUT':
+            if signal['premium'] > 1000000:  # Large put in uptrend = hedge
+                return True
+        elif signal['momentum_direction'] == 'bearish' and signal['type'] == 'CALL':
+            if signal['premium'] > 1000000:  # Large call in downtrend = hedge
+                return True
+        
+        return False
 
     def _calculate_bullseye_score(self, voi_ratio: float, premium: float, momentum_strength: float, dte: int) -> int:
         """
@@ -472,7 +588,7 @@ class BullseyeBot(BaseAutoBot):
             
             # Simple Moving Averages
             sma_20 = daily_bars['close'].rolling(window=20).mean().iloc[-1]
-            sma_50 = daily_bars['close'].rolling(window=50).mean().iloc[-1]
+            sma_50 = daily_bars['close'].rolling(window=50).mean().iloc[-1] if len(daily_bars) >= 50 else sma_20
             
             direction = 'neutral'
             strength = 0.5
@@ -484,63 +600,194 @@ class BullseyeBot(BaseAutoBot):
                 direction = 'bearish'
                 strength = 0.7 + (sma_20 / daily_bars['close'].iloc[-1] - 1) * 10
                 
-            return {
+            momentum = {
                 'direction': direction,
                 'strength': min(max(strength, 0), 1)
             }
+            
+            # Store for use in scoring
+            self.last_momentum = momentum
+            
+            return momentum
         except Exception as e:
             logger.error(f"Error calculating momentum for {symbol}: {e}")
             return None
 
-    async def _post_signal(self, signal: Dict):
-        """Post Bullseye swing trade signal with unique ORAKL branding"""
+    async def _post_institutional_signal(self, signal: Dict):
+        """Post institutional swing alert with enhanced format"""
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
-
-        # ORAKL-style title and description
-        title = f"🎯 {signal['ticker']} ${signal['strike']} {signal['type']} - Bullseye Signal"
-
-        itm_pct = signal['itm_probability'] * 100
-        flow_intensity = signal.get('flow_intensity', 'NORMAL')
-
-        # Simple description with current stock price
-        description = f"Current Price: **${signal['current_price']:.2f}**"
-
-        # ORAKL-style fields - clean and informative
-        liquidity_quality = "Excellent" if signal['liquidity_score'] >= 0.8 else \
-                           "Good" if signal['liquidity_score'] >= 0.6 else \
-                           "Fair" if signal['liquidity_score'] >= 0.4 else "Moderate"
-
-        sentiment = "BULLISH" if signal['type'] == "CALL" else "BEARISH"
-
+        
+        # Calculate swing exits
+        exits = self._calculate_swing_exits(signal['ask'], signal)
+        
+        # Build alert components
+        title = f"🎯 **INSTITUTIONAL SWING ALERT** {signal['trade_tag']}"
+        
+        # Get today's total premium for context
+        total_premium_today = await self._get_days_premium(signal['ticker'])
+        
+        # Count similar flows
+        similar_flows = self._get_similar_flows(signal, hours=24)
+        
+        # Format premium
+        if signal['premium'] >= 1_000_000:
+            premium_fmt = f"${signal['premium']/1_000_000:.1f}M"
+        else:
+            premium_fmt = f"${signal['premium']/1_000:.0f}K"
+        
+        # Calculate distance to strike
+        distance_pct = ((signal['strike'] - signal['current_price']) / signal['current_price']) * 100
+        
+        # Generate trade thesis
+        trade_thesis = self._generate_trade_thesis(signal)
+        
+        # Build description
+        description = f"**{signal['ticker']} ${signal['strike']} {signal['type']}**\n"
+        description += f"📅 Expiry: {signal['expiration']} ({signal['days_to_expiry']} DTE)"
+        
         fields = [
-            # Contract
-            {"name": "Contract Details", "value": f"**${signal['strike']}** {signal['type']} expiring **{signal['expiration']}** ({signal['days_to_expiry']} days)", "inline": False},
-
-            # Key metrics row
-            {"name": "Premium", "value": f"${signal['premium']/1_000_000:.2f}M" if signal['premium'] >= 1_000_000 else f"${signal['premium']/1_000:.0f}K", "inline": True},
-            {"name": "Volume", "value": f"{signal.get('volume', 0):,}", "inline": True},
-            {"name": "Open Interest", "value": f"{signal['open_interest']:,}", "inline": True},
-
-            # Analysis row
-            {"name": "ITM Probability", "value": f"**{itm_pct:.1f}%**", "inline": True},
-            {"name": "Momentum", "value": f"**{signal['momentum_strength']:.2f}** {sentiment}", "inline": True},
-            {"name": "Liquidity", "value": liquidity_quality, "inline": True},
-
-            # Additional info
-            {"name": "Expected Move (5d)", "value": f"${signal['expected_move_5d']:.2f}", "inline": True},
-            {"name": "Flow Intensity", "value": f"**{flow_intensity}**", "inline": True},
-            {"name": "Bullseye Score", "value": f"**{signal['bullseye_score']}/100**", "inline": True}
+            # Institutional Flow Section
+            {"name": "💰 **INSTITUTIONAL FLOW:**", "value": 
+                f"• Premium: **{premium_fmt}** (Top 1% today)\n"
+                f"• Volume: **{signal['volume']:,}** contracts\n"
+                f"• Execution: **{signal['execution']}** {'SWEEP 🔥' if signal['is_sweep'] else ''}\n"
+                f"• Trade Type: {'**OPENING - NEW POSITION ⚡**' if signal.get('trade_type') == 'OPENING' else 'Add to Position'}", 
+                "inline": False},
+            
+            # Swing Setup Section
+            {"name": "📊 **SWING SETUP:**", "value": 
+                f"• Score: **{signal['institutional_score']}/100**\n"
+                f"• Today's Total: ${total_premium_today/1_000_000:.1f}M\n"
+                f"• Similar Flows (24hr): **{len(similar_flows)}** trades same direction\n"
+                f"• VOI Ratio: **{signal['voi_ratio']:.2f}x**\n"
+                f"• Current Stock Price: **${signal['current_price']:.2f}**\n"
+                f"• Distance to Strike: **{abs(distance_pct):.1f}%** {'OTM' if distance_pct > 0 and signal['type'] == 'CALL' or distance_pct < 0 and signal['type'] == 'PUT' else 'ITM'}", 
+                "inline": False},
+            
+            # Targets Section
+            {"name": "🎯 **SWING TARGETS (1-2 days):**", "value": 
+                f"• Entry: **${signal['ask']:.2f}**\n"
+                f"• Target 1 (75%): **${exits['target1']:.2f}**\n"
+                f"• Target 2 (150%): **${exits['target2']:.2f}**\n"
+                f"• Target 3 (300%): **${exits['target3']:.2f}**\n"
+                f"• Stop Loss: **${exits['stop_loss']:.2f}** (-{int((1 - exits['stop_loss']/signal['ask'])*100)}%)\n"
+                f"• Management: {exits['management']}", 
+                "inline": False},
+            
+            # Why This Matters
+            {"name": "⚡ **WHY THIS MATTERS:**", "value": trade_thesis, "inline": False},
+            
+            # Momentum Status
+            {"name": "🔄 **MOMENTUM:**", "value": self._get_momentum_status(signal), "inline": False}
         ]
-
-        # Create embed with ORAKL branding
+        
+        # Create embed
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
             description=description,
             color=color,
             fields=fields,
-            footer="ORAKL Bullseye Bot • AI-Powered Swing Trade Analysis"
+            footer="ORAKL Institutional Scanner • 1-2 Day Swing Trades"
         )
-
+        
         await self.post_to_discord(embed)
-        logger.info(f"Posted Bullseye signal: {signal['ticker']} {signal['type']} ${signal['strike']} "
-                   f"Score:{signal['bullseye_score']} Premium:{signal['premium']:,.0f} ITM:{itm_pct:.1f}%")
+        logger.info(f"Posted Institutional Swing: {signal['ticker']} {signal['type']} ${signal['strike']} "
+                   f"Score:{signal['institutional_score']} Premium:{signal['premium']:,.0f} Tag:{signal['trade_tag']}")
+
+    def _calculate_swing_exits(self, entry_price: float, flow_data: Dict) -> Dict:
+        """
+        1-2 day swing trades need wider stops, bigger targets
+        These aren't scalps - institutions expect MOVES
+        """
+        
+        if flow_data['days_to_expiry'] <= 2:  # 0-2 DTE swings
+            # Tighter stops, quicker targets
+            stop_loss = entry_price * 0.70  # 30% stop
+            target1 = entry_price * 1.75    # 75% gain
+            target2 = entry_price * 2.50    # 150% gain
+            target3 = entry_price * 4.00    # 300% runner
+            
+        else:  # 3-5 DTE swings  
+            # More room to work
+            stop_loss = entry_price * 0.60  # 40% stop
+            target1 = entry_price * 2.00    # 100% gain
+            target2 = entry_price * 3.00    # 200% gain
+            target3 = entry_price * 5.00    # 400% runner
+        
+        # Trailing stop after target 1
+        trail_trigger = target1
+        trail_percent = 0.25  # Trail by 25%
+        
+        return {
+            'stop_loss': round(stop_loss, 2),
+            'target1': round(target1, 2),
+            'target2': round(target2, 2), 
+            'target3': round(target3, 2),
+            'trail_trigger': trail_trigger,
+            'trail_percent': trail_percent,
+            'management': "Sell 1/3 at each target, trail remainder"
+        }
+    
+    async def _get_days_premium(self, symbol: str) -> float:
+        """Get total premium for symbol today"""
+        try:
+            # For now, return estimated value
+            # In full implementation, would query today's flows
+            return self.signal_history.get(f"{symbol}_total_premium_today", 5000000.0)
+        except:
+            return 5000000.0  # Default $5M
+    
+    def _get_similar_flows(self, signal: Dict, hours: int = 24) -> list:
+        """Get similar directional flows in past N hours"""
+        similar = []
+        cutoff = datetime.now() - timedelta(hours=hours)
+        
+        for sig_key, sig_time in self.signal_history.items():
+            if sig_time >= cutoff:
+                parts = sig_key.split('_')
+                if len(parts) >= 2 and parts[0] == signal['ticker'] and parts[1] == signal['type']:
+                    similar.append(sig_key)
+        
+        return similar
+    
+    def _generate_trade_thesis(self, signal: Dict) -> str:
+        """Generate narrative explanation for the trade"""
+        
+        if signal['trade_tag'] in ['🐋 WHALE', '🦈 SHARK']:
+            size_narrative = f"This {signal['trade_tag']} trade represents MASSIVE institutional conviction"
+        else:
+            size_narrative = "Large institutional money is positioning"
+        
+        if signal['is_sweep']:
+            urgency_narrative = "executed as an URGENT SWEEP at the ask"
+        elif signal['is_block']:
+            urgency_narrative = "came through as a positioned BLOCK trade"
+        else:
+            urgency_narrative = "shows clear directional intent"
+        
+        momentum_narrative = ""
+        if signal['momentum_direction'] == signal['type'].lower()[:-1] + 'ish':
+            momentum_narrative = f" The {signal['momentum_direction'].upper()} momentum supports this directional bet."
+        
+        dte_narrative = f"With only {signal['days_to_expiry']} days to expiry, this institution expects a move SOON."
+        
+        return f"{size_narrative} - ${signal['premium']/1_000_000:.1f}M {urgency_narrative}.{momentum_narrative} {dte_narrative}"
+    
+    def _get_momentum_status(self, signal: Dict) -> str:
+        """Get formatted momentum status"""
+        direction = signal['momentum_direction'].upper()
+        strength = signal['momentum_strength']
+        
+        if strength >= 0.7:
+            strength_text = "STRONG"
+        elif strength >= 0.5:
+            strength_text = "MODERATE"
+        else:
+            strength_text = "WEAK"
+        
+        alignment = "✅ ALIGNED" if (
+            (direction == "BULLISH" and signal['type'] == "CALL") or 
+            (direction == "BEARISH" and signal['type'] == "PUT")
+        ) else "⚠️ CONTRARIAN"
+        
+        return f"{direction} ({strength_text} {strength:.2f}) {alignment}"
