@@ -270,6 +270,11 @@ class SweepsBot(BaseAutoBot):
 
         final_score = sweep.get('enhanced_score', sweep['sweep_score'])
 
+        # Only notify when sweep score is 90+
+        if int(final_score) < 90:
+            logger.debug(f"{self.name} - Skipping alert: score {int(final_score)} < 90")
+            return False
+
         # Build confidence string
         volume_ratio = sweep.get('volume_ratio', 0)
         price_aligned = sweep.get('price_aligned', False)
