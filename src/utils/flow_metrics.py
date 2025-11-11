@@ -70,11 +70,35 @@ def _volume_over_oi(volume: Optional[float], open_interest: Optional[float]) -> 
     return float(volume) / float(open_interest)
 
 
-def _is_ask_side(trade_price: Optional[float], ask_price: Optional[float]) -> bool:
-    if trade_price is None or ask_price is None:
+def _is_ask_side(
+    trade_price: Optional[float],
+    ask_price: Optional[float],
+    bid_price: Optional[float] = None,
+    midpoint: Optional[float] = None,
+) -> bool:
+    """
+    Determine whether a trade executed at the ask (or higher).
+
+    Falls back to midpoint / bid comparisons when ask quotes are missing (0.0)
+    which happens frequently in Polygon snapshots for highly active contracts.
+    """
+    if trade_price is None:
         return False
-    # Allow small rounding differences
-    return trade_price >= ask_price * 0.995
+
+    if ask_price is not None and ask_price > 0:
+        # Allow small rounding differences
+        return trade_price >= ask_price * 0.995
+
+    # Fall back to midpoint if available
+    if midpoint is not None and midpoint > 0:
+        return trade_price >= midpoint * 1.005
+
+    # Final fallback: require price to exceed bid by a small margin
+    if bid_price is not None and bid_price > 0:
+        return trade_price >= bid_price * 1.01
+
+    # With no quote context, assume ask-side (better to include than miss)
+    return True
 
 
 def _extract_multi_leg_ratio(data: Dict[str, Any]) -> Optional[float]:
@@ -166,6 +190,10 @@ def calculate_option_trade_metrics(
     ask_price = last_quote.get("ask")
     if isinstance(ask_price, dict):
         ask_price = ask_price.get("price") or ask_price.get("p") or ask_price.get("midpoint")
+    bid_price = last_quote.get("bid")
+    if isinstance(bid_price, dict):
+        bid_price = bid_price.get("price") or bid_price.get("p") or bid_price.get("midpoint")
+    midpoint = last_quote.get("midpoint")
 
     iv_now = contract_snapshot.get("implied_volatility")
     iv_change = None
@@ -189,7 +217,7 @@ def calculate_option_trade_metrics(
         premium=premium,
         volume_over_oi=_volume_over_oi(volume, open_interest),
         iv_change=iv_change,
-        is_ask_side=_is_ask_side(price, ask_price),
+        is_ask_side=_is_ask_side(price, ask_price, bid_price=bid_price, midpoint=midpoint),
         is_single_leg=_is_single_leg(multi_leg_ratio),
         multi_leg_ratio=multi_leg_ratio,
     )
@@ -230,6 +258,8 @@ def build_metrics_from_flow(flow: Dict[str, Any]) -> Optional[OptionTradeMetrics
 
     price = flow.get("last_price") or flow.get("price")
     ask_price = flow.get("ask")
+    bid_price = flow.get("bid")
+    midpoint = flow.get("midpoint")
     total_volume = flow.get("total_volume")
     open_interest = flow.get("open_interest")
     volume_delta = flow.get("volume_delta")
@@ -266,7 +296,7 @@ def build_metrics_from_flow(flow: Dict[str, Any]) -> Optional[OptionTradeMetrics
         premium=float(premium),
         volume_over_oi=_volume_over_oi(total_volume, open_interest),
         iv_change=None,
-        is_ask_side=_is_ask_side(price, ask_price),
+        is_ask_side=_is_ask_side(price, ask_price, bid_price=bid_price, midpoint=midpoint),
         is_single_leg=_is_single_leg(multi_leg_ratio),
         multi_leg_ratio=multi_leg_ratio,
     )
