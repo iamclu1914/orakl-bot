@@ -226,7 +226,7 @@ class IndexWhaleBot(BaseAutoBot):
         if flow.get("volume_delta") is not None:
             fields.append({"name": "🔨 Volume Delta", "value": f"{int(flow['volume_delta']):,}", "inline": True})
 
-        notes = "\n".join(signal.notes) if signal.notes else "Repeated hits alert • Happy Hunting!"
+        notes = "\n".join(signal.notes) if signal.notes else "Repeated hits alert"
 
         description = f"**{signal.direction}** • {signal.label}"
         return self.create_signal_embed_with_disclaimer(
