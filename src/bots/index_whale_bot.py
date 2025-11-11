@@ -129,6 +129,8 @@ class IndexWhaleBot(BaseAutoBot):
     def _passes_filters(self, metrics: OptionTradeMetrics) -> bool:
         if metrics.size <= 0:
             return False
+        if not metrics.is_single_leg:
+            return False
         if not metrics.is_otm:
             return False
         if metrics.percent_otm > self.max_percent_otm:
@@ -139,7 +141,7 @@ class IndexWhaleBot(BaseAutoBot):
             return False
         if metrics.dte < self.min_dte:
             return False
-        multi_leg_ratio = metrics.multi_leg_ratio or 0.0
+        multi_leg_ratio = metrics.multi_leg_ratio if metrics.multi_leg_ratio is not None else 0.0
         if multi_leg_ratio > self.max_multi_leg_ratio:
             return False
         return True
