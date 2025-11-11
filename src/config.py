@@ -158,7 +158,10 @@ class Config:
         'SPREAD_WATCHLIST',
         ','.join(_UNIFIED_LIST)
     ).split(',')
-    SPREAD_EXTRA_TICKERS = os.getenv('SPREAD_EXTRA_TICKERS', '').split(',')
+    SPREAD_EXTRA_TICKERS = os.getenv(
+        'SPREAD_EXTRA_TICKERS',
+        'BBBY,SNDL,TLRY,CLOV,MARA,RIOT,MSTR,SQ,BNTX,MRNA,TQQQ,SQQQ,UPRO,GLD,SLV,USO,COF,USB,PNC,MRO,DVN,FANG,WYNN,LVS,PENN'
+    ).split(',')
 
     SKIP_TICKERS = os.getenv(
         'SKIP_TICKERS',
