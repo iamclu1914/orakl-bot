@@ -6,12 +6,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.watchlist_manager import SmartWatchlistManager
-from src.bots import (
-    TradyFlowBot,
-    BullseyeBot,
-    SweepsBot,
-    GoldenSweepsBot
-)
+from src.bots import TradyFlowBot, BullseyeBot, SweepsBot, GoldenSweepsBot, IndexWhaleBot
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +99,19 @@ class BotManager:
         logger.info(
             f"  ✓ Golden Sweeps Bot → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}"
             f" | Watchlist: {len(golden_watchlist)} tickers (same as all bots)"
+        )
+
+        # Index Whale Bot (REST polling)
+        self.index_whale_bot = IndexWhaleBot(
+            Config.INDEX_WHALE_WEBHOOK,
+            self.fetcher,
+            Config.INDEX_WHALE_WATCHLIST,
+        )
+        self.bots.append(self.index_whale_bot)
+        self.bot_overrides[self.index_whale_bot] = list(Config.INDEX_WHALE_WATCHLIST)
+        logger.info(
+            "  ✓ Index Whale Bot → REST polling | Symbols: %s",
+            ", ".join(Config.INDEX_WHALE_WATCHLIST),
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")

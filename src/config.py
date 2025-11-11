@@ -34,6 +34,10 @@ class Config:
     GOLDEN_SWEEPS_WEBHOOK = os.getenv('GOLDEN_SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
     ORAKL_FLOW_WEBHOOK = os.getenv('ORAKL_FLOW_WEBHOOK', DISCORD_WEBHOOK_URL)
+    INDEX_WHALE_WEBHOOK = os.getenv(
+        'INDEX_WHALE_WEBHOOK',
+        'https://discord.com/api/webhooks/1437664821180104724/eHh1QxsT5zb0b9pVYQWAhY7HONa68m4Qi184tqadlgnybSdtSB1UJiwrl_55iGwTBYUW'
+    )
     
     # Discord Settings
     DISCORD_COMMAND_PREFIX = os.getenv('DISCORD_COMMAND_PREFIX', 'ok-')
@@ -45,6 +49,11 @@ class Config:
     BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '180'))  # 3 minutes
     SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '900'))  # 15 minutes
+    INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '30'))  # 30 seconds REST polling
+    INDEX_WHALE_MIN_PREMIUM = float(os.getenv('INDEX_WHALE_MIN_PREMIUM', '0'))
+    INDEX_WHALE_MIN_VOLUME_DELTA = int(os.getenv('INDEX_WHALE_MIN_VOLUME_DELTA', '25'))
+    INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.005'))
+    INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '60'))  # 1 minute poll
     
     # ORAKL Flow Settings
     SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', '5'))
@@ -134,6 +143,10 @@ class Config:
         'GOLDEN_SWEEPS_WATCHLIST',
         ','.join(_UNIFIED_LIST)
     ).split(',')
+    INDEX_WHALE_WATCHLIST = os.getenv(
+        'INDEX_WHALE_WATCHLIST',
+        'SPY,QQQ,IWM'
+    ).split(',')
 
     SKIP_TICKERS = os.getenv(
         'SKIP_TICKERS',
@@ -146,12 +159,14 @@ class Config:
     ORAKL_FLOW_WATCHLIST = [ticker.strip().upper() for ticker in ORAKL_FLOW_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
+    INDEX_WHALE_WATCHLIST = [ticker.strip().upper() for ticker in INDEX_WHALE_WATCHLIST if ticker.strip()]
     
     # Verify all bots have same watchlist count
     logger.info(f"Unified Watchlist: {len(_UNIFIED_LIST)} tickers")
     logger.info(f"  - ORAKL Flow: {len(ORAKL_FLOW_WATCHLIST)} tickers")
     logger.info(f"  - Sweeps: {len(SWEEPS_WATCHLIST)} tickers")
     logger.info(f"  - Golden Sweeps: {len(GOLDEN_SWEEPS_WATCHLIST)} tickers")
+    logger.info(f"  - Index Whale: {len(INDEX_WHALE_WATCHLIST)} tickers")
     logger.info(f"  - Bullseye: Uses SWEEPS_WATCHLIST")
 
     # Ensure core index ETFs are always monitored by flow-focused bots
@@ -187,6 +202,15 @@ class Config:
     MARKET_OPEN_MINUTE = int(os.getenv('MARKET_OPEN_MINUTE', '30'))
     MARKET_CLOSE_HOUR = int(os.getenv('MARKET_CLOSE_HOUR', '16'))
     MARKET_CLOSE_MINUTE = int(os.getenv('MARKET_CLOSE_MINUTE', '0'))
+
+    # Index Whale Bot session window (09:30 - 16:15 ET by default)
+    INDEX_WHALE_OPEN_HOUR = int(os.getenv('INDEX_WHALE_OPEN_HOUR', '9'))
+    INDEX_WHALE_OPEN_MINUTE = int(os.getenv('INDEX_WHALE_OPEN_MINUTE', '30'))
+    INDEX_WHALE_CLOSE_HOUR = int(os.getenv('INDEX_WHALE_CLOSE_HOUR', '16'))
+    INDEX_WHALE_CLOSE_MINUTE = int(os.getenv('INDEX_WHALE_CLOSE_MINUTE', '15'))
+    INDEX_WHALE_MIN_PREMIUM = float(os.getenv('INDEX_WHALE_MIN_PREMIUM', '80000'))
+    INDEX_WHALE_MIN_VOLUME_DELTA = int(os.getenv('INDEX_WHALE_MIN_VOLUME_DELTA', '10'))
+    INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.01'))  # 1%
     
     # Chart Settings
     CHART_STYLE = os.getenv('CHART_STYLE', 'seaborn-v0_8-darkgrid')

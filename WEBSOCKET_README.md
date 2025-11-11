@@ -26,15 +26,39 @@ Keep using REST API but optimize significantly:
 - **Alpaca** (free tier): WebSocket for stocks only
 - **IBKR TWS API**: Real-time if you have funded account
 
+## Index Whale Bot (REST Flow)
+
+The updated `IndexWhaleBot` now uses Polygon’s REST endpoints (no WebSocket dependency) to
+poll `SPY`, `QQQ`, and `IWM` every ~30 seconds. It reconstructs high-pressure flow using
+`detect_unusual_flow()`, classifies patterns (continuation, flip, laddering, divergence), and pushes
+alerts to `INDEX_WHALE_WEBHOOK`.
+
+**Configuration**
+- `INDEX_WHALE_WEBHOOK`
+- `INDEX_WHALE_WATCHLIST` (defaults to `SPY,QQQ,IWM`)
+- `INDEX_WHALE_INTERVAL` (seconds between scans, default `30`)
+- `INDEX_WHALE_MIN_PREMIUM`, `INDEX_WHALE_MIN_VOLUME_DELTA`, `INDEX_WHALE_MAX_PERCENT_OTM`
+- `INDEX_WHALE_OPEN_*` / `INDEX_WHALE_CLOSE_*` to control the trading session window (defaults 09:30 – 16:15 ET)
+
+**Detection Criteria**
+- Single-leg, ask-side trades (price at/near ask)
+- Out-of-the-money contracts with `%OTM ≤ 0.5%`
+- Day volume greater than open interest (`Vol > OI`)
+- DTE ≥ 1 (built for 1–5 DTE scalps)
+- Pattern tracker tags flips, laddering, continuation bursts, and flow/price divergence
+
+`BotManager` launches the REST bot automatically alongside the other scanners—no Polygon premium
+tier required.
+
 ## Recommendation
 
-**For now**: I'll implement the optimized REST API (Option 1) which will:
-1. Eliminate your current timeout issues
-2. Get 5-10x faster scanning
-3. Start generating alerts within minutes
-4. Cost: $0 (uses existing Polygon API)
+**If you are still on REST-only access**: keep using the optimized REST API until Polygon options streaming is available. The REST flow already:
+1. Eliminates timeout issues
+2. Runs 5–10× faster scans
+3. Generates alerts within minutes
+4. Costs $0 (uses existing Polygon API key)
 
-Once bot is proven and generating value, upgrade to Polygon Premium for true real-time WebSocket.
+Upgrade to Polygon Premium when you are ready for true real-time streaming across the full watchlist.
 
 ## Files Status
 
