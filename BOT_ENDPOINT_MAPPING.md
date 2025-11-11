@@ -162,52 +162,6 @@ for flow in flows:
 
 ---
 
-### 5. ORAKL Flow Bot (orakl_flow_bot.py / TradyFlowBot)
-
-**Purpose**: Repeat and dominant signals
-
-**Primary Endpoint**: `/v3/snapshot/options/{underlyingAsset}`
-**Method**: `fetcher.detect_unusual_flow(underlying, min_premium=10000)`
-
-**Bot Logic**:
-```python
-flows = await fetcher.detect_unusual_flow(
-    underlying=symbol,
-    min_premium=10000  # $10K threshold
-)
-
-# Apply repeat signal logic:
-for flow in flows:
-    # Check signal history for repeats
-    repeat_count = analyzer.identify_repeat_signals(
-        symbol, flow['strike'], flow['type'], flow['expiration'], flow['premium']
-    )
-
-    if repeat_count < 3:  # Need 3+ repeats
-        continue
-
-    # Calculate ITM probability
-    prob_itm = analyzer.calculate_probability_itm(...)
-
-    if prob_itm >= 50:  # High probability
-        alert()
-```
-
-**Additional Endpoints**:
-- `get_stock_price()` - Current price
-- Signal history tracking (in-memory)
-- ITM probability calculation
-
-**Filter Criteria**:
-- Premium ≥ $10K
-- Repeat count ≥ 3 signals
-- Probability ITM ≥ 50%
-- DTE 1-45 days
-
-**Key Feature**: Pattern recognition, repeat signal detection
-
----
-
 ## Stock Analysis Bots (2 bots)
 
 ### 6. Darkpool Bot (darkpool_bot.py)
@@ -289,25 +243,20 @@ if current_price > resistance * 1.005:  # Bullish breakout
 
 ### Phase 1: Update Options Bots (Priority Order)
 
-**1. ORAKL Flow Bot** (Simplest)
-- Straightforward volume delta detection
-- Minimal filtering logic
-- Good test case for new architecture
-
-**2. Sweeps Bot** (Medium complexity)
+**1. Sweeps Bot** (Medium complexity)
 - Similar to Golden Sweeps but lower threshold
 - Tests premium filtering at $50K level
 
-**3. Golden Sweeps Bot** (Complex)
+**2. Golden Sweeps Bot** (Complex)
 - Remove multi-exchange/urgency filters (not available)
 - Keep strike distance, volume ratio
 - Most critical bot ($1M+ signals)
 
-**4. Bullseye Bot** (Delta-focused)
+**3. Bullseye Bot** (Delta-focused)
 - ATM detection via strike distance + delta
 - Tests Greek data usage
 
-**5. Scalps Bot** (DTE-focused)
+**4. Scalps Bot** (DTE-focused)
 - DTE filtering from expiration dates
 - Tests time-based logic
 

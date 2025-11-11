@@ -458,7 +458,7 @@ class BaseAutoBot(ABC):
             'reason': reason
         }
         self._skip_records.append(entry)
-        logger.debug(f"{self.name} skip {symbol}: {reason}")
+        logger.info(f"{self.name} skip {symbol}: {reason}")
     
     async def get_health(self) -> Dict[str, Any]:
         """

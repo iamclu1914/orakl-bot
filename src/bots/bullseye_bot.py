@@ -35,18 +35,19 @@ class BullseyeBot(BaseAutoBot):
         self.IDEAL_PREMIUM = 1000000  # $1M+ is highest conviction
         self.MIN_VOLUME = 5000  # Large blocks
         self.MIN_OI = 10000  # Liquid strikes only
-        self.MIN_VOLUME_DELTA = max(int(self.MIN_VOLUME * 0.5), 1000)
-        self.MIN_OPEN_INTEREST = self.MIN_OI
+        default_volume_delta = max(int(self.MIN_VOLUME * 0.5), 1000)
+        self.MIN_VOLUME_DELTA = int(getattr(Config, 'BULLSEYE_MIN_VOLUME_DELTA', default_volume_delta))
+        self.MIN_OPEN_INTEREST = int(getattr(Config, 'BULLSEYE_MIN_OPEN_INTEREST', self.MIN_OI))
         
-        # Focus on 1-5 day swings
-        self.MIN_DTE = 1
-        self.MAX_DTE = 5
+        # Focus on near-dated swings (configurable)
+        self.MIN_DTE = int(getattr(Config, 'BULLSEYE_MIN_DTE', 1))
+        self.MAX_DTE = int(getattr(Config, 'BULLSEYE_MAX_DTE', 5))
         
         # ATM to slightly OTM (where institutions play)
         self.DELTA_RANGE = (0.35, 0.65)
         
         # Other requirements
-        self.MIN_VOI_RATIO = 0.5  # Fresh positioning
+        self.MIN_VOI_RATIO = float(getattr(Config, 'BULLSEYE_MIN_VOI_RATIO', 0.5))  # Fresh positioning
         self.MAX_ALERTS_PER_SYMBOL = 2  # Per 4 hours
         self.COOLDOWN_HOURS = 4
 

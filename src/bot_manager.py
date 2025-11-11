@@ -6,7 +6,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.watchlist_manager import SmartWatchlistManager
-from src.bots import TradyFlowBot, BullseyeBot, SweepsBot, GoldenSweepsBot, IndexWhaleBot
+from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, IndexWhaleBot
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +39,6 @@ class BotManager:
         """Initialize all auto-posting bots with dedicated webhooks"""
         logger.info("Initializing auto-posting bots with dedicated channels...")
         self.bot_overrides: Dict[object, List[str]] = {}
-
-        # Orakl Flow Bot (formerly Trady Flow)
-        orakl_watchlist = list(Config.ORAKL_FLOW_WATCHLIST)
-        self.orakl_flow_bot = TradyFlowBot(
-            Config.ORAKL_FLOW_WEBHOOK,
-            orakl_watchlist,
-            self.fetcher,
-            self.analyzer
-        )
-        self.bots.append(self.orakl_flow_bot)
-        self.bot_overrides[self.orakl_flow_bot] = orakl_watchlist
-        logger.info(f"  ✓ Orakl Flow Bot → Channel ID: {Config.ORAKL_FLOW_WEBHOOK.split('/')[-2]}")
 
         # UNIFIED WATCHLIST - All bots now use the same comprehensive watchlist
         # Includes mega-caps + small account friendly tickers (under $75)
