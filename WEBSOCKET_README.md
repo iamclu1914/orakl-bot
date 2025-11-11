@@ -41,10 +41,11 @@ alerts to `INDEX_WHALE_WEBHOOK`.
 - `INDEX_WHALE_OPEN_*` / `INDEX_WHALE_CLOSE_*` to control the trading session window (defaults 09:30 – 16:15 ET)
 
 **Detection Criteria**
-- Single-leg, ask-side trades (price at/near ask)
+- Ask-side trades (price at/near ask)
 - Out-of-the-money contracts with `%OTM ≤ 0.5%`
 - Day volume greater than open interest (`Vol > OI`)
-- DTE ≥ 1 (built for 1–5 DTE scalps)
+- DTE ≥ `INDEX_WHALE_MIN_DTE` (default 0.05 ≈ 1.2 hours, tuned for 0–5 DTE scalps)
+- Multi-leg ratio ≤ `INDEX_WHALE_MAX_MULTI_LEG_RATIO` (defaults to 35% tolerance)
 - Pattern tracker tags flips, laddering, continuation bursts, and flow/price divergence
 
 `BotManager` launches the REST bot automatically alongside the other scanners—no Polygon premium

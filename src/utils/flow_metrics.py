@@ -30,6 +30,7 @@ class OptionTradeMetrics:
     iv_change: Optional[float]
     is_ask_side: bool
     is_single_leg: bool
+    multi_leg_ratio: Optional[float] = None
 
     @property
     def is_otm(self) -> bool:
@@ -76,19 +77,22 @@ def _is_ask_side(trade_price: Optional[float], ask_price: Optional[float]) -> bo
     return trade_price >= ask_price * 0.995
 
 
-def _is_single_leg(trade: Dict[str, Any]) -> bool:
-    # Polygon includes a multi-leg ratio (1.0 == fully multi-leg)
-    multi_leg = trade.get("multi_leg_ratio")
+def _extract_multi_leg_ratio(data: Dict[str, Any]) -> Optional[float]:
+    multi_leg = data.get("multi_leg_ratio")
     if multi_leg is None:
-        multi_leg = trade.get("multi_leg_count")
-
+        multi_leg = data.get("multi_leg_count")
     if multi_leg is None:
-        return True
-
+        return None
     try:
-        return float(multi_leg) <= 0.0
+        return float(multi_leg)
     except (TypeError, ValueError):
+        return None
+
+
+def _is_single_leg(multi_leg_ratio: Optional[float]) -> bool:
+    if multi_leg_ratio is None:
         return True
+    return multi_leg_ratio <= 0.0
 
 
 def calculate_option_trade_metrics(
@@ -169,6 +173,7 @@ def calculate_option_trade_metrics(
         iv_change = float(iv_now) - float(previous_iv)
 
     dte = _calculate_dte(expiration_dt, trade_time)
+    multi_leg_ratio = _extract_multi_leg_ratio(trade)
 
     return OptionTradeMetrics(
         ticker=ticker,
@@ -185,7 +190,8 @@ def calculate_option_trade_metrics(
         volume_over_oi=_volume_over_oi(volume, open_interest),
         iv_change=iv_change,
         is_ask_side=_is_ask_side(price, ask_price),
-        is_single_leg=_is_single_leg(trade),
+        is_single_leg=_is_single_leg(multi_leg_ratio),
+        multi_leg_ratio=multi_leg_ratio,
     )
 
 
@@ -244,6 +250,7 @@ def build_metrics_from_flow(flow: Dict[str, Any]) -> Optional[OptionTradeMetrics
 
     percent_otm = _percent_otm(option_type, strike, underlying_price)
     dte = _calculate_dte(expiration_dt, timestamp)
+    multi_leg_ratio = _extract_multi_leg_ratio(flow)
 
     return OptionTradeMetrics(
         ticker=ticker,
@@ -260,6 +267,7 @@ def build_metrics_from_flow(flow: Dict[str, Any]) -> Optional[OptionTradeMetrics
         volume_over_oi=_volume_over_oi(total_volume, open_interest),
         iv_change=None,
         is_ask_side=_is_ask_side(price, ask_price),
-        is_single_leg=True,
+        is_single_leg=_is_single_leg(multi_leg_ratio),
+        multi_leg_ratio=multi_leg_ratio,
     )
 

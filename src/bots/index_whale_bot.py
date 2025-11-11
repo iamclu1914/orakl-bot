@@ -1,8 +1,9 @@
 """
 Index Whale Bot - REST polling version.
 
-Scans SPY/QQQ/IWM using Polygon REST data for single-leg, ask-side,
-out-of-the-money flow where volume exceeds open interest, then classifies
+Scans SPY/QQQ/IWM using Polygon REST data for ask-side, out-of-the-money flow
+where volume exceeds open interest, allowing small multi-leg participation,
+then classifies
 patterns (continuations, flips, laddering, divergence) before posting to Discord.
 """
 
@@ -46,6 +47,8 @@ class IndexWhaleBot(BaseAutoBot):
         self.min_premium = Config.INDEX_WHALE_MIN_PREMIUM
         self.min_volume_delta = Config.INDEX_WHALE_MIN_VOLUME_DELTA
         self.max_percent_otm = Config.INDEX_WHALE_MAX_PERCENT_OTM
+        self.min_dte = Config.INDEX_WHALE_MIN_DTE
+        self.max_multi_leg_ratio = Config.INDEX_WHALE_MAX_MULTI_LEG_RATIO
 
         self.open_hour = Config.INDEX_WHALE_OPEN_HOUR
         self.open_minute = Config.INDEX_WHALE_OPEN_MINUTE
@@ -126,8 +129,6 @@ class IndexWhaleBot(BaseAutoBot):
     def _passes_filters(self, metrics: OptionTradeMetrics) -> bool:
         if metrics.size <= 0:
             return False
-        if not metrics.is_single_leg:
-            return False
         if not metrics.is_otm:
             return False
         if metrics.percent_otm > self.max_percent_otm:
@@ -136,7 +137,10 @@ class IndexWhaleBot(BaseAutoBot):
             return False
         if metrics.volume_over_oi <= 1.0:
             return False
-        if metrics.dte < 1:
+        if metrics.dte < self.min_dte:
+            return False
+        multi_leg_ratio = metrics.multi_leg_ratio or 0.0
+        if multi_leg_ratio > self.max_multi_leg_ratio:
             return False
         return True
 
