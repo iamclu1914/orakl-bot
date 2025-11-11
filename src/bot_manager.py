@@ -6,7 +6,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.watchlist_manager import SmartWatchlistManager
-from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, IndexWhaleBot
+from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, IndexWhaleBot, SpreadBot
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,26 @@ class BotManager:
         logger.info(
             "  ✓ Index Whale Bot → REST polling | Symbols: %s",
             ", ".join(Config.INDEX_WHALE_WATCHLIST),
+        )
+
+        # 99 Cent Store Bot (Spread scanner)
+        spread_watchlist = list(
+            dict.fromkeys(
+                Config.SWEEPS_WATCHLIST
+                + Config.SPREAD_WATCHLIST
+                + Config.SPREAD_EXTRA_TICKERS
+            )
+        )
+        self.spread_bot = SpreadBot(
+            Config.SPREAD_WEBHOOK,
+            spread_watchlist,
+            self.fetcher,
+        )
+        self.bots.append(self.spread_bot)
+        self.bot_overrides[self.spread_bot] = spread_watchlist
+        logger.info(
+            "  ✓ 99 Cent Store Bot → Narrow spread scanner | Watchlist: %d tickers",
+            len(spread_watchlist),
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")

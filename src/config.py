@@ -33,6 +33,10 @@ class Config:
     SWEEPS_WEBHOOK = os.getenv('SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     GOLDEN_SWEEPS_WEBHOOK = os.getenv('GOLDEN_SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
+    SPREAD_WEBHOOK = os.getenv(
+        'SPREAD_WEBHOOK',
+        'https://discord.com/api/webhooks/1437936756644122624/CPQjKuRYQsW6wzU1MtuEJx5QrKGaPhU3anZH886MGNLv-DtsLhu3PKSv_YTRIGckkIGV'
+    )
     INDEX_WHALE_WEBHOOK = os.getenv(
         'INDEX_WHALE_WEBHOOK',
         'https://discord.com/api/webhooks/1437664821180104724/eHh1QxsT5zb0b9pVYQWAhY7HONa68m4Qi184tqadlgnybSdtSB1UJiwrl_55iGwTBYUW'
@@ -48,6 +52,7 @@ class Config:
     SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '900'))  # 15 minutes
     INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '60'))  # 60 seconds REST polling
+    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '120'))  # 2 minutes
     INDEX_WHALE_MIN_PREMIUM = float(os.getenv('INDEX_WHALE_MIN_PREMIUM', '0'))
     INDEX_WHALE_MIN_VOLUME_DELTA = int(os.getenv('INDEX_WHALE_MIN_VOLUME_DELTA', '25'))
     INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.005'))
@@ -73,6 +78,10 @@ class Config:
     BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '2500'))
     BULLSEYE_MIN_VOI_RATIO = float(os.getenv('BULLSEYE_MIN_VOI_RATIO', '0.5'))
     BULLSEYE_MIN_OPEN_INTEREST = int(os.getenv('BULLSEYE_MIN_OPEN_INTEREST', '10000'))
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '100000'))
+    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))
+    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '1000'))
+    SPREAD_MAX_SPREAD = float(os.getenv('SPREAD_MAX_SPREAD', '1.0'))
 
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '65'))
@@ -145,6 +154,11 @@ class Config:
         'INDEX_WHALE_WATCHLIST',
         'SPY,QQQ,IWM'
     ).split(',')
+    SPREAD_WATCHLIST = os.getenv(
+        'SPREAD_WATCHLIST',
+        ','.join(_UNIFIED_LIST)
+    ).split(',')
+    SPREAD_EXTRA_TICKERS = os.getenv('SPREAD_EXTRA_TICKERS', '').split(',')
 
     SKIP_TICKERS = os.getenv(
         'SKIP_TICKERS',
@@ -157,12 +171,15 @@ class Config:
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
     INDEX_WHALE_WATCHLIST = [ticker.strip().upper() for ticker in INDEX_WHALE_WATCHLIST if ticker.strip()]
+    SPREAD_WATCHLIST = [ticker.strip().upper() for ticker in SPREAD_WATCHLIST if ticker.strip()]
+    SPREAD_EXTRA_TICKERS = [ticker.strip().upper() for ticker in SPREAD_EXTRA_TICKERS if ticker.strip()]
     
     # Verify all bots have same watchlist count
     logger.info(f"Unified Watchlist: {len(_UNIFIED_LIST)} tickers")
     logger.info(f"  - Sweeps: {len(SWEEPS_WATCHLIST)} tickers")
     logger.info(f"  - Golden Sweeps: {len(GOLDEN_SWEEPS_WATCHLIST)} tickers")
     logger.info(f"  - Index Whale: {len(INDEX_WHALE_WATCHLIST)} tickers")
+    logger.info(f"  - Spread Sniper: {len(SPREAD_WATCHLIST)} tickers (+{len(SPREAD_EXTRA_TICKERS)} extras)")
     logger.info(f"  - Bullseye: Uses SWEEPS_WATCHLIST")
 
     # Ensure core index ETFs are always monitored by flow-focused bots

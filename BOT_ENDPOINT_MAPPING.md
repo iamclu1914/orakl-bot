@@ -260,6 +260,10 @@ if current_price > resistance * 1.005:  # Bullish breakout
 - DTE filtering from expiration dates
 - Tests time-based logic
 
+**5. 99 Cent Store Bot (SpreadBot)**
+- Screens for spreads ≤ $1.00 with premium ≥ $100K
+- Leverages `detect_unusual_flow()` to capture narrow-spread institutional flow
+
 ### Phase 2: Stock Bots
 
 **No changes needed** - Already using optimal endpoints:
