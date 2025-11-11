@@ -1,5 +1,5 @@
 """
-99 Cent Store Bot - identifies narrow-spread institutional option flow.
+99 Cent Store Bot - finds contracts under $1.00 with real whale flow and speculative heat.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class SpreadBot(BaseAutoBot):
     """
-    Detects large premium option trades with option bid/ask spreads under a configurable threshold.
+    Detects contracts priced under $1.00 with large premium (whale flow) and high VOI ratio (speculative heat).
     """
 
     def __init__(self, webhook_url: str, watchlist: Optional[List[str]], fetcher: DataFetcher):
@@ -39,7 +39,8 @@ class SpreadBot(BaseAutoBot):
         self.min_premium = Config.SPREAD_MIN_PREMIUM
         self.min_volume = Config.SPREAD_MIN_VOLUME
         self.min_volume_delta = Config.SPREAD_MIN_VOLUME_DELTA
-        self.max_spread = Config.SPREAD_MAX_SPREAD
+        self.max_price = Config.SPREAD_MAX_PRICE  # Contract price must be < $1.00
+        self.min_voi_ratio = Config.SPREAD_MIN_VOI_RATIO  # Min VOI for speculative heat
 
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         signals: List[Dict] = []
@@ -57,25 +58,22 @@ class SpreadBot(BaseAutoBot):
                 if not metrics:
                     continue
 
-                ask_price = flow.get("ask")
-                bid_price = flow.get("bid")
-                if ask_price is None or bid_price is None:
-                    self._log_skip(symbol, "spread missing quote data")
+                # Filter: Contract price must be under $1.00
+                contract_price = metrics.price
+                if contract_price is None or contract_price <= 0:
+                    self._log_skip(symbol, "missing contract price")
                     continue
 
-                spread_value = ask_price - bid_price
-                if spread_value < 0:
-                    self._log_skip(symbol, f"negative spread {spread_value:.2f}")
+                if contract_price >= self.max_price:
+                    self._log_skip(symbol, f"price ${contract_price:.2f} >= ${self.max_price:.2f}")
                     continue
 
-                if spread_value > self.max_spread:
-                    self._log_skip(symbol, f"spread {spread_value:.2f} > ${self.max_spread:.2f}")
-                    continue
-
+                # Filter: Premium must meet whale threshold
                 if metrics.premium < self.min_premium:
                     self._log_skip(symbol, f"premium ${metrics.premium:,.0f} < ${self.min_premium:,.0f}")
                     continue
 
+                # Filter: Volume must meet threshold
                 total_volume = flow.get("total_volume", 0)
                 if total_volume < self.min_volume:
                     self._log_skip(symbol, f"volume {total_volume} < {self.min_volume}")
@@ -86,12 +84,16 @@ class SpreadBot(BaseAutoBot):
                     self._log_skip(symbol, f"volume delta {volume_delta} < {self.min_volume_delta}")
                     continue
 
+                # Filter: VOI ratio for speculative heat
+                voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
+                if voi_ratio < self.min_voi_ratio:
+                    self._log_skip(symbol, f"VOI ratio {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
+                    continue
+
                 signals.append(
                     {
                         "metrics": metrics,
-                        "spread": spread_value,
-                        "ask": ask_price,
-                        "bid": bid_price,
+                        "contract_price": contract_price,
                         "flow": flow,
                     }
                 )
@@ -105,20 +107,16 @@ class SpreadBot(BaseAutoBot):
 
     async def _post_signal(self, payload: Dict) -> bool:
         metrics: OptionTradeMetrics = payload["metrics"]
-        spread: float = payload["spread"]
-        ask_price: float = payload["ask"]
-        bid_price: float = payload["bid"]
+        contract_price: float = payload["contract_price"]
         flow: Dict = payload["flow"]
 
-        embed = self._build_embed(metrics, spread, ask_price, bid_price, flow)
+        embed = self._build_embed(metrics, contract_price, flow)
         return await self.post_to_discord(embed)
 
     def _build_embed(
         self,
         metrics: OptionTradeMetrics,
-        spread_value: float,
-        ask_price: float,
-        bid_price: float,
+        contract_price: float,
         flow: Dict,
     ) -> Dict:
         dte_days = int(round(metrics.dte))
@@ -133,37 +131,37 @@ class SpreadBot(BaseAutoBot):
         premium_fmt = f"${metrics.premium/1_000_000:.1f}M" if metrics.premium >= 1_000_000 else f"${metrics.premium/1_000:.0f}K"
         volume_delta = flow.get("volume_delta", 0)
         total_volume = flow.get("total_volume", 0)
-        voi_ratio = flow.get("vol_oi_ratio", 0.0)
+        voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
 
         oi_value = flow.get("open_interest", 0)
         underlying_price = flow.get("underlying_price")
-
-        context_lines = [f"• Open Interest: **{oi_value:,}**"]
-        if underlying_price:
-            context_lines.append(f"• Underlying: **${underlying_price:.2f}**")
+        ask_price = flow.get("ask")
+        bid_price = flow.get("bid")
 
         fields = [
             {
-                "name": "🔍 Snapshot",
+                "name": "💰 Whale Flow",
                 "value": (
                     f"• Premium: **{premium_fmt}**\n"
                     f"• Volume: **{total_volume:,}** | Δ **{volume_delta:,}**\n"
-                    f"• VOI Ratio: **{voi_ratio:.2f}x**"
+                    f"• VOI Ratio: **{voi_ratio:.2f}x** 🔥"
                 ),
                 "inline": False,
             },
             {
-                "name": "🎯 Pricing",
+                "name": "💵 Contract Price",
                 "value": (
-                    f"• Ask / Bid: **${ask_price:.2f} / ${bid_price:.2f}**\n"
-                    f"• Spread: **${spread_value:.2f}**\n"
-                    f"• Last: **${metrics.price:.2f}**"
+                    f"• **${contract_price:.2f}**\n"
+                    f"{f'• Ask / Bid: ${ask_price:.2f} / ${bid_price:.2f}' if ask_price and bid_price else ''}"
                 ),
                 "inline": False,
             },
             {
-                "name": "📈 Context",
-                "value": "\n".join(context_lines),
+                "name": "📊 Context",
+                "value": (
+                    f"• Open Interest: **{oi_value:,}**\n"
+                    f"{f'• Underlying: **${underlying_price:.2f}**' if underlying_price else ''}"
+                ),
                 "inline": False,
             },
         ]
@@ -173,7 +171,7 @@ class SpreadBot(BaseAutoBot):
             description=description,
             color=0x6A0DAD,  # violet
             fields=fields,
-            footer="99 Cent Store • Narrow Spread Flow Scanner",
+            footer="99 Cent Store • Under $1.00 Whale Flow Scanner",
         )
         return embed
 

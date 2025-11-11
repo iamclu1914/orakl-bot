@@ -81,7 +81,8 @@ class Config:
     SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '100000'))
     SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))
     SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '1000'))
-    SPREAD_MAX_SPREAD = float(os.getenv('SPREAD_MAX_SPREAD', '1.0'))
+    SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.0'))  # Contract price must be < $1.00
+    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '2.0'))  # Min VOI for speculative heat
 
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '65'))
