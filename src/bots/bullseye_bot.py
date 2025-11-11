@@ -623,65 +623,44 @@ class BullseyeBot(BaseAutoBot):
         # Calculate swing exits
         exits = self._calculate_swing_exits(signal['ask'], signal)
         
-        # Build alert components
-        title = f"🎯 **INSTITUTIONAL SWING ALERT** {signal['trade_tag']}"
+        title = f"🎯 {signal['ticker']} ${signal['strike']} {signal['type']} • {signal['trade_tag']}"
         
-        # Get today's total premium for context
-        total_premium_today = await self._get_days_premium(signal['ticker'])
-        
-        # Count similar flows
-        similar_flows = self._get_similar_flows(signal, hours=24)
-        
-        # Format premium
         if signal['premium'] >= 1_000_000:
             premium_fmt = f"${signal['premium']/1_000_000:.1f}M"
         else:
             premium_fmt = f"${signal['premium']/1_000:.0f}K"
         
-        # Calculate distance to strike
         distance_pct = ((signal['strike'] - signal['current_price']) / signal['current_price']) * 100
-        
-        # Generate trade thesis
-        trade_thesis = self._generate_trade_thesis(signal)
-        
-        # Build description
-        description = f"**{signal['ticker']} ${signal['strike']} {signal['type']}**\n"
-        description += f"📅 Expiry: {signal['expiration']} ({signal['days_to_expiry']} DTE)"
-        
+        distance_label = "OTM" if (signal['type'] == 'CALL' and distance_pct > 0) or (signal['type'] == 'PUT' and distance_pct < 0) else "ITM"
+        description = f"Expiry: {signal['expiration']} ({signal['days_to_expiry']} DTE)"
+
         fields = [
-            # Institutional Flow Section
-            {"name": "💰 **INSTITUTIONAL FLOW:**", "value": 
-                f"• Premium: **{premium_fmt}** (Top 1% today)\n"
-                f"• Volume: **{signal['volume']:,}** contracts\n"
-                f"• Execution: **{signal['execution']}** {'SWEEP 🔥' if signal['is_sweep'] else ''}\n"
-                f"• Trade Type: {'**OPENING - NEW POSITION ⚡**' if signal.get('trade_type') == 'OPENING' else 'Add to Position'}", 
+            {
+                "name": "💰 Flow Snapshot",
+                "value": (
+                    f"• Premium: **{premium_fmt}**\n"
+                    f"• Volume: **{signal['volume']:,}** contracts | VOI **{signal['voi_ratio']:.2f}x**\n"
+                    f"• Execution: **{signal['execution']}**"
+                ),
+                "inline": False
+            },
+            {
+                "name": "📊 Setup",
+                "value": (
+                    f"• Score: **{signal['institutional_score']} / 100**\n"
+                    f"• Momentum: **{self._get_momentum_status(signal)}**\n"
+                    f"• Stock: **${signal['current_price']:.2f}** | Distance: **{abs(distance_pct):.1f}% {distance_label}**"
+                ),
+                "inline": False
+            },
+            {
+                "name": "🎯 Plan",
+                "value": (
+                    f"• Entry: **${signal['ask']:.2f}**\n"
+                    f"• Targets: **${exits['target1']:.2f} / ${exits['target2']:.2f} / ${exits['target3']:.2f}**\n"
+                    f"• Stop: **${exits['stop_loss']:.2f}**"
+                ),
                 "inline": False},
-            
-            # Swing Setup Section
-            {"name": "📊 **SWING SETUP:**", "value": 
-                f"• Score: **{signal['institutional_score']}/100**\n"
-                f"• Today's Total: ${total_premium_today/1_000_000:.1f}M\n"
-                f"• Similar Flows (24hr): **{len(similar_flows)}** trades same direction\n"
-                f"• VOI Ratio: **{signal['voi_ratio']:.2f}x**\n"
-                f"• Current Stock Price: **${signal['current_price']:.2f}**\n"
-                f"• Distance to Strike: **{abs(distance_pct):.1f}%** {'OTM' if distance_pct > 0 and signal['type'] == 'CALL' or distance_pct < 0 and signal['type'] == 'PUT' else 'ITM'}", 
-                "inline": False},
-            
-            # Targets Section
-            {"name": "🎯 **SWING TARGETS (1-2 days):**", "value": 
-                f"• Entry: **${signal['ask']:.2f}**\n"
-                f"• Target 1 (75%): **${exits['target1']:.2f}**\n"
-                f"• Target 2 (150%): **${exits['target2']:.2f}**\n"
-                f"• Target 3 (300%): **${exits['target3']:.2f}**\n"
-                f"• Stop Loss: **${exits['stop_loss']:.2f}** (-{int((1 - exits['stop_loss']/signal['ask'])*100)}%)\n"
-                f"• Management: {exits['management']}", 
-                "inline": False},
-            
-            # Why This Matters
-            {"name": "⚡ **WHY THIS MATTERS:**", "value": trade_thesis, "inline": False},
-            
-            # Momentum Status
-            {"name": "🔄 **MOMENTUM:**", "value": self._get_momentum_status(signal), "inline": False}
         ]
         
         # Create embed
