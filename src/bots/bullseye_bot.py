@@ -35,6 +35,8 @@ class BullseyeBot(BaseAutoBot):
         self.IDEAL_PREMIUM = 1000000  # $1M+ is highest conviction
         self.MIN_VOLUME = 5000  # Large blocks
         self.MIN_OI = 10000  # Liquid strikes only
+        self.MIN_VOLUME_DELTA = max(int(self.MIN_VOLUME * 0.5), 1000)
+        self.MIN_OPEN_INTEREST = self.MIN_OI
         
         # Focus on 1-5 day swings
         self.MIN_DTE = 1
