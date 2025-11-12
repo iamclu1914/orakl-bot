@@ -63,11 +63,17 @@ def _percent_otm(
 
 
 def _volume_over_oi(volume: Optional[float], open_interest: Optional[float]) -> float:
+    """
+    Calculate volume/OI ratio, capped at 100x to avoid infinity display issues.
+    
+    Returns 100.0 when OI is zero (indicating extreme speculative activity).
+    """
     if volume is None or volume <= 0:
         return 0.0
     if open_interest in (None, 0):
-        return float("inf")
-    return float(volume) / float(open_interest)
+        return 100.0  # Cap at 100x instead of infinity
+    ratio = float(volume) / float(open_interest)
+    return min(ratio, 100.0)  # Cap at 100x for display purposes
 
 
 def _is_ask_side(
@@ -81,6 +87,8 @@ def _is_ask_side(
 
     Falls back to midpoint / bid comparisons when ask quotes are missing (0.0)
     which happens frequently in Polygon snapshots for highly active contracts.
+    
+    Returns False when NO quote data is available to maintain signal quality.
     """
     if trade_price is None:
         return False
@@ -97,8 +105,9 @@ def _is_ask_side(
     if bid_price is not None and bid_price > 0:
         return trade_price >= bid_price * 1.01
 
-    # With no quote context, assume ask-side (better to include than miss)
-    return True
+    # No quote context available - reject to maintain signal quality
+    # (prevents mislabeling bid-side trades as whale buyers)
+    return False
 
 
 def _extract_multi_leg_ratio(data: Dict[str, Any]) -> Optional[float]:

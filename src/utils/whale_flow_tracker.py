@@ -112,33 +112,47 @@ class WhaleFlowTracker:
 
         notes = []
         label = "FLOW"
+        
+        # Track if we have a strong prior streak before flip
+        prior_streak = self._streak(history, -direction) if history else 0
 
+        # Priority 1: DIVERGENCE (flow vs price) - highest signal
+        if price_change_pct is not None:
+            if direction == 1 and price_change_pct < -0.1:
+                label = "DIVERGENCE"
+                notes.append("Bullish flow vs falling spot (divergence)")
+            elif direction == -1 and price_change_pct > 0.1:
+                label = "DIVERGENCE"
+                notes.append("Bearish flow vs rising spot (divergence)")
+
+        # Priority 2: FLIP with strong prior streak - very significant
         if history and history[-1].direction != direction:
-            label = "FLIP"
-            notes.append("Direction reversed after streak")
-        elif streak >= 3:
-            label = "CONTINUATION"
-            notes.append(f"{streak} consecutive burst(s)")
-
-        if self._laddering(history, direction, metrics.percent_otm):
+            if prior_streak >= 3:
+                label = "STRONG_FLIP"
+                notes.append(f"Direction flip after {prior_streak} consecutive bursts")
+            else:
+                label = "FLIP"
+                notes.append("Direction reversed")
+        
+        # Priority 3: LADDER - progressive strikes
+        elif self._laddering(history, direction, metrics.percent_otm):
             label = "LADDER"
-            notes.append("Progressively further OTM prints")
+            notes.append("Progressively further OTM strikes")
+        
+        # Priority 4: CONTINUATION - sustained pressure
+        elif streak >= 4:  # Increased from 3 to 4 for higher conviction
+            label = "CONTINUATION"
+            notes.append(f"{streak} consecutive bursts")
 
+        # Priority 5: CHOP - indecision
         if self._alternating(history, direction):
-            label = "CHOP"
+            if label == "FLOW":  # Only apply if no stronger pattern
+                label = "CHOP"
             notes.append("Alternating flow detected")
 
+        # Additional context
         if self._repeat_contract(history, metrics.ticker):
             notes.append("Repeated hits on same contract")
-
-        if price_change_pct is not None:
-            # Divergence when flow fights price momentum
-            if direction == 1 and price_change_pct < -0.1:
-                notes.append("Bullish flow vs falling spot (divergence)")
-                label = "DIVERGENCE"
-            elif direction == -1 and price_change_pct > 0.1:
-                notes.append("Bearish flow vs rising spot (divergence)")
-                label = "DIVERGENCE"
 
         event = _FlowEvent(
             ticker=metrics.ticker,
