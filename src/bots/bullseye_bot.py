@@ -19,37 +19,29 @@ logger = logging.getLogger(__name__)
 class BullseyeBot(BaseAutoBot):
     """
     Bullseye Bot - Institutional Swing Trade Scanner
-    Tracks INSTITUTIONAL positioning for 1-2 day swing trades
+    Tracks INSTITUTIONAL positioning for 1-5 day swing trades
     Large premium = Smart money expecting big moves
     """
 
     def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
-        super().__init__(webhook_url, "Bullseye Bot", scan_interval=300)  # Scan every 5 minutes
+        super().__init__(webhook_url, "Bullseye Bot", scan_interval=Config.BULLSEYE_INTERVAL)
         self.watchlist = watchlist
         self.fetcher = fetcher
         self.analyzer = analyzer
-        self.signal_history = {}
+        self.last_momentum = None  # Initialize for scoring
         
-        # INSTITUTIONAL SIZE REQUIREMENTS (features, not restrictions)
-        self.MIN_PREMIUM = 500000  # $500K minimum (institutional size)
-        self.IDEAL_PREMIUM = 1000000  # $1M+ is highest conviction
-        self.MIN_VOLUME = 5000  # Large blocks
-        self.MIN_OI = 10000  # Liquid strikes only
-        default_volume_delta = max(int(self.MIN_VOLUME * 0.5), 1000)
-        self.MIN_VOLUME_DELTA = int(getattr(Config, 'BULLSEYE_MIN_VOLUME_DELTA', default_volume_delta))
-        self.MIN_OPEN_INTEREST = int(getattr(Config, 'BULLSEYE_MIN_OPEN_INTEREST', self.MIN_OI))
-        
-        # Focus on near-dated swings (configurable)
-        self.MIN_DTE = int(getattr(Config, 'BULLSEYE_MIN_DTE', 1))
-        self.MAX_DTE = int(getattr(Config, 'BULLSEYE_MAX_DTE', 5))
-        
-        # ATM to slightly OTM (where institutions play)
-        self.DELTA_RANGE = (0.35, 0.65)
-        
-        # Other requirements
-        self.MIN_VOI_RATIO = float(getattr(Config, 'BULLSEYE_MIN_VOI_RATIO', 0.5))  # Fresh positioning
-        self.MAX_ALERTS_PER_SYMBOL = 2  # Per 4 hours
-        self.COOLDOWN_HOURS = 4
+        # Load all thresholds from Config for consistency
+        self.MIN_PREMIUM = Config.BULLSEYE_MIN_PREMIUM
+        self.MIN_VOLUME = Config.BULLSEYE_MIN_VOLUME
+        self.MIN_VOLUME_DELTA = Config.BULLSEYE_MIN_VOLUME_DELTA
+        self.MIN_OPEN_INTEREST = Config.BULLSEYE_MIN_OPEN_INTEREST
+        self.MIN_DTE = int(Config.BULLSEYE_MIN_DTE)
+        self.MAX_DTE = int(Config.BULLSEYE_MAX_DTE)
+        self.MIN_VOI_RATIO = Config.BULLSEYE_MIN_VOI_RATIO
+        self.MIN_ITM_PROBABILITY = Config.BULLSEYE_MIN_ITM_PROBABILITY
+        self.DELTA_RANGE = (Config.BULLSEYE_DELTA_MIN, Config.BULLSEYE_DELTA_MAX)
+        self.MAX_STRIKE_DISTANCE = Config.BULLSEYE_MAX_STRIKE_DISTANCE
+        self.MAX_SPREAD_PCT = Config.BULLSEYE_MAX_SPREAD_PCT
 
     async def scan_and_post(self):
         """Scan for institutional swing trade opportunities"""
@@ -114,6 +106,13 @@ class BullseyeBot(BaseAutoBot):
                 strike = flow['strike']
                 expiration = flow['expiration']
                 premium = flow['premium']
+                
+                # CRITICAL: Single-leg filter (prevents multi-leg spreads)
+                multi_leg_ratio = flow.get('multi_leg_ratio', 0.0)
+                if multi_leg_ratio > 0.0:
+                    self._log_skip(symbol, f"bullseye multi-leg spread detected (ratio: {multi_leg_ratio:.2f})")
+                    continue
+                
                 if premium < self.MIN_PREMIUM:
                     self._log_skip(symbol, f"bullseye premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
                     continue
@@ -126,9 +125,18 @@ class BullseyeBot(BaseAutoBot):
                 delta = flow.get('delta', 0)
                 bid = flow.get('bid', 0)
                 ask = flow.get('ask', 0)
+                last_price = flow.get('last_price', 0)
                 implied_volatility = flow.get('implied_volatility', 0)
                 volume_velocity = flow.get('volume_velocity', 0)
                 flow_intensity = flow.get('flow_intensity', 'NORMAL')
+                
+                # Determine actual execution side (don't assume!)
+                execution_side = self._determine_execution_side(last_price, ask, bid)
+                
+                # Filter: Require ask-side for institutional buying conviction
+                if execution_side not in ['ASK', 'UNKNOWN']:
+                    self._log_skip(symbol, f"bullseye not ask-side (execution: {execution_side})")
+                    continue
 
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -139,18 +147,17 @@ class BullseyeBot(BaseAutoBot):
                     self._log_skip(symbol, f'bullseye DTE {days_to_expiry} outside {self.MIN_DTE}-{self.MAX_DTE}')
                     continue
 
-                # Filter 2: Liquidity guards (Phase 1 - with diagnostic logging)
-                # Require a baseline of open interest so the contract is tradable
-                required_oi = max(self.MIN_OPEN_INTEREST, total_volume * 0.5)
-                if open_interest < required_oi:
-                    self._log_skip(symbol, f'bullseye OI {open_interest} < required {required_oi:.0f}')
+                # Filter 2: Liquidity guards - simple OI floor
+                # Require baseline open interest for tradable contracts
+                if open_interest < self.MIN_OPEN_INTEREST:
+                    self._log_skip(symbol, f'bullseye OI {open_interest} < required {self.MIN_OPEN_INTEREST}')
                     continue
-                # Bid-ask spread ≤ 5% (spread / mid-price)
+                # Bid-ask spread check (configurable)
                 if bid > 0 and ask > 0:
                     mid_price = (bid + ask) / 2
                     spread_pct = ((ask - bid) / mid_price) * 100 if mid_price > 0 else 100
-                    if spread_pct > 5.0:
-                        self._log_skip(symbol, f"bullseye spread {spread_pct:.2f}% > 5%")
+                    if spread_pct > self.MAX_SPREAD_PCT:
+                        self._log_skip(symbol, f"bullseye spread {spread_pct:.2f}% > {self.MAX_SPREAD_PCT}%")
                         continue
 
                 # Filter 3: VOI ratio (volume_delta / OI)
@@ -165,13 +172,13 @@ class BullseyeBot(BaseAutoBot):
 
                 # Filter 4: ATM to slightly OTM (institutional range)
                 if abs(delta) < self.DELTA_RANGE[0] or abs(delta) > self.DELTA_RANGE[1]:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: delta {abs(delta):.2f} outside institutional range")
+                    self._log_skip(symbol, f"bullseye delta {abs(delta):.2f} outside range {self.DELTA_RANGE[0]}-{self.DELTA_RANGE[1]}")
                     continue
 
-                # Filter 5: Strike distance (within 15% of current price)
+                # Filter 5: Strike distance (configurable max distance)
                 strike_distance = abs(strike - current_price) / current_price
-                if strike_distance > 0.15:
-                    self._log_skip(symbol, f"bullseye strike {strike_distance*100:.1f}% from price")
+                if strike_distance > self.MAX_STRIKE_DISTANCE:
+                    self._log_skip(symbol, f"bullseye strike {strike_distance*100:.1f}% from price (max {self.MAX_STRIKE_DISTANCE*100:.1f}%)")
                     continue
 
                 # Filter 6: ITM Probability (Phase 1 - Tuned)
@@ -185,15 +192,15 @@ class BullseyeBot(BaseAutoBot):
                     opt_type=opt_type
                 )
 
-                # Require P(ITM) ≥ 25% (lowered from 35% for Phase 1 tuning)
-                if itm_probability < 0.25:
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: ITM probability {itm_probability*100:.1f}% < 25%")
+                # Require P(ITM) threshold for institutional-grade probability
+                if itm_probability < self.MIN_ITM_PROBABILITY:
+                    self._log_skip(symbol, f"bullseye ITM probability {itm_probability*100:.1f}% < {self.MIN_ITM_PROBABILITY*100:.1f}%")
                     continue
 
                 logger.debug(f"✓ {symbol} ${strike} {opt_type}: ITM probability {itm_probability*100:.1f}% passed")
 
-                # Filter 7: 5-Day Expected Move (Phase 1 - Optional for tuning)
-                # Strike must be within 5-day expected move
+                # Filter 7: 5-Day Expected Move (CRITICAL - prevents unrealistic strikes)
+                # Strike must be within 5-day expected move to ensure realistic probability
                 em5 = self._calculate_expected_move(
                     S=current_price,
                     IV=implied_volatility,
@@ -201,21 +208,23 @@ class BullseyeBot(BaseAutoBot):
                 )
 
                 strike_diff = abs(strike - current_price)
-                # TEMPORARILY DISABLED for Phase 1 testing - will re-enable after monitoring signal quality
-                # if strike_diff > em5:
-                #     logger.debug(f"Rejected {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} outside EM5 ${em5:.2f}")
-                #     continue
-
                 if strike_diff > em5:
-                    logger.debug(f"⚠️ {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} outside EM5 ${em5:.2f} (allowed for Phase 1)")
-                else:
-                    logger.debug(f"✓ {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} within EM5 ${em5:.2f}")
-
-                # Filter 8: Price action confirmation
-                if (opt_type == 'CALL' and momentum['direction'] != 'bullish') or \
-                   (opt_type == 'PUT' and momentum['direction'] != 'bearish'):
-                    logger.debug(f"Rejected {symbol} ${strike} {opt_type}: momentum {momentum['direction']} doesn't align")
+                    self._log_skip(symbol, f"bullseye strike ${strike_diff:.2f} outside EM5 ${em5:.2f}")
                     continue
+                
+                logger.debug(f"✓ {symbol} ${strike} {opt_type}: strike ${strike_diff:.2f} within EM5 ${em5:.2f}")
+
+                # Filter 8: Momentum scoring (not a hard filter - institutions lead price action)
+                # Allow contrarian trades - institutions often position before momentum shifts
+                # Momentum alignment will be reflected in scoring, not as rejection criteria
+                momentum_aligned = (
+                    (opt_type == 'CALL' and momentum['direction'] == 'bullish') or
+                    (opt_type == 'PUT' and momentum['direction'] == 'bearish')
+                )
+                
+                # Log but don't reject - contrarian institutional plays can be high-conviction
+                if not momentum_aligned:
+                    logger.debug(f"⚠️ {symbol} ${strike} {opt_type}: CONTRARIAN to {momentum['direction']} momentum (allowed)")
 
                 # All filters passed!
                 logger.info(f"✅ {symbol} ${strike} {opt_type} passed all filters - ITM: {itm_probability*100:.1f}%, VOI: {voi_ratio:.1f}x, Score: calculating...")
@@ -235,7 +244,7 @@ class BullseyeBot(BaseAutoBot):
                     'option_type': opt_type,
                     'strike': strike,
                     'delta': delta,
-                    'execution': 'ASK' if opt_type == 'CALL' else 'BID',  # Assume aggressive
+                    'execution': execution_side,  # Use actual execution side, not assumption
                     'is_sweep': flow_intensity == 'HIGH',
                     'is_block': total_volume >= 5000,
                     'voi_ratio': voi_ratio,
@@ -275,25 +284,58 @@ class BullseyeBot(BaseAutoBot):
                         'bid_ask_spread_pct': spread_pct if bid > 0 and ask > 0 else None,
                         'implied_volatility': implied_volatility,
                         'flow_intensity': flow_intensity,
-                        'execution': 'ASK' if opt_type == 'CALL' else 'BID',
+                        'execution': execution_side,  # Use actual execution side
                         'is_sweep': flow_intensity == 'HIGH',
                         'is_block': total_volume >= 5000
                     }
 
+                    # Deduplication: Use BaseAutoBot cooldown mechanism (4 hour cooldown)
                     signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
-                    if self._cooldown_active(signal_key):
-                        self._log_skip(symbol, f'bullseye cooldown {signal_key}')
+                    if self._cooldown_active(signal_key, cooldown_seconds=14400):  # 4 hours
+                        self._log_skip(symbol, f'bullseye cooldown active for {signal_key}')
                         continue
-                    if signal_key not in self.signal_history or \
-                       (datetime.now() - self.signal_history[signal_key]).total_seconds() > 3600 * 4:
-                        signals.append(signal)
-                        self.signal_history[signal_key] = datetime.now()
-                        self._mark_cooldown(signal_key)
+                    
+                    signals.append(signal)
+                    self._mark_cooldown(signal_key)
 
         except Exception as e:
             logger.error(f"Error scanning for swing trades on {symbol}: {e}")
 
         return signals
+
+    def _determine_execution_side(self, trade_price: float, ask_price: float, bid_price: float) -> str:
+        """
+        Determine actual execution side from trade price vs quotes.
+        
+        Returns 'ASK', 'BID', or 'MID' based on where trade executed.
+        """
+        if not trade_price or trade_price <= 0:
+            return 'UNKNOWN'
+        
+        # Ask-side (aggressive buying)
+        if ask_price and ask_price > 0:
+            if trade_price >= ask_price * 0.995:  # Allow small tolerance
+                return 'ASK'
+        
+        # Bid-side (aggressive selling)
+        if bid_price and bid_price > 0:
+            if trade_price <= bid_price * 1.005:  # Allow small tolerance
+                return 'BID'
+        
+        # Mid-spread
+        if ask_price and bid_price and ask_price > 0 and bid_price > 0:
+            mid_price = (ask_price + bid_price) / 2
+            if abs(trade_price - mid_price) / mid_price < 0.02:  # Within 2% of mid
+                return 'MID'
+        
+        # Fallback based on proximity
+        if ask_price and bid_price:
+            if trade_price > (ask_price + bid_price) / 2:
+                return 'ASK'
+            else:
+                return 'BID'
+        
+        return 'UNKNOWN'
 
     def _calculate_liquidity_score(self, open_interest: int, spread_pct: float) -> float:
         """
@@ -475,47 +517,11 @@ class BullseyeBot(BaseAutoBot):
         if abs(signal['delta']) < 0.15 and signal['volume'] > 25000:
             return True
         
-        # Wrong-way momentum = hedge (puts in uptrend, calls in downtrend)
-        if signal['momentum_direction'] == 'bullish' and signal['type'] == 'PUT':
-            if signal['premium'] > 1000000:  # Large put in uptrend = hedge
-                return True
-        elif signal['momentum_direction'] == 'bearish' and signal['type'] == 'CALL':
-            if signal['premium'] > 1000000:  # Large call in downtrend = hedge
-                return True
+        # Note: Removed "wrong-way momentum" hedge detection since we now allow contrarian trades
+        # Contrarian institutional positioning is often high-conviction, not hedging
         
         return False
 
-    def _calculate_bullseye_score(self, voi_ratio: float, premium: float, momentum_strength: float, dte: int) -> int:
-        """
-        DEPRECATED: Legacy scoring function for backwards compatibility.
-        Use _calculate_bullseye_score_v2() instead.
-        """
-        score = self.calculate_score({
-            'voi_ratio': (voi_ratio, [
-                (10, 35),  # 10x+ → 35 points (35%)
-                (5, 30),   # 5x+ → 30 points
-                (3, 25)    # 3x+ → 25 points
-            ]),
-            'premium': (premium, [
-                (250000, 30),  # $250k+ → 30 points (30%)
-                (100000, 25),  # $100k+ → 25 points
-                (50000, 20),   # $50k+ → 20 points
-                (25000, 15)    # $25k+ → 15 points
-            ]),
-            'momentum': (momentum_strength, [
-                (0.7, 20),  # 70%+ → 20 points (20%)
-                (0.5, 15),  # 50%+ → 15 points
-                (0.3, 10)   # 30%+ → 10 points
-            ])
-        })
-
-        # DTE sweet spot (15%)
-        if 21 <= dte <= 45:
-            score += 15
-        elif 7 <= dte <= 60:
-            score += 10
-
-        return min(score, 100)
 
     def _calculate_itm_probability(self, S: float, K: float, T: float, IV: float, opt_type: str) -> float:
         """
@@ -577,7 +583,12 @@ class BullseyeBot(BaseAutoBot):
             return 0.0
 
     async def _calculate_momentum(self, symbol: str) -> Optional[Dict]:
-        """Calculate daily/4-hour momentum for swing trades"""
+        """
+        Calculate daily/4-hour momentum for swing trades.
+        
+        Returns None only if insufficient data.
+        Returns 'neutral' direction when market is consolidating (valid state).
+        """
         try:
             # Use daily bars for longer-term trend
             to_date = datetime.now().strftime('%Y-%m-%d')
@@ -587,25 +598,35 @@ class BullseyeBot(BaseAutoBot):
                 symbol, 'day', 1, from_date, to_date
             )
             
-            if daily_bars.empty or len(daily_bars) < 20: return None
+            # Only return None if truly insufficient data
+            if daily_bars.empty or len(daily_bars) < 20:
+                return None
             
             # Simple Moving Averages
             sma_20 = daily_bars['close'].rolling(window=20).mean().iloc[-1]
             sma_50 = daily_bars['close'].rolling(window=50).mean().iloc[-1] if len(daily_bars) >= 50 else sma_20
+            current_price = daily_bars['close'].iloc[-1]
             
             direction = 'neutral'
             strength = 0.5
             
-            if sma_20 > sma_50 and daily_bars['close'].iloc[-1] > sma_20:
+            # Strong bullish trend
+            if sma_20 > sma_50 * 1.01 and current_price > sma_20:
                 direction = 'bullish'
-                strength = 0.7 + (daily_bars['close'].iloc[-1] / sma_20 - 1) * 10
-            elif sma_20 < sma_50 and daily_bars['close'].iloc[-1] < sma_20:
+                strength = 0.7 + min((current_price / sma_20 - 1) * 10, 0.3)
+            # Strong bearish trend
+            elif sma_20 < sma_50 * 0.99 and current_price < sma_20:
                 direction = 'bearish'
-                strength = 0.7 + (sma_20 / daily_bars['close'].iloc[-1] - 1) * 10
+                strength = 0.7 + min((sma_20 / current_price - 1) * 10, 0.3)
+            # Neutral/consolidation - valid state for breakout setups
+            else:
+                direction = 'neutral'
+                strength = 0.5
                 
             momentum = {
                 'direction': direction,
-                'strength': min(max(strength, 0), 1)
+                'strength': min(max(strength, 0), 1),
+                'is_consolidating': direction == 'neutral'  # Flag for scoring
             }
             
             # Store for use in scoring
@@ -658,7 +679,8 @@ class BullseyeBot(BaseAutoBot):
                 "value": (
                     f"• Entry: **${signal['ask']:.2f}**\n"
                     f"• Targets: **${exits['target1']:.2f} / ${exits['target2']:.2f} / ${exits['target3']:.2f}**\n"
-                    f"• Stop: **${exits['stop_loss']:.2f}**"
+                    f"• Stop: **${exits['stop_loss']:.2f}**\n"
+                    f"• Note: Target 3 is rare (<10% hit rate), take profits at T1/T2"
                 ),
                 "inline": False},
         ]
@@ -669,7 +691,7 @@ class BullseyeBot(BaseAutoBot):
             description=description,
             color=color,
             fields=fields,
-            footer="ORAKL Institutional Scanner • 1-2 Day Swing Trades"
+            footer="ORAKL Institutional Scanner • 1-5 Day Swing Trades"
         )
         
         await self.post_to_discord(embed)
@@ -711,13 +733,18 @@ class BullseyeBot(BaseAutoBot):
         }
     
     async def _get_days_premium(self, symbol: str) -> float:
-        """Get total premium for symbol today"""
+        """
+        Get total premium for symbol today.
+        
+        Note: Currently returns default value. Future enhancement would aggregate
+        all flows for the symbol from today's trading session.
+        """
         try:
-            # For now, return estimated value
-            # In full implementation, would query today's flows
-            return self.signal_history.get(f"{symbol}_total_premium_today", 5000000.0)
-        except:
+            # Placeholder for future implementation
             return 5000000.0  # Default $5M
+        except Exception as e:
+            logger.error(f"Error getting day's premium for {symbol}: {e}")
+            return 5000000.0
     
     def _get_similar_flows(self, signal: Dict, hours: int = 24) -> list:
         """Get similar directional flows in past N hours"""

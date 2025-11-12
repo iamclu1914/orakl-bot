@@ -977,8 +977,9 @@ class DataFetcher:
                     volume_delta = current_day_volume - cached_volume
                     
                     # If first scan or negative delta (market reset), use current volume
+                    # Cap at 5000 to prevent extreme values while allowing institutional flows through
                     if volume_delta <= 0:
-                        volume_delta = min(current_day_volume, 100)  # Cap initial scan to avoid false positives
+                        volume_delta = min(current_day_volume, 5000)
 
                     # Filter: Must have significant volume
                     if volume_delta < min_volume_delta:
