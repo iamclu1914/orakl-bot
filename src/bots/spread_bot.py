@@ -126,6 +126,12 @@ class SpreadBot(BaseAutoBot):
                     self._log_skip(symbol, f"VOI ratio {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
                     continue
 
+                # Check cooldown BEFORE adding to signals (prevents duplicates)
+                cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
+                if self._cooldown_active(cooldown_key, cooldown_seconds=3600):  # 1 hour cooldown
+                    self._log_skip(symbol, f"cooldown active (already alerted in last hour)")
+                    continue
+
                 signals.append(
                     {
                         "metrics": metrics,
@@ -202,18 +208,15 @@ class SpreadBot(BaseAutoBot):
         contract_price: float = payload["contract_price"]
         flow: Dict = payload["flow"]
 
-        # Deduplication: Prevent same contract from alerting multiple times in 15 minutes
+        # Build cooldown key
         cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
         
-        if self._cooldown_active(cooldown_key, cooldown_seconds=900):  # 15 minute cooldown
-            logger.debug(f"99 Cent Store skipping duplicate signal: {cooldown_key}")
-            return False
-
+        # Post the signal
         embed = self._build_embed(metrics, contract_price, flow)
         success = await self.post_to_discord(embed)
         
         if success:
-            self._mark_cooldown(cooldown_key)
+            self._mark_cooldown(cooldown_key)  # Mark AFTER successful post
             logger.info(
                 "99 Cent Store Alert: %s %.2f %s price $%.2f premium $%s",
                 metrics.underlying,
