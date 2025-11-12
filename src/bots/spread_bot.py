@@ -1,5 +1,5 @@
 """
-99 Cent Store Bot - finds contracts under $1.00 with real whale flow and speculative heat.
+99 Cent Store Bot - finds swing trade contracts under $1.00 with high conviction whale flow (5-21 DTE).
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class SpreadBot(BaseAutoBot):
     """
-    Detects contracts priced under $1.00 with large premium (whale flow) and high VOI ratio (speculative heat).
+    Detects swing trade contracts under $1.00 with high conviction whale flow (5-21 DTE, $250K+ premium, 2.0+ VOI).
     """
 
     def __init__(self, webhook_url: str, watchlist: Optional[List[str]], fetcher: DataFetcher):
@@ -231,70 +231,56 @@ class SpreadBot(BaseAutoBot):
         contract_price: float,
         flow: Dict,
     ) -> Dict:
-        """Build improved Discord embed with DTE, %OTM, side indicator, and quality score."""
+        """Build simplified Discord embed matching user format."""
         dte_days = int(round(metrics.dte))
         expiration_fmt = metrics.expiration.strftime("%m/%d/%Y") if isinstance(metrics.expiration, datetime) else str(metrics.expiration)
 
-        # Calculate quality score
-        voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
-        spread_score = self._calculate_spread_score(metrics, voi_ratio, contract_price)
+        # Build title: TICKER STRIKE TYPE EXPIRY (DTE) - 99 Cent Store
+        option_type_short = "C" if metrics.option_type.upper() == "CALL" else "P"
+        title = f"{metrics.underlying} {metrics.strike} {option_type_short} {expiration_fmt} ({dte_days}D) - 99 Cent Store"
 
-        # Add contract ticker to title for easy copy-paste
-        title = f"🟣 {metrics.ticker} • 99 Cent Store"
-        description = (
-            f"**{metrics.option_type.title()} ${metrics.strike:.2f}** expiring {expiration_fmt} "
-            f"({max(dte_days, 0)}D) • Score: **{spread_score}/100**"
-        )
-
-        premium_fmt = f"${metrics.premium/1_000_000:.1f}M" if metrics.premium >= 1_000_000 else f"${metrics.premium/1_000:.0f}K"
+        # Get flow data
         volume_delta = flow.get("volume_delta", 0)
         total_volume = flow.get("total_volume", 0)
+        oi_value = flow.get("open_interest", 0) or 0
+        voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
+        
+        # Get bid/ask prices
+        ask_price = flow.get("ask", 0)
+        bid_price = flow.get("bid", 0)
 
-        oi_value = flow.get("open_interest", 0)
-        underlying_price = flow.get("underlying_price")
-        ask_price = flow.get("ask")
-        bid_price = flow.get("bid")
+        # Premium formatting
+        premium_fmt = f"${metrics.premium/1_000_000:.0f}M" if metrics.premium >= 1_000_000 else f"${metrics.premium/1_000:.0f}K"
+        
+        # Calculate price targets (15%, 20%, 25% above current price)
+        target_15 = contract_price * 1.15
+        target_20 = contract_price * 1.20
+        target_25 = contract_price * 1.25
 
-        # Determine side indicator
-        side_indicator = "ASK" if metrics.is_ask_side else "BID/MID"
-
-        fields = [
-            {
-                "name": "💰 Whale Flow",
-                "value": (
-                    f"• Premium: **{premium_fmt}**\n"
-                    f"• Volume: **{total_volume:,}** | Δ **{volume_delta:,}**\n"
-                    f"• VOI Ratio: **{voi_ratio:.1f}x** 🔥\n"
-                    f"• Side: **{side_indicator}**"
-                ),
-                "inline": False,
-            },
-            {
-                "name": "💵 Contract Details",
-                "value": (
-                    f"• Price: **${contract_price:.2f}**\n"
-                    f"• DTE: **{dte_days}** days\n"
-                    f"• % OTM: **{metrics.percent_otm*100:.2f}%**\n"
-                    f"{f'• Spread: ${ask_price:.2f} / ${bid_price:.2f}' if ask_price and bid_price else ''}"
-                ),
-                "inline": False,
-            },
-            {
-                "name": "📊 Context",
-                "value": (
-                    f"• Open Interest: **{oi_value:,}**\n"
-                    f"{f'• Underlying: **${underlying_price:.2f}**' if underlying_price else ''}"
-                ),
-                "inline": False,
-            },
-        ]
+        # Build simple description
+        description = (
+            "**Time and sales**\n\n"
+            f"Price: **${contract_price:.2f}**\n\n"
+            f"Size: **{volume_delta:,}**\n\n"
+            f"Prem: **{premium_fmt}**\n\n"
+            f"Vol: **{total_volume:,}**\n\n"
+            f"OI: **{oi_value:,}**\n\n"
+            f"Vol/OI: **{voi_ratio:.2f}**\n\n"
+            f"DTE: **{dte_days} days**\n\n"
+            f"% OTM: **{metrics.percent_otm*100:.2f}%**\n\n"
+            f"Spread: **${ask_price:.2f} / ${bid_price:.2f}**\n\n"
+            f"**Targets:**\n"
+            f"15%: **${target_15:.2f}**\n"
+            f"20%: **${target_20:.2f}**\n"
+            f"25%: **${target_25:.2f}**"
+        )
 
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
             description=description,
             color=0x6A0DAD,  # violet
-            fields=fields,
-            footer="99 Cent Store • Sub-$1 Directional Whale Flow",
+            fields=[],  # No fields, all in description
+            footer="99 Cent Store • High Conviction Swing Trades",
         )
         return embed
 

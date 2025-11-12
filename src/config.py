@@ -89,16 +89,16 @@ class Config:
     BULLSEYE_DELTA_MAX = float(os.getenv('BULLSEYE_DELTA_MAX', '0.65'))
     BULLSEYE_MAX_STRIKE_DISTANCE = float(os.getenv('BULLSEYE_MAX_STRIKE_DISTANCE', '0.15'))  # 15% max
     BULLSEYE_MAX_SPREAD_PCT = float(os.getenv('BULLSEYE_MAX_SPREAD_PCT', '5.0'))  # 5% max bid-ask spread
-    # 99 Cent Store Bot Thresholds (sub-$1 contracts with whale flow)
-    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '100000'))  # $100K whale threshold
-    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))  # 1000 contracts minimum
-    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '500'))  # Reduced from 1000 for mid-caps
+    # 99 Cent Store Bot Thresholds (sub-$1 swing trades with high conviction)
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '250000'))  # $250K+ for conviction
+    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1500'))  # 1500 contracts for liquidity
+    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '750'))  # Strong new flow
     SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.0'))  # Contract price must be < $1.00
     SPREAD_MIN_PRICE = float(os.getenv('SPREAD_MIN_PRICE', '0.05'))  # Avoid illiquid penny options
-    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '1.5'))  # Reduced from 2.0 for better signal count
-    SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '1.0'))  # 1 day minimum
-    SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '7.0'))  # 7 days maximum for speculative plays
-    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.15'))  # 15% OTM max
+    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '2.0'))  # High conviction flow
+    SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '5.0'))  # 5 days minimum for swing trades
+    SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '21.0'))  # Up to 3 weeks for swing trades
+    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.10'))  # 10% OTM max for higher probability
 
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '65'))
