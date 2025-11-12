@@ -128,8 +128,8 @@ class SpreadBot(BaseAutoBot):
 
                 # Check cooldown BEFORE adding to signals (prevents duplicates)
                 cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
-                if self._cooldown_active(cooldown_key, cooldown_seconds=3600):  # 1 hour cooldown
-                    self._log_skip(symbol, f"cooldown active (already alerted in last hour)")
+                if self._cooldown_active(cooldown_key, cooldown_seconds=1200):  # 20 minute cooldown
+                    self._log_skip(symbol, f"cooldown active (already alerted in last 20 min)")
                     continue
 
                 signals.append(
