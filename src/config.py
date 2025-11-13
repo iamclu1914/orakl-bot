@@ -25,22 +25,16 @@ class Config:
     BOT_NAME = os.getenv('BOT_NAME', 'ORAKL')
     
     # API Keys - Using provided credentials
-    POLYGON_API_KEY = os.getenv('POLYGON_API_KEY', 'NnbFphaif6yWkufcTV8rOEDXRi2LefZN')
+    POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')
     DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN', '')
-    DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', 'https://discord.com/api/webhooks/1427156966979010663/LQ-OzXtrj3WifaYADAWnVb9IzHbFhCcUxUmPTdylqWFSGJIz7Rwjwbl-o-B-n-7-VfkF')
+    DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
     
     # Individual Bot Webhooks (Each bot posts to its own dedicated channel)
     SWEEPS_WEBHOOK = os.getenv('SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     GOLDEN_SWEEPS_WEBHOOK = os.getenv('GOLDEN_SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
     BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
-    SPREAD_WEBHOOK = os.getenv(
-        'SPREAD_WEBHOOK',
-        'https://discord.com/api/webhooks/1437936756644122624/CPQjKuRYQsW6wzU1MtuEJx5QrKGaPhU3anZH886MGNLv-DtsLhu3PKSv_YTRIGckkIGV'
-    )
-    INDEX_WHALE_WEBHOOK = os.getenv(
-        'INDEX_WHALE_WEBHOOK',
-        'https://discord.com/api/webhooks/1437664821180104724/eHh1QxsT5zb0b9pVYQWAhY7HONa68m4Qi184tqadlgnybSdtSB1UJiwrl_55iGwTBYUW'
-    )
+    SPREAD_WEBHOOK = os.getenv('SPREAD_WEBHOOK', DISCORD_WEBHOOK_URL)
+    INDEX_WHALE_WEBHOOK = os.getenv('INDEX_WHALE_WEBHOOK', DISCORD_WEBHOOK_URL)
     
     # Discord Settings
     DISCORD_COMMAND_PREFIX = os.getenv('DISCORD_COMMAND_PREFIX', 'ok-')
@@ -235,6 +229,19 @@ class Config:
     MARKET_OPEN_MINUTE = int(os.getenv('MARKET_OPEN_MINUTE', '30'))
     MARKET_CLOSE_HOUR = int(os.getenv('MARKET_CLOSE_HOUR', '16'))
     MARKET_CLOSE_MINUTE = int(os.getenv('MARKET_CLOSE_MINUTE', '0'))
+
+    # Persistence & Analytics
+    STATE_DB_PATH = os.getenv('STATE_DB_PATH', 'state/bot_state.db')
+    PERFORMANCE_SYMBOL_MIN_OBS = int(os.getenv('PERFORMANCE_SYMBOL_MIN_OBS', '20'))
+    PERFORMANCE_SYMBOL_MIN_WIN = float(os.getenv('PERFORMANCE_SYMBOL_MIN_WIN', '0.2'))
+
+    # Bullseye Bot Enhancements
+    BULLSEYE_EOD_SKIP_HOUR = int(os.getenv('BULLSEYE_EOD_SKIP_HOUR', '15'))
+    BULLSEYE_MAX_FLOW_AGE_HOURS = float(os.getenv('BULLSEYE_MAX_FLOW_AGE_HOURS', '2'))
+    BULLSEYE_ATR_MULT_SHORT = float(os.getenv('BULLSEYE_ATR_MULT_SHORT', '1.5'))
+    BULLSEYE_ATR_MULT_LONG = float(os.getenv('BULLSEYE_ATR_MULT_LONG', '2.0'))
+    BULLSEYE_OUTCOME_POLL_SECONDS = int(os.getenv('BULLSEYE_OUTCOME_POLL_SECONDS', '1800'))
+    BULLSEYE_WEEKLY_REPORT_DAY = int(os.getenv('BULLSEYE_WEEKLY_REPORT_DAY', '0'))
 
     # Index Whale Bot session window (09:30 - 16:15 ET by default)
     INDEX_WHALE_OPEN_HOUR = int(os.getenv('INDEX_WHALE_OPEN_HOUR', '9'))

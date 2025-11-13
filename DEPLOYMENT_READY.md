@@ -60,6 +60,30 @@ All deployment prerequisites have been validated:
 8. **requirements.txt** - Kafka dependencies removed
 9. **.env** - Kafka configuration removed
 
+### November 2025 – Bullseye Swing Enhancements
+- Bullseye now persists cooldowns and signal outcomes in a shared SQLite database (`state/bot_state.db` by default).
+- Alerts include fresh-flow filtering, ATR-aware exit guidance, and enriched Discord context (probability, execution plan, entry timing).
+- Weekly performance summaries are auto-posted (default: Mondays) and symbols with persistently low win-rates are flagged for review rather than auto-removed.
+
+#### Updated Runtime Requirements
+- `POLYGON_API_KEY` and Discord webhook variables **must** be provided through the environment—no hard-coded fallbacks remain.
+- Ensure the service user can create the directory defined by `STATE_DB_PATH` for SQLite persistence.
+
+#### New Environment Variables
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `STATE_DB_PATH` | `state/bot_state.db` | Location of persistent cooldown/outcome storage |
+| `BULLSEYE_EOD_SKIP_HOUR` | `15` | Hour (EST) after which Bullseye pauses scans to avoid EOD hedge noise |
+| `BULLSEYE_MAX_FLOW_AGE_HOURS` | `2` | Maximum age (hours) of flow before it is considered stale |
+| `BULLSEYE_ATR_MULT_SHORT` | `1.5` | ATR multiplier for 0-2 DTE stop calculations |
+| `BULLSEYE_ATR_MULT_LONG` | `2.0` | ATR multiplier for 3-5 DTE stop calculations |
+| `BULLSEYE_OUTCOME_POLL_SECONDS` | `1800` | Frequency (seconds) of post-alert outcome checks |
+| `BULLSEYE_WEEKLY_REPORT_DAY` | `0` | Weekday for the automated performance report (0 = Monday) |
+| `PERFORMANCE_SYMBOL_MIN_OBS` | `20` | Minimum resolved outcomes before flagging a symbol |
+| `PERFORMANCE_SYMBOL_MIN_WIN` | `0.2` | Minimum Target-1 hit rate before logging a low-performance warning |
+
+> 💡 **Resetting outcomes:** Stop the service and remove the file defined by `STATE_DB_PATH` if you need to clear historical cooldowns/outcomes (for example prior to a backtest).
+
 ### Deleted Files (16 total)
 - Kafka bots (9): run_kafka_bots.py, kafka_base.py, *_kafka.py
 - WebSocket bots (7): run_websocket_bots.py, *_ws.py

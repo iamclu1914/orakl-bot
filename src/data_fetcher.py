@@ -148,6 +148,34 @@ class DataFetcher:
             for variation in self._ticker_variations(translated):
                 if variation:
                     self.skip_tickers.add(variation)
+
+    def _convert_polygon_timestamp(self, value: Union[int, float, str, None]) -> Optional[datetime]:
+        """Convert polygon timestamps (ns, ms, iso string) to datetime."""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, str):
+                if value.isdigit():
+                    value = int(value)
+                else:
+                    # Assume ISO formatted string
+                    return datetime.fromisoformat(value)
+            if isinstance(value, (int, float)):
+                value_int = int(value)
+                if value_int > 1_000_000_000_000_000_000:  # >1e18
+                    seconds = value_int / 1_000_000_000
+                elif value_int > 1_000_000_000_000_000:  # microseconds
+                    seconds = value_int / 1_000_000
+                elif value_int > 1_000_000_000_000:  # milliseconds
+                    seconds = value_int / 1_000
+                elif value_int > 1_000_000_000:  # seconds
+                    seconds = value_int
+                else:
+                    seconds = value_int
+                return datetime.fromtimestamp(seconds)
+        except Exception as exc:
+            logger.debug(f"Failed to parse polygon timestamp {value}: {exc}")
+        return None
     
     def _should_skip(self, ticker: str) -> bool:
         if not ticker:
@@ -762,6 +790,20 @@ class DataFetcher:
             logger.error(f"Error fetching option chain snapshot for {underlying}: {e}")
             return []
 
+    async def get_option_contract_snapshot(self, option_ticker: str) -> Optional[Dict]:
+        """Get snapshot for a single options contract."""
+        try:
+            endpoint = f"/v2/snapshot/options/contracts/{option_ticker}"
+            data = await self._make_request(endpoint)
+            if data and isinstance(data, dict):
+                results = data.get('results')
+                if isinstance(results, dict):
+                    return results
+            return None
+        except Exception as e:
+            logger.debug(f"Error fetching snapshot for {option_ticker}: {e}")
+            return None
+
     async def get_gamma_profile(self, underlying: str) -> Optional[Dict]:
         """Compute aggregated gamma exposure profile for an underlying."""
 
@@ -1060,6 +1102,15 @@ class DataFetcher:
                     bid_size = last_quote.get('bid_size') or last_quote.get('bidSize') or 0
                     ask_size = last_quote.get('ask_size') or last_quote.get('askSize') or 0
 
+                    last_trade_timestamp = self._convert_polygon_timestamp(
+                        last_trade.get('timestamp') or
+                        last_trade.get('sip_timestamp') or
+                        last_trade.get('participant_timestamp') or
+                        last_trade.get('t')
+                    )
+                    if not last_trade_timestamp:
+                        last_trade_timestamp = self._convert_polygon_timestamp(day_data.get('last_updated'))
+
                     # Create flow signal
                     flow = {
                         'ticker': ticker,
@@ -1080,6 +1131,7 @@ class DataFetcher:
                         'vega': vega,
                         'underlying_price': underlying_price,
                         'timestamp': datetime.now(),
+                        'last_trade_timestamp': last_trade_timestamp,
                         'flow_intensity': flow_intensity,
                         'bid': bid_price or 0,
                         'ask': ask_price or 0,

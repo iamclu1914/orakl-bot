@@ -1,7 +1,9 @@
 """Bullseye Bot - Institutional Swing Trade Scanner"""
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
+from collections import defaultdict
+import contextlib
 import pandas as pd
 import asyncio
 import numpy as np
@@ -29,6 +31,8 @@ class BullseyeBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.last_momentum = None  # Initialize for scoring
+        self._outcome_task: Optional[asyncio.Task] = None
+        self._weekly_report_metadata_key = f"{self.name}_weekly_report"
         
         # Load all thresholds from Config for consistency
         self.MIN_PREMIUM = Config.BULLSEYE_MIN_PREMIUM
@@ -51,9 +55,20 @@ class BullseyeBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
+        now_est = MarketHours.now_est()
+        if now_est.hour >= Config.BULLSEYE_EOD_SKIP_HOUR:
+            logger.debug(f"{self.name} - EOD hedging window, skipping scan")
+            return
+        
         market_context = await MarketContext.get_market_context(self.fetcher)
         
-        tasks = [self._scan_for_institutional_swings(symbol, market_context) for symbol in self.watchlist]
+        semaphore = asyncio.Semaphore(max(1, Config.MAX_CONCURRENT_REQUESTS))
+
+        async def run_symbol(symbol: str):
+            async with semaphore:
+                return await self._scan_for_institutional_swings(symbol, market_context)
+        
+        tasks = [run_symbol(symbol) for symbol in self.watchlist]
         all_signals = await asyncio.gather(*tasks, return_exceptions=True)
         
         flat_signals = [signal for sublist in all_signals if isinstance(sublist, list) for signal in sublist]
@@ -93,11 +108,17 @@ class BullseyeBot(BaseAutoBot):
                 min_premium=self.MIN_PREMIUM,
                 min_volume_delta=self.MIN_VOLUME_DELTA
             )
+            flows = self._filter_suspected_spreads(symbol, flows)
+            flows = self._filter_stale_flows(symbol, flows, max_hours=Config.BULLSEYE_MAX_FLOW_AGE_HOURS)
+            if not flows:
+                return signals
 
             # Price Action Confirmation
             momentum = await self._calculate_momentum(symbol)
             if not momentum:
                 return signals
+
+            atr = await self._get_atr(symbol)
 
             # Process each flow signal
             for flow in flows:
@@ -106,12 +127,6 @@ class BullseyeBot(BaseAutoBot):
                 strike = flow['strike']
                 expiration = flow['expiration']
                 premium = flow['premium']
-                
-                # CRITICAL: Single-leg filter (prevents multi-leg spreads)
-                multi_leg_ratio = flow.get('multi_leg_ratio', 0.0)
-                if multi_leg_ratio > 0.0:
-                    self._log_skip(symbol, f"bullseye multi-leg spread detected (ratio: {multi_leg_ratio:.2f})")
-                    continue
                 
                 if premium < self.MIN_PREMIUM:
                     self._log_skip(symbol, f"bullseye premium ${premium:,.0f} < ${self.MIN_PREMIUM:,.0f}")
@@ -226,6 +241,12 @@ class BullseyeBot(BaseAutoBot):
                 if not momentum_aligned:
                     logger.debug(f"⚠️ {symbol} ${strike} {opt_type}: CONTRARIAN to {momentum['direction']} momentum (allowed)")
 
+                last_trade_timestamp = flow.get('last_trade_timestamp') or flow.get('timestamp')
+                flow_recency_minutes = None
+                if isinstance(last_trade_timestamp, datetime):
+                    reference_now = datetime.now(last_trade_timestamp.tzinfo) if last_trade_timestamp.tzinfo else datetime.now()
+                    flow_recency_minutes = (reference_now - last_trade_timestamp).total_seconds() / 60
+
                 # All filters passed!
                 logger.info(f"✅ {symbol} ${strike} {opt_type} passed all filters - ITM: {itm_probability*100:.1f}%, VOI: {voi_ratio:.1f}x, Score: calculating...")
 
@@ -286,7 +307,12 @@ class BullseyeBot(BaseAutoBot):
                         'flow_intensity': flow_intensity,
                         'execution': execution_side,  # Use actual execution side
                         'is_sweep': flow_intensity == 'HIGH',
-                        'is_block': total_volume >= 5000
+                        'is_block': total_volume >= 5000,
+                        'atr': atr,
+                        'last_trade_timestamp': last_trade_timestamp,
+                        'flow_recency_minutes': flow_recency_minutes,
+                        'signal_key': signal_key,
+                        'option_ticker': flow.get('ticker')
                     }
 
                     # Deduplication: Use BaseAutoBot cooldown mechanism (4 hour cooldown)
@@ -637,12 +663,221 @@ class BullseyeBot(BaseAutoBot):
             logger.error(f"Error calculating momentum for {symbol}: {e}")
             return None
 
+    def _filter_suspected_spreads(self, symbol: str, flows: List[Dict]) -> List[Dict]:
+        """Filter out flows that likely belong to multi-leg spreads."""
+        if not flows:
+            return []
+
+        buckets: Dict[tuple, List[Dict]] = defaultdict(list)
+
+        for flow in flows:
+            trade_time = flow.get('last_trade_timestamp') or flow.get('timestamp')
+            if isinstance(trade_time, datetime):
+                minute_marker = trade_time.replace(second=0, microsecond=0)
+            else:
+                minute_marker = trade_time
+            key = (flow.get('ticker'), minute_marker)
+            buckets[key].append(flow)
+
+        single_leg_flows: List[Dict] = []
+        for (_, _), grouped_flows in buckets.items():
+            if len(grouped_flows) == 1:
+                single_leg_flows.append(grouped_flows[0])
+            else:
+                for grouped_flow in grouped_flows:
+                    self._log_skip(
+                        grouped_flow.get('underlying', symbol),
+                        "bullseye potential multi-leg spread detected"
+                    )
+
+        return single_leg_flows
+
+    def _filter_stale_flows(self, symbol: str, flows: List[Dict], max_hours: float = 2.0) -> List[Dict]:
+        """Discard flows where the latest trade is older than max_hours."""
+        if not flows:
+            return []
+
+        fresh_flows: List[Dict] = []
+        for flow in flows:
+            trade_time = flow.get('last_trade_timestamp') or flow.get('timestamp')
+            if isinstance(trade_time, datetime):
+                reference_now = datetime.now(trade_time.tzinfo) if trade_time.tzinfo else datetime.now()
+                age_hours = (reference_now - trade_time).total_seconds() / 3600
+                if age_hours > max_hours:
+                    self._log_skip(symbol, f"bullseye flow stale ({age_hours:.1f}h old)")
+                    continue
+            fresh_flows.append(flow)
+        return fresh_flows
+
+    async def _get_atr(self, symbol: str, period: int = 5) -> Optional[float]:
+        """Calculate Average True Range for the underlying."""
+        try:
+            to_date = datetime.now().strftime('%Y-%m-%d')
+            from_date = (datetime.now() - timedelta(days=period + 20)).strftime('%Y-%m-%d')
+            bars = await self.fetcher.get_aggregates(symbol, 'day', 1, from_date, to_date)
+
+            if bars.empty or len(bars) <= period:
+                return None
+
+            bars = bars.sort_values('timestamp')
+            highs = bars['high']
+            lows = bars['low']
+            closes = bars['close']
+            prev_closes = closes.shift(1)
+
+            true_range = pd.concat([
+                highs - lows,
+                (highs - prev_closes).abs(),
+                (lows - prev_closes).abs()
+            ], axis=1).max(axis=1)
+
+            atr_series = true_range.rolling(window=period).mean()
+            atr_value = atr_series.iloc[-1]
+            if pd.isna(atr_value):
+                return None
+
+            return float(atr_value)
+        except Exception as exc:
+            logger.error(f"Error calculating ATR for {symbol}: {exc}")
+            return None
+
+    def _ensure_outcome_tracker(self) -> None:
+        if not self.running:
+            return
+        if self._outcome_task and not self._outcome_task.done():
+            return
+        self._outcome_task = asyncio.create_task(self._track_outcomes())
+
+    async def _track_outcomes(self):
+        try:
+            while True:
+                await asyncio.sleep(max(60, Config.BULLSEYE_OUTCOME_POLL_SECONDS))
+                pending = self._fetch_pending_outcomes()
+                if not pending:
+                    await self._maybe_post_weekly_performance()
+                    continue
+
+                for outcome in pending:
+                    option_ticker = outcome['option_ticker']
+                    snapshot = await self.fetcher.get_option_contract_snapshot(option_ticker)
+                    if not snapshot:
+                        continue
+
+                    day_data = snapshot.get('day') or {}
+                    last_trade = snapshot.get('last_trade') or {}
+
+                    def _to_float(value):
+                        return float(value) if isinstance(value, (int, float)) else None
+
+                    last_price_candidates = [
+                        day_data.get('close'),
+                        day_data.get('c'),
+                        last_trade.get('price'),
+                        last_trade.get('p')
+                    ]
+                    last_price = next((val for val in map(_to_float, last_price_candidates) if val is not None), None)
+                    high_price = _to_float(day_data.get('high') or day_data.get('h'))
+                    low_price = _to_float(day_data.get('low') or day_data.get('l'))
+
+                    updates: Dict[str, Any] = {}
+                    stop_level = _to_float(outcome['stop'])
+
+                    stop_hit = (low_price is not None and stop_level is not None and low_price <= stop_level)
+                    if stop_hit:
+                        updates['stopped_out'] = 1
+                        updates['resolved'] = 1
+                    else:
+                        target1 = _to_float(outcome['target1'])
+                        target2 = _to_float(outcome['target2'])
+                        target3 = _to_float(outcome['target3'])
+
+                        if high_price is not None:
+                            if target1 is not None and high_price >= target1 and not outcome['hit_target1']:
+                                updates['hit_target1'] = 1
+                            if target2 is not None and high_price >= target2 and not outcome['hit_target2']:
+                                updates['hit_target2'] = 1
+                            if target3 is not None and high_price >= target3 and not outcome['hit_target3']:
+                                updates['hit_target3'] = 1
+                                updates['resolved'] = 1
+
+                    if last_price is not None:
+                        updates['last_price'] = last_price
+
+                    if updates:
+                        self._update_outcome_status(outcome['id'], updates)
+                        if updates.get('resolved'):
+                            self._maybe_flag_symbol(outcome['symbol'])
+
+                await self._maybe_post_weekly_performance()
+        except asyncio.CancelledError:
+            logger.info(f"{self.name} outcome tracker stopped")
+        except Exception as exc:
+            logger.error(f"{self.name} outcome tracker error: {exc}")
+
+    async def _maybe_post_weekly_performance(self):
+        now = datetime.utcnow()
+        if now.weekday() != Config.BULLSEYE_WEEKLY_REPORT_DAY:  # Configurable report day
+            return
+
+        last_report = self._get_metadata(self._weekly_report_metadata_key)
+        if last_report:
+            try:
+                last_dt = datetime.fromisoformat(last_report)
+                if last_dt.date() == now.date():
+                    return
+            except ValueError:
+                pass
+
+        summary = self._summarize_outcomes(days=7)
+        signals = summary['signals']
+        if signals == 0:
+            return
+
+        win_rate_pct = summary['win_rate'] * 100
+        expected_gain_pct = summary['expected_gain'] * 100
+        targets_line = (
+            f"T1: {summary['hit_target1']} | "
+            f"T2: {summary['hit_target2']} | "
+            f"T3: {summary['hit_target3']} | "
+            f"Stopped: {summary['stopped_out']}"
+        )
+
+        embed = self.create_embed(
+            title="📊 Weekly Performance",
+            description=f"{signals} signals in the last 7 days",
+            color=0x1F8B4C,
+            fields=[
+                {"name": "Win Rate", "value": f"**{win_rate_pct:.1f}%** hit Target 1", "inline": False},
+                {"name": "Targets Reached", "value": targets_line, "inline": False},
+                {"name": "Expected Gain", "value": f"Approx. **{expected_gain_pct:.1f}%** per signal", "inline": False},
+            ],
+            footer="Bullseye Bot • Weekly performance snapshot"
+        )
+
+        posted = await self.post_to_discord(embed)
+        if posted:
+            self._set_metadata(self._weekly_report_metadata_key, now.isoformat())
+
     async def _post_institutional_signal(self, signal: Dict):
         """Post institutional swing alert with enhanced format"""
         color = 0x00FF00 if signal['type'] == 'CALL' else 0xFF0000
         
         # Calculate swing exits
-        exits = self._calculate_swing_exits(signal['ask'], signal)
+        exits = self._calculate_swing_exits(signal['ask'], signal, signal.get('atr'))
+        entry_price = signal['ask']
+        stop_loss = exits['stop_loss']
+        reward = exits['target1'] - entry_price
+        risk = entry_price - stop_loss if entry_price > stop_loss else None
+        rr_target1 = (reward / risk) if risk and risk > 0 else None
+        theta_ratio = None
+        if entry_price > 0 and signal.get('theta') is not None:
+            theta_ratio = abs(signal['theta']) / entry_price
+
+        recency_minutes = signal.get('flow_recency_minutes')
+        distance_pct = ((signal['strike'] - signal['current_price']) / signal['current_price']) * 100
+        distance_label = "OTM" if (signal['type'] == 'CALL' and distance_pct > 0) or (signal['type'] == 'PUT' and distance_pct < 0) else "ITM"
+        description = f"Expiry: {signal['expiration']} ({signal['days_to_expiry']} DTE)"
+        stop_basis_label = "ATR" if exits.get('stop_basis') == "atr" else "Percent"
         
         title = f"🎯 {signal['ticker']} ${signal['strike']} {signal['type']} • {signal['trade_tag']}"
         
@@ -651,18 +886,36 @@ class BullseyeBot(BaseAutoBot):
         else:
             premium_fmt = f"${signal['premium']/1_000:.0f}K"
         
-        distance_pct = ((signal['strike'] - signal['current_price']) / signal['current_price']) * 100
-        distance_label = "OTM" if (signal['type'] == 'CALL' and distance_pct > 0) or (signal['type'] == 'PUT' and distance_pct < 0) else "ITM"
-        description = f"Expiry: {signal['expiration']} ({signal['days_to_expiry']} DTE)"
+        flow_details: List[str] = [
+            f"• Premium: **{premium_fmt}**",
+            f"• Volume: **{signal['volume']:,}** contracts | VOI **{signal['voi_ratio']:.2f}x**",
+            f"• Execution: **{signal['execution']}**"
+        ]
+        if recency_minutes is not None:
+            flow_details.append(f"• Last trade: **{max(recency_minutes, 0):.0f} min ago**")
+        if signal.get('flow_intensity'):
+            flow_details.append(f"• Intensity: **{signal['flow_intensity']}**")
+        if exits.get('atr'):
+            flow_details.append(f"• ATR (5): **${exits['atr']:.2f}**")
+
+        edge_lines: List[str] = [f"• ITM Probability: **{signal['itm_probability']:.1%}**"]
+        if rr_target1 is not None:
+            edge_lines.append(f"• Target 1 R:R: **{rr_target1:.2f}:1**")
+        if theta_ratio is not None:
+            edge_lines.append(f"• Theta Decay: **{theta_ratio:.1%}/day**")
+        edge_lines.append(f"• Stop Basis: **{stop_basis_label}** (Stop @ ${exits['stop_loss']:.2f})")
+
+        execution_plan = (
+            f"1. Enter near **${entry_price:.2f}** (limit, no chasing)\n"
+            f"2. Sell **50%** @ **${exits['target1']:.2f}**, then move stop → breakeven\n"
+            f"3. Sell **30%** @ **${exits['target2']:.2f}**\n"
+            f"4. Trail final **20%** with {int(exits['trail_percent']*100)}% stop"
+        )
 
         fields = [
             {
                 "name": "💰 Flow Snapshot",
-                "value": (
-                    f"• Premium: **{premium_fmt}**\n"
-                    f"• Volume: **{signal['volume']:,}** contracts | VOI **{signal['voi_ratio']:.2f}x**\n"
-                    f"• Execution: **{signal['execution']}**"
-                ),
+                "value": "\n".join(flow_details),
                 "inline": False
             },
             {
@@ -675,14 +928,20 @@ class BullseyeBot(BaseAutoBot):
                 "inline": False
             },
             {
-                "name": "🎯 Plan",
-                "value": (
-                    f"• Entry: **${signal['ask']:.2f}**\n"
-                    f"• Targets: **${exits['target1']:.2f} / ${exits['target2']:.2f} / ${exits['target3']:.2f}**\n"
-                    f"• Stop: **${exits['stop_loss']:.2f}**\n"
-                    f"• Note: Target 3 is rare (<10% hit rate), take profits at T1/T2"
-                ),
-                "inline": False},
+                "name": "📈 Probability & Edge",
+                "value": "\n".join(edge_lines),
+                "inline": False
+            },
+            {
+                "name": "🎯 Execution Plan",
+                "value": execution_plan,
+                "inline": False
+            },
+            {
+                "name": "⏱️ Entry Timing",
+                "value": "Wait 5-10 minutes after open for spreads < 3%. Use limit orders; avoid illiquid fills.",
+                "inline": False
+            },
         ]
         
         # Create embed
@@ -694,42 +953,69 @@ class BullseyeBot(BaseAutoBot):
             footer="ORAKL Institutional Scanner • 1-5 Day Swing Trades"
         )
         
-        await self.post_to_discord(embed)
-        logger.info(f"Posted Institutional Swing: {signal['ticker']} {signal['type']} ${signal['strike']} "
-                   f"Score:{signal['institutional_score']} Premium:{signal['premium']:,.0f} Tag:{signal['trade_tag']}")
+        posted = await self.post_to_discord(embed)
+        if posted:
+            self._record_signal_outcome(signal, exits)
+            self._ensure_outcome_tracker()
+            await self._maybe_post_weekly_performance()
+            logger.info(
+                f"Posted Institutional Swing: {signal['ticker']} {signal['type']} ${signal['strike']} "
+                f"Score:{signal['institutional_score']} Premium:{signal['premium']:,.0f} Tag:{signal['trade_tag']}"
+            )
+        else:
+            logger.warning(
+                f"{self.name} failed to post signal for {signal['ticker']} {signal['type']} ${signal['strike']}"
+            )
 
-    def _calculate_swing_exits(self, entry_price: float, flow_data: Dict) -> Dict:
+    def _calculate_swing_exits(self, entry_price: float, flow_data: Dict, atr: Optional[float] = None) -> Dict:
         """
         1-2 day swing trades need wider stops, bigger targets
         These aren't scalps - institutions expect MOVES
         """
         
-        if flow_data['days_to_expiry'] <= 2:  # 0-2 DTE swings
-            # Tighter stops, quicker targets
-            stop_loss = entry_price * 0.70  # 30% stop
-            target1 = entry_price * 1.75    # 75% gain
-            target2 = entry_price * 2.50    # 150% gain
-            target3 = entry_price * 4.00    # 300% runner
-            
-        else:  # 3-5 DTE swings  
-            # More room to work
-            stop_loss = entry_price * 0.60  # 40% stop
-            target1 = entry_price * 2.00    # 100% gain
-            target2 = entry_price * 3.00    # 200% gain
-            target3 = entry_price * 5.00    # 400% runner
-        
+        dte = flow_data['days_to_expiry']
+        delta_abs = abs(flow_data.get('delta', 0.5)) or 0.5
+        atr_value = atr if atr is not None else flow_data.get('atr')
+
+        if dte <= 2:  # 0-2 DTE swings
+            stop_pct_floor = 0.30
+            target_multipliers = (1.75, 2.50, 4.00)
+            atr_multiple = Config.BULLSEYE_ATR_MULT_SHORT
+        else:  # 3-5 DTE swings
+            stop_pct_floor = 0.40
+            target_multipliers = (2.00, 3.00, 5.00)
+            atr_multiple = Config.BULLSEYE_ATR_MULT_LONG
+
+        stop_loss = entry_price * (1 - stop_pct_floor)
+        stop_basis = "static"
+        stop_distance = None
+        if atr_value and atr_value > 0:
+            stop_distance_estimate = atr_value * delta_abs * atr_multiple
+            if stop_distance_estimate > 0:
+                stop_loss = max(entry_price - stop_distance_estimate, stop_loss)
+                stop_distance = stop_distance_estimate
+                stop_basis = "atr"
+
+        target1 = entry_price * target_multipliers[0]
+        target2 = entry_price * target_multipliers[1]
+        target3 = entry_price * target_multipliers[2]
+
         # Trailing stop after target 1
         trail_trigger = target1
         trail_percent = 0.25  # Trail by 25%
-        
+
         return {
             'stop_loss': round(stop_loss, 2),
+            'stop_basis': stop_basis,
+            'stop_distance': None if stop_distance is None else round(stop_distance, 2),
             'target1': round(target1, 2),
-            'target2': round(target2, 2), 
+            'target2': round(target2, 2),
             'target3': round(target3, 2),
             'trail_trigger': trail_trigger,
             'trail_percent': trail_percent,
-            'management': "Sell 1/3 at each target, trail remainder"
+            'breakeven_trigger': round(target1, 2),
+            'management': "Scale out: 50% @ T1, 30% @ T2, trail 20% remainder",
+            'atr': None if atr_value is None else round(atr_value, 2)
         }
     
     async def _get_days_premium(self, symbol: str) -> float:
@@ -800,3 +1086,11 @@ class BullseyeBot(BaseAutoBot):
         ) else "⚠️ CONTRARIAN"
         
         return f"{direction} ({strength_text} {strength:.2f}) {alignment}"
+
+    async def stop(self):
+        if self._outcome_task and not self._outcome_task.done():
+            self._outcome_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._outcome_task
+            self._outcome_task = None
+        await super().stop()

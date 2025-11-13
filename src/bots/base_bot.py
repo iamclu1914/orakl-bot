@@ -8,6 +8,9 @@ from abc import ABC, abstractmethod
 import time
 from dataclasses import dataclass, field
 from collections import deque
+import sqlite3
+from pathlib import Path
+import threading
 
 from src.config import Config
 from src.utils.exceptions import BotException, BotNotRunningException, WebhookException
@@ -58,12 +61,272 @@ class BaseAutoBot(ABC):
         self._cooldowns: Dict[str, datetime] = {}
         self._skip_records: deque = deque(maxlen=200)
         self.concurrency_limit = getattr(Config, 'MAX_CONCURRENT_REQUESTS', 10)
+        self._state_lock = threading.Lock()
+        self._state_db: Optional[sqlite3.Connection] = None
+        self._state_db_path: Optional[Path] = None
+        self._low_performers: set[str] = set()
+        self._init_state_store()
+
+    def _init_state_store(self) -> None:
+        """Initialize persistent state storage for cooldowns and outcomes."""
+        try:
+            state_path_value = getattr(Config, 'STATE_DB_PATH', 'state/bot_state.db')
+            self._state_db_path = Path(state_path_value)
+            self._state_db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._state_db = sqlite3.connect(self._state_db_path, check_same_thread=False)
+            self._state_db.row_factory = sqlite3.Row
+            with self._state_lock:
+                self._state_db.execute("PRAGMA journal_mode=WAL;")
+                self._state_db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS cooldowns (
+                        key TEXT NOT NULL,
+                        bot TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        PRIMARY KEY (key, bot)
+                    )
+                    """
+                )
+                self._state_db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS outcomes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bot TEXT NOT NULL,
+                        signal_key TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        option_ticker TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        entry_price REAL NOT NULL,
+                        target1 REAL NOT NULL,
+                        target2 REAL NOT NULL,
+                        target3 REAL NOT NULL,
+                        stop REAL NOT NULL,
+                        breakeven REAL,
+                        last_price REAL,
+                        dte INTEGER,
+                        posted_at TEXT NOT NULL,
+                        last_updated TEXT NOT NULL,
+                        hit_target1 INTEGER DEFAULT 0,
+                        hit_target2 INTEGER DEFAULT 0,
+                        hit_target3 INTEGER DEFAULT 0,
+                        stopped_out INTEGER DEFAULT 0,
+                        resolved INTEGER DEFAULT 0,
+                        UNIQUE(bot, signal_key)
+                    )
+                    """
+                )
+                self._state_db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                    """
+                )
+                self._state_db.commit()
+        except Exception as exc:
+            logger.error(f"{self.name} failed to initialize state store: {exc}")
+            self._state_db = None
+            self._state_db_path = None
+
+    def _state_execute(self, query: str, params: tuple = (), commit: bool = True):
+        if not self._state_db:
+            return None
+        with self._state_lock:
+            cursor = self._state_db.execute(query, params)
+            if commit:
+                self._state_db.commit()
+            return cursor
+
+    def _get_metadata(self, key: str) -> Optional[str]:
+        cursor = self._state_execute("SELECT value FROM metadata WHERE key=?", (key,), commit=False)
+        row = cursor.fetchone() if cursor else None
+        return row["value"] if row else None
+
+    def _set_metadata(self, key: str, value: str) -> None:
+        self._state_execute(
+            """
+            INSERT INTO metadata (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """,
+            (key, value)
+        )
+
+    def _record_signal_outcome(self, signal: Dict, exits: Dict) -> None:
+        """Persist signal details for post-alert tracking."""
+        if not self._state_db:
+            return
+
+        signal_key = signal.get('signal_key')
+        option_ticker = signal.get('option_ticker')
+        if not signal_key or not option_ticker:
+            return
+
+        entry_price = float(signal.get('ask') or 0.0)
+        target1 = float(exits.get('target1') or 0.0)
+        target2 = float(exits.get('target2') or 0.0)
+        target3 = float(exits.get('target3') or 0.0)
+        stop_loss = float(exits.get('stop_loss') or 0.0)
+        breakeven = exits.get('breakeven_trigger')
+        breakeven_value = float(breakeven) if breakeven is not None else None
+        posted_at = datetime.utcnow().isoformat()
+        self._state_execute(
+            """
+            INSERT INTO outcomes (
+                bot, signal_key, symbol, option_ticker, direction,
+                entry_price, target1, target2, target3, stop, breakeven, last_price, dte,
+                posted_at, last_updated
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(bot, signal_key) DO UPDATE SET
+                entry_price=excluded.entry_price,
+                target1=excluded.target1,
+                target2=excluded.target2,
+                target3=excluded.target3,
+                stop=excluded.stop,
+                breakeven=excluded.breakeven,
+                last_price=excluded.last_price,
+                dte=excluded.dte,
+                last_updated=excluded.last_updated
+            """,
+            (
+                self.name,
+                signal_key,
+                signal.get('ticker'),
+                option_ticker,
+                signal.get('type'),
+                entry_price,
+                target1,
+                target2,
+                target3,
+                stop_loss,
+                breakeven_value,
+                entry_price,
+                signal.get('days_to_expiry'),
+                posted_at,
+                posted_at
+            )
+        )
+
+    def _fetch_pending_outcomes(self) -> List[sqlite3.Row]:
+        cursor = self._state_execute(
+            "SELECT * FROM outcomes WHERE bot=? AND resolved=0",
+            (self.name,),
+            commit=False
+        )
+        return cursor.fetchall() if cursor else []
+
+    def _update_outcome_status(self, outcome_id: int, updates: Dict[str, Any]) -> None:
+        if not updates or not self._state_db:
+            return
+        updates['last_updated'] = datetime.utcnow().isoformat()
+        set_clause = ", ".join(f"{column}=?" for column in updates.keys())
+        params = list(updates.values())
+        params.append(outcome_id)
+        self._state_execute(
+            f"UPDATE outcomes SET {set_clause} WHERE id=?",
+            tuple(params)
+        )
+
+    def _summarize_outcomes(self, days: int = 7) -> Dict[str, Any]:
+        """Aggregate recent outcome performance for reporting."""
+        summary = {
+            'signals': 0,
+            'hit_target1': 0,
+            'hit_target2': 0,
+            'hit_target3': 0,
+            'stopped_out': 0,
+            'win_rate': 0.0,
+            'expected_gain': 0.0
+        }
+        if not self._state_db:
+            return summary
+
+        threshold = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cursor = self._state_execute(
+            """
+            SELECT
+                COUNT(*) AS signals,
+                SUM(hit_target1) AS hit_target1,
+                SUM(hit_target2) AS hit_target2,
+                SUM(hit_target3) AS hit_target3,
+                SUM(stopped_out) AS stopped_out
+            FROM outcomes
+            WHERE bot=? AND posted_at >= ?
+            """,
+            (self.name, threshold),
+            commit=False
+        )
+        row = cursor.fetchone() if cursor else None
+        if not row or not row["signals"]:
+            return summary
+
+        signals = row["signals"] or 0
+        hit_t1 = row["hit_target1"] or 0
+        hit_t2 = row["hit_target2"] or 0
+        hit_t3 = row["hit_target3"] or 0
+        stopped = row["stopped_out"] or 0
+
+        summary['signals'] = signals
+        summary['hit_target1'] = hit_t1
+        summary['hit_target2'] = hit_t2
+        summary['hit_target3'] = hit_t3
+        summary['stopped_out'] = stopped
+        summary['win_rate'] = hit_t1 / signals if signals else 0.0
+
+        # Approximate blended gain based on target ladder assumptions (in multiples of entry risk).
+        expected_gain = (
+            (hit_t3 * 3.0) +
+            ((hit_t2 - hit_t3) * 1.5) +
+            ((hit_t1 - hit_t2) * 0.75) -
+            (stopped * 0.30)
+        )
+        summary['expected_gain'] = expected_gain / signals if signals else 0.0
+        return summary
+
+    def _maybe_flag_symbol(self, symbol: str) -> None:
+        """Log symbols with consistently poor performance for manual review."""
+        if not self._state_db or not symbol or symbol in self._low_performers:
+            return
+
+        min_samples = getattr(Config, 'PERFORMANCE_SYMBOL_MIN_OBS', 20)
+        min_win_rate = getattr(Config, 'PERFORMANCE_SYMBOL_MIN_WIN', 0.2)
+        cursor = self._state_execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(hit_target1) AS wins
+            FROM outcomes
+            WHERE bot=? AND symbol=?
+            """,
+            (self.name, symbol),
+            commit=False
+        )
+        row = cursor.fetchone() if cursor else None
+        if not row:
+            return
+
+        total = row["total"] or 0
+        if total < min_samples:
+            return
+        wins = row["wins"] or 0
+        win_rate = wins / total if total else 0.0
+        if win_rate < min_win_rate:
+            logger.warning(
+                f"{self.name} low-performing symbol detected: {symbol} "
+                f"(win rate {win_rate:.1%} over {total} signals)"
+            )
+            self._low_performers.add(symbol)
 
     async def start(self):
         """Start the bot with enhanced error handling and monitoring"""
         if self.running:
             logger.warning(f"{self.name} already running")
             return
+
+        if self._state_db is None:
+            self._init_state_store()
 
         self.running = True
         self.metrics.start_time = datetime.now()
@@ -235,6 +498,14 @@ class BaseAutoBot(ABC):
                 logger.warning(f"{self.name} error closing session: {e}")
             finally:
                 self.session = None
+        if self._state_db:
+            with self._state_lock:
+                try:
+                    self._state_db.close()
+                except Exception as exc:
+                    logger.warning(f"{self.name} error closing state DB: {exc}")
+                finally:
+                    self._state_db = None
     
     async def scan_and_post(self):
         """Default concurrent scanning implementation with bounded concurrency"""
@@ -442,13 +713,36 @@ class BaseAutoBot(ABC):
         """Check whether a signal is within cooldown window"""
         now = datetime.now()
         last_seen = self._cooldowns.get(key)
+        if last_seen is None and self._state_db:
+            cursor = self._state_execute(
+                "SELECT timestamp FROM cooldowns WHERE key=? AND bot=?",
+                (key, self.name),
+                commit=False
+            )
+            row = cursor.fetchone() if cursor else None
+            if row:
+                try:
+                    last_seen = datetime.fromisoformat(row["timestamp"])
+                    self._cooldowns[key] = last_seen
+                except ValueError:
+                    last_seen = None
         if last_seen and (now - last_seen).total_seconds() < cooldown_seconds:
             return True
         return False
 
     def _mark_cooldown(self, key: str) -> None:
         """Mark a signal as posted for cooldown tracking"""
-        self._cooldowns[key] = datetime.now()
+        timestamp = datetime.now()
+        self._cooldowns[key] = timestamp
+        if self._state_db:
+            self._state_execute(
+                """
+                INSERT INTO cooldowns (key, bot, timestamp)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key, bot) DO UPDATE SET timestamp=excluded.timestamp
+                """,
+                (key, self.name, timestamp.isoformat())
+            )
 
     def _log_skip(self, symbol: str, reason: str) -> None:
         """Record skip reasons for quick diagnostics"""
