@@ -121,7 +121,7 @@ class Config:
         'AAPL,MSFT,NVDA,GOOGL,META,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,TXN,PLTR,CRWD,PANW,'
         'SHOP,SMCI,NET,ROKU,ZS,DDOG,OKTA,SPLK,TEAM,ZM,SNOW,AFRM,MU,ON,MRVL,ARM,'
         # Consumer Discretionary (existing + new)
-        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,'
+        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,DG,DLTR,BJ,'
         # Financial Services (existing + new under $75)
         'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,SOFI,'
         # Healthcare (existing + new)
@@ -133,9 +133,10 @@ class Config:
         # Communication Services (existing + new under $75)
         'T,VZ,CMCSA,TMUS,DIS,CHTR,PARA,WBD,EA,TTWO,SNAP,'
         # Consumer Staples (existing)
-        'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,'
+        'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,CPB,KMB,'
         # Materials & Commodities (existing + new under $75)
         'LIN,APD,ECL,DD,NEM,FCX,DOW,AA,CLF,VALE,CCJ,ALB,LTHM,MP,GOLD,'
+        'BHP,RIO,SCCO,TECK,KGC,PAAS,WPM,HMY,HBM,FSM,AGI,SSRM,CIFR,'
         # Real Estate (existing)
         'AMT,PLD,CCI,EQIX,PSA,'
         # Utilities (existing)
