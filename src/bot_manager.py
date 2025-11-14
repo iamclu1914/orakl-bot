@@ -50,7 +50,6 @@ class BotManager:
             Config.BULLSEYE_WEBHOOK,
             bullseye_watchlist,
             self.fetcher,
-            self.analyzer
         )
         self.bots.append(self.bullseye_bot)
         self.bot_overrides[self.bullseye_bot] = bullseye_watchlist
