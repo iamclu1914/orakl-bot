@@ -49,10 +49,10 @@ class Config:
     SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '120'))  # 2 minutes
     
     # Index Whale Bot Thresholds (for intraday 1-3 DTE reversals)
-    INDEX_WHALE_MIN_PREMIUM = float(os.getenv('INDEX_WHALE_MIN_PREMIUM', '50000'))  # $50K minimum for whale detection
-    INDEX_WHALE_MIN_VOLUME_DELTA = int(os.getenv('INDEX_WHALE_MIN_VOLUME_DELTA', '25'))  # 25 contracts
-    INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.02'))  # 2% OTM max for reversals
-    INDEX_WHALE_MIN_DTE = float(os.getenv('INDEX_WHALE_MIN_DTE', '1.0'))  # 1 day minimum
+    INDEX_WHALE_MIN_PREMIUM = float(os.getenv('INDEX_WHALE_MIN_PREMIUM', '30000'))  # Allow smaller intraday sweeps
+    INDEX_WHALE_MIN_VOLUME_DELTA = int(os.getenv('INDEX_WHALE_MIN_VOLUME_DELTA', '20'))  # Slightly smaller prints
+    INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.05'))  # Allow up to 5% OTM
+    INDEX_WHALE_MIN_DTE = float(os.getenv('INDEX_WHALE_MIN_DTE', '0.0'))  # Allow same-day contracts
     INDEX_WHALE_MAX_DTE = float(os.getenv('INDEX_WHALE_MAX_DTE', '3.0'))  # 3 day maximum for intraday plays
     INDEX_WHALE_MAX_MULTI_LEG_RATIO = float(os.getenv('INDEX_WHALE_MAX_MULTI_LEG_RATIO', '0.15'))  # Allow small multi-leg (complex hedges)
     

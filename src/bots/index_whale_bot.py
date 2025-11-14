@@ -158,10 +158,6 @@ class IndexWhaleBot(BaseAutoBot):
             self._log_skip(symbol, f"multi-leg ratio {multi_leg_ratio:.2f} > {self.max_multi_leg_ratio:.2f}")
             return False
             
-        if not metrics.is_otm:
-            self._log_skip(symbol, "not OTM")
-            return False
-            
         if metrics.percent_otm > self.max_percent_otm:
             self._log_skip(symbol, f"OTM {metrics.percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
             return False
