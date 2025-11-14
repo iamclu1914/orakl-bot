@@ -119,19 +119,19 @@ class Config:
         'SPY,QQQ,IWM,DIA,XLF,XLE,XLK,XLV,XLY,XLC,SMH,ARKK,SOXL,'
         # Technology (existing + new under $75)
         'AAPL,MSFT,NVDA,GOOGL,META,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,TXN,PLTR,CRWD,PANW,'
-        'SHOP,SMCI,NET,ROKU,ZS,DDOG,OKTA,SPLK,TEAM,ZM,SNOW,AFRM,MU,ON,MRVL,ARM,'
+        'SHOP,SMCI,NET,ROKU,ZS,DDOG,OKTA,SPLK,TEAM,ZM,SNOW,AFRM,RBLX,DELL,AI,BBAI,SOUN,PATH,UPST,MU,ON,MRVL,ARM,'
         # Consumer Discretionary (existing + new)
-        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,DG,DLTR,BJ,'
+        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,DG,DLTR,BJ,EBAY,ASO,'
         # Financial Services (existing + new under $75)
-        'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,SOFI,'
+        'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,SOFI,RKT,'
         # Healthcare (existing + new)
         'UNH,JNJ,LLY,ABBV,MRK,PFE,TMO,ABT,DHR,BMY,AMGN,CVS,GILD,MNKD,ISRG,VRTX,REGN,'
         # Energy (existing)
         'XOM,CVX,COP,SLB,EOG,MPC,PSX,VLO,OXY,HAL,'
         # Industrials (existing)
-        'BA,CAT,GE,HON,UPS,RTX,LMT,DE,MMM,UNP,'
+        'BA,CAT,GE,HON,UPS,RTX,LMT,DE,MMM,UNP,J,'
         # Communication Services (existing + new under $75)
-        'T,VZ,CMCSA,TMUS,DIS,CHTR,PARA,WBD,EA,TTWO,SNAP,'
+        'T,VZ,CMCSA,TMUS,DIS,CHTR,PARA,WBD,EA,TTWO,SNAP,RUM,'
         # Consumer Staples (existing)
         'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,CPB,KMB,'
         # Materials & Commodities (existing + new under $75)
