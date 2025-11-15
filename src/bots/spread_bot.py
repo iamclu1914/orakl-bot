@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from .base_bot import BaseAutoBot
 from src.config import Config
@@ -45,6 +45,8 @@ class SpreadBot(BaseAutoBot):
         self.min_dte = Config.SPREAD_MIN_DTE
         self.max_dte = Config.SPREAD_MAX_DTE
         self.max_percent_otm = Config.SPREAD_MAX_PERCENT_OTM
+        self.cooldown_seconds = 1800  # 30 minute cooldown to prevent spam
+        self._flow_stats: Dict[str, Dict[str, Any]] = {}
 
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         signals: List[Dict] = []
@@ -128,8 +130,17 @@ class SpreadBot(BaseAutoBot):
 
                 # Check cooldown BEFORE adding to signals (prevents duplicates)
                 cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
-                if self._cooldown_active(cooldown_key, cooldown_seconds=300):  # 5 minute cooldown
-                    self._log_skip(symbol, f"cooldown active (already alerted in last 5 min)")
+                stats_snapshot = self._update_flow_stats(cooldown_key, float(metrics.premium or 0.0))
+                if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
+                    if stats_snapshot.get("hits", 1) > 1:
+                        total_premium = self._format_currency(stats_snapshot.get("total_premium", 0.0))
+                        hits = stats_snapshot.get("hits", 1)
+                        self._log_skip(
+                            symbol,
+                            f"cooldown ({self.cooldown_seconds // 60}m) active - repeat hit x{hits} total {total_premium}",
+                        )
+                    else:
+                        self._log_skip(symbol, f"cooldown active (already alerted in last {self.cooldown_seconds // 60} min)")
                     continue
 
                 signals.append(
@@ -137,6 +148,7 @@ class SpreadBot(BaseAutoBot):
                         "metrics": metrics,
                         "contract_price": contract_price,
                         "flow": flow,
+                        "stats": stats_snapshot,
                     }
                 )
 
@@ -146,6 +158,29 @@ class SpreadBot(BaseAutoBot):
 
         # Return top 3 signals by premium
         return sorted(signals, key=lambda s: s["metrics"].premium, reverse=True)[:3]
+
+    def _update_flow_stats(self, key: str, premium: float) -> Dict[str, Any]:
+        """Track repeat flow statistics for cumulative summaries."""
+        now = datetime.utcnow()
+        stats = self._flow_stats.get(key)
+
+        def _reset() -> Dict[str, Any]:
+            return {
+                "first_seen": now,
+                "last_seen": now,
+                "hits": 1,
+                "total_premium": premium,
+            }
+
+        if not stats or not stats.get("first_seen") or stats["first_seen"].date() != now.date():
+            stats = _reset()
+        else:
+            stats["hits"] += 1
+            stats["total_premium"] += premium
+            stats["last_seen"] = now
+
+        self._flow_stats[key] = stats
+        return dict(stats)
 
     def _calculate_spread_score(self, metrics: OptionTradeMetrics, voi_ratio: float, contract_price: float) -> int:
         """
@@ -203,6 +238,20 @@ class SpreadBot(BaseAutoBot):
         
         return min(score, 100)
 
+    @staticmethod
+    def _format_currency(value: float) -> str:
+        """Format premium totals into human-readable strings."""
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return "$0"
+
+        if value >= 1_000_000:
+            return f"${value / 1_000_000:.2f}M"
+        if value >= 1_000:
+            return f"${value / 1_000:.0f}K"
+        return f"${value:,.0f}"
+
     async def _post_signal(self, payload: Dict) -> bool:
         metrics: OptionTradeMetrics = payload["metrics"]
         contract_price: float = payload["contract_price"]
@@ -212,11 +261,15 @@ class SpreadBot(BaseAutoBot):
         cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
         
         # Post the signal
-        embed = self._build_embed(metrics, contract_price, flow)
+        stats = payload.get("stats")
+
+        embed = self._build_embed(metrics, contract_price, flow, stats)
         success = await self.post_to_discord(embed)
         
         if success:
             self._mark_cooldown(cooldown_key)  # Mark AFTER successful post
+            if cooldown_key in self._flow_stats:
+                self._flow_stats[cooldown_key]["last_alerted"] = datetime.utcnow()
             logger.info(
                 "99 Cent Store Alert: %s %.2f %s price $%.2f premium $%s",
                 metrics.underlying,
@@ -233,8 +286,9 @@ class SpreadBot(BaseAutoBot):
         metrics: OptionTradeMetrics,
         contract_price: float,
         flow: Dict,
+        stats: Optional[Dict[str, Any]] = None,
     ) -> Dict:
-        """Build simplified Discord embed matching user format."""
+        """Build enhanced Discord embed with two-column layout and repeat-flow context."""
         dte_days = int(round(metrics.dte))
         expiration_fmt = metrics.expiration.strftime("%m/%d/%Y") if isinstance(metrics.expiration, datetime) else str(metrics.expiration)
 
@@ -260,29 +314,77 @@ class SpreadBot(BaseAutoBot):
         target_20 = contract_price * 1.20
         target_25 = contract_price * 1.25
 
-        # Build simple description
-        description = (
-            "**Time and sales**\n\n"
-            f"Price: **${contract_price:.2f}**\n\n"
-            f"Size: **{volume_delta:,}**\n\n"
-            f"Prem: **{premium_fmt}**\n\n"
-            f"Vol: **{total_volume:,}**\n\n"
-            f"OI: **{oi_value:,}**\n\n"
-            f"Vol/OI: **{voi_ratio:.2f}**\n\n"
-            f"DTE: **{dte_days} days**\n\n"
-            f"% OTM: **{metrics.percent_otm*100:.2f}%**\n\n"
-            f"Spread: **${ask_price:.2f} / ${bid_price:.2f}**\n\n"
-            f"**Targets:**\n"
-            f"15%: **${target_15:.2f}**\n"
-            f"20%: **${target_20:.2f}**\n"
-            f"25%: **${target_25:.2f}**"
+        hits = stats.get("hits", 1) if stats else 1
+        total_premium = stats.get("total_premium", float(metrics.premium or 0.0)) if stats else float(metrics.premium or 0.0)
+
+        flow_lines = [
+            f"Price: **${contract_price:.2f}**",
+            f"Size: **{volume_delta:,}**",
+            f"Premium: **{premium_fmt}**",
+        ]
+        if hits > 1:
+            flow_lines.append(f"Cumulative: **{self._format_currency(total_premium)} ({hits} hits)**")
+        flow_lines.append(f"Vol/OI: **{voi_ratio:.2f}x**")
+        flow_lines.append(f"Spread (Ask/Bid): **${ask_price:.2f} / ${bid_price:.2f}**")
+
+        contract_lines = [
+            f"DTE: **{dte_days} days**",
+            f"% OTM: **{metrics.percent_otm*100:.2f}%**",
+            f"OI: **{oi_value:,}**",
+            f"Day Vol: **{total_volume:,}**",
+        ]
+        contract_lines.extend(
+            [
+                "",
+                "**Targets**",
+                f"15%: **${target_15:.2f}**",
+                f"20%: **${target_20:.2f}**",
+                f"25%: **${target_25:.2f}**",
+            ]
         )
+
+        fields = [
+            {
+                "name": "💥 Flow Snapshot",
+                "value": "\n".join(flow_lines),
+                "inline": True,
+            },
+            {
+                "name": "📊 Contract Setup",
+                "value": "\n".join(contract_lines),
+                "inline": True,
+            },
+        ]
+
+        context_parts: List[str] = []
+        if stats:
+            now = datetime.utcnow()
+            first_seen = stats.get("first_seen")
+            last_seen = stats.get("last_seen")
+            if hits > 1:
+                context_parts.append(f"Repeat hits: **{hits}x**")
+            context_parts.append(f"Cumulative premium: **{self._format_currency(total_premium)}**")
+            if first_seen:
+                minutes_active = max(int((now - first_seen).total_seconds() // 60), 0)
+                context_parts.append(f"Active for **{minutes_active} min**")
+            if last_seen:
+                minutes_since = max(int((now - last_seen).total_seconds() // 60), 0)
+                context_parts.append(f"Last hit **{minutes_since} min ago**")
+
+        if context_parts:
+            fields.append(
+                {
+                    "name": "🧭 Context",
+                    "value": " • ".join(context_parts),
+                    "inline": False,
+                }
+            )
 
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
-            description=description,
+            description="",
             color=0x6A0DAD,  # violet
-            fields=[],  # No fields, all in description
+            fields=fields,
             footer="99 Cent Store • High Conviction Swing Trades",
         )
         return embed
