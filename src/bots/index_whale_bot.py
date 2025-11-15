@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 import pytz
 
@@ -50,6 +50,9 @@ class IndexWhaleBot(BaseAutoBot):
         self.min_dte = Config.INDEX_WHALE_MIN_DTE
         self.max_dte = Config.INDEX_WHALE_MAX_DTE
         self.max_multi_leg_ratio = Config.INDEX_WHALE_MAX_MULTI_LEG_RATIO
+        self.cooldown_intraday_seconds = 900  # 15 minutes for 1-3 DTE reversals
+        self.cooldown_same_day_seconds = 300  # 5 minutes for 0DTE bursts
+        self._flow_stats: Dict[str, Dict[str, Any]] = {}
 
         self.open_hour = Config.INDEX_WHALE_OPEN_HOUR
         self.open_minute = Config.INDEX_WHALE_OPEN_MINUTE
@@ -91,6 +94,23 @@ class IndexWhaleBot(BaseAutoBot):
                 price_change_pct = self._update_price_history(symbol, spot_price, metrics.timestamp)
                 signal = self.whale_tracker.process_trade(metrics, price_change_pct)
 
+                cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
+                stats_snapshot = self._update_flow_stats(
+                    cooldown_key,
+                    metrics=metrics,
+                    spot_price=spot_price,
+                )
+                cooldown_seconds = self._get_cooldown_seconds(metrics)
+
+                if self._cooldown_active(cooldown_key, cooldown_seconds=cooldown_seconds):
+                    hits = stats_snapshot.get("hits", 1)
+                    total_premium = self._format_currency(stats_snapshot.get("total_premium", float(metrics.premium or 0.0)))
+                    self._log_skip(
+                        symbol,
+                        f"cooldown active ({cooldown_seconds // 60}m) - repeat hit x{hits} total {total_premium}",
+                    )
+                    continue
+
                 signals.append(
                     {
                         "metrics": metrics,
@@ -98,6 +118,9 @@ class IndexWhaleBot(BaseAutoBot):
                         "signal": signal,
                         "spot_price": spot_price,
                         "price_change_pct": price_change_pct,
+                        "stats": stats_snapshot,
+                        "cooldown_seconds": cooldown_seconds,
+                        "cooldown_key": cooldown_key,
                     }
                 )
 
@@ -115,17 +138,25 @@ class IndexWhaleBot(BaseAutoBot):
         flow: Dict = payload["flow"]
 
         # Deduplication: Prevent same contract from alerting multiple times in 10 minutes
-        cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
-        
-        if self._cooldown_active(cooldown_key, cooldown_seconds=600):  # 10 minute cooldown
-            logger.debug(f"Index Whale Bot skipping duplicate signal: {cooldown_key}")
-            return False
+        stats: Dict[str, Any] = payload.get("stats") or {}
+        cooldown_seconds: int = payload.get("cooldown_seconds", self.cooldown_intraday_seconds)
+        cooldown_key: str = payload.get("cooldown_key") or f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
 
-        embed = self._build_embed(metrics, signal, spot_price, flow)
+        embed = self._build_embed(
+            metrics,
+            signal,
+            spot_price,
+            flow,
+            stats=stats,
+            cooldown_seconds=cooldown_seconds,
+            price_change_pct=payload.get("price_change_pct"),
+        )
         success = await self.post_to_discord(embed)
         
         if success:
             self._mark_cooldown(cooldown_key)
+            if cooldown_key in self._flow_stats:
+                self._flow_stats[cooldown_key]["last_alerted"] = datetime.utcnow()
             logger.info(
                 "IndexWhale Alert: %s %.2f %s premium $%s [%s]",
                 metrics.underlying,
@@ -282,6 +313,9 @@ class IndexWhaleBot(BaseAutoBot):
         signal: WhaleFlowSignal,
         spot_price: float,
         flow: Dict,
+        stats: Optional[Dict[str, Any]] = None,
+        cooldown_seconds: Optional[int] = None,
+        price_change_pct: Optional[float] = None,
     ) -> Dict:
         expiration_str = metrics.expiration.strftime("%m/%d/%Y")
         
@@ -305,35 +339,140 @@ class IndexWhaleBot(BaseAutoBot):
 
         volume = flow.get("total_volume")
         open_interest = flow.get("open_interest")
-        ask_size = flow.get("ask_size") or flow.get("askSize")
-        bid_size = flow.get("bid_size") or flow.get("bidSize")
+        volume_delta = flow.get("volume_delta")
+        ask_price = flow.get("ask")
+        bid_price = flow.get("bid")
+
+        hits = stats.get("hits", 1) if stats else 1
+        total_premium = stats.get("total_premium", float(metrics.premium or 0.0)) if stats else float(metrics.premium or 0.0)
+        first_seen = stats.get("first_seen") if stats else None
+        last_seen = stats.get("last_seen") if stats else None
+        first_spot = stats.get("first_spot") if stats else None
+        last_alerted = stats.get("last_alerted") if stats else None
+
+        flow_lines = [
+            f"Premium: **{self._format_currency(metrics.premium)}**",
+            f"Size: **{int(volume_delta or metrics.size):,}**",
+            f"Price: **${(metrics.price or 0):.2f}**",
+        ]
+        if hits > 1:
+            flow_lines.append(f"Cumulative: **{self._format_currency(total_premium)} ({hits} hits)**")
+        flow_lines.append(f"Vol/OI: **{voi_ratio:.2f}x**")
+        if ask_price and bid_price:
+            flow_lines.append(f"Spread (Ask/Bid): **${ask_price:.2f} / ${bid_price:.2f}**")
+
+        contract_lines = [
+            f"DTE: **{metrics.dte:.1f}**",
+            f"% OTM: **{metrics.percent_otm * 100:.2f}%**",
+            f"Spot: **${spot_price:.2f}**",
+            f"Score: **{whale_score}/100**",
+        ]
+        if volume is not None:
+            contract_lines.append(f"Day Vol: **{int(volume):,}**")
+        if open_interest is not None:
+            contract_lines.append(f"OI: **{int(open_interest):,}**")
+        if volume_delta is not None:
+            contract_lines.append(f"Volume Δ: **{int(volume_delta):,}**")
+
+        streak_text = f"Streak: **{signal.streak} bursts**" if signal.streak else ""
+        notes = signal.notes or []
+        notes_text = "\n".join(notes) if notes else "Repeated hits alert"
+
+        context_lines: List[str] = []
+        if stats:
+            now = datetime.utcnow()
+            if hits > 1:
+                context_lines.append(f"Hits: **{hits}x**")
+                context_lines.append(f"Cumulative premium: **{self._format_currency(total_premium)}**")
+            if first_seen:
+                minutes_active = max(int((now - first_seen).total_seconds() // 60), 0)
+                context_lines.append(f"Active **{minutes_active} min**")
+            if last_seen:
+                minutes_since = max(int((now - last_seen).total_seconds() // 60), 0)
+                context_lines.append(f"Last hit **{minutes_since} min ago**")
+            if first_spot:
+                try:
+                    spot_change_pct = (spot_price - first_spot) / first_spot * 100
+                    context_lines.append(f"Spot Δ (since first): **{spot_change_pct:+.2f}%**")
+                except ZeroDivisionError:
+                    pass
+            if cooldown_seconds:
+                context_lines.append(f"Cooldown: **{cooldown_seconds // 60} min**")
+
+        if price_change_pct is not None:
+            context_lines.append(f"Spot Δ (5m): **{price_change_pct:+.2f}%**")
 
         fields = [
-            {"name": "💰 Premium", "value": f"${metrics.premium:,.0f}", "inline": True},
-            {"name": "💵 Price", "value": f"${metrics.price:.2f}", "inline": True},
-            {"name": "⚖️ Volume/OI", "value": f"{voi_ratio:.1f}x", "inline": True},
-            {"name": "🚀 % OTM", "value": f"{metrics.percent_otm * 100:.2f}%", "inline": True},
-            {"name": "⏳ DTE", "value": f"{metrics.dte:.1f}", "inline": True},
-            {"name": "📉 Spot", "value": f"${spot_price:.2f}", "inline": True},
-            {"name": "🎯 Score", "value": f"**{whale_score}/100**", "inline": True},
+            {"name": "💥 Flow Snapshot", "value": "\n".join(flow_lines), "inline": True},
+            {"name": "📊 Contract Setup", "value": "\n".join(contract_lines), "inline": True},
         ]
 
-        if volume is not None:
-            fields.append({"name": "🔁 Day Volume", "value": f"{int(volume):,}", "inline": True})
-        if open_interest is not None:
-            fields.append({"name": "📊 Open Interest", "value": f"{int(open_interest):,}", "inline": True})
+        pattern_lines = [f"Pattern: **{signal.label}** ({signal.direction})"]
+        if streak_text:
+            pattern_lines.append(streak_text)
+        pattern_lines.append("")
+        pattern_lines.append(notes_text)
+        fields.append({"name": "🧭 Pattern Context", "value": "\n".join(pattern_lines), "inline": False})
 
-        if flow.get("volume_delta") is not None:
-            fields.append({"name": "🔨 Volume Delta", "value": f"{int(flow['volume_delta']):,}", "inline": True})
+        if context_lines:
+            fields.append({"name": "⌛ Flow Timeline", "value": " • ".join(context_lines), "inline": False})
 
-        notes = "\n".join(signal.notes) if signal.notes else "Repeated hits alert"
-
-        description = f"**{signal.direction}** • {signal.label}"
+        description = ""
         return self.create_signal_embed_with_disclaimer(
             title=f"{label_prefix} {title}",
             description=description,
             color=0x00FF7F if metrics.option_type == "CALL" else 0xFF4500,
-            fields=fields + [{"name": "Pattern Notes", "value": notes, "inline": False}],
+            fields=fields,
             footer="Index Whale Bot | REST Flow",
         )
+
+    def _get_cooldown_seconds(self, metrics: OptionTradeMetrics) -> int:
+        if metrics.dte <= 0.5:
+            return self.cooldown_same_day_seconds
+        return self.cooldown_intraday_seconds
+
+    def _update_flow_stats(
+        self,
+        key: str,
+        metrics: OptionTradeMetrics,
+        spot_price: float,
+    ) -> Dict[str, Any]:
+        now = datetime.utcnow()
+        premium = float(metrics.premium or 0.0)
+        stats = self._flow_stats.get(key)
+
+        def reset() -> Dict[str, Any]:
+            return {
+                "first_seen": now,
+                "last_seen": now,
+                "hits": 1,
+                "total_premium": premium,
+                "first_spot": spot_price,
+                "last_spot": spot_price,
+                "last_alerted": None,
+            }
+
+        if not stats or not stats.get("first_seen") or stats["first_seen"].date() != now.date():
+            stats = reset()
+        else:
+            stats["hits"] += 1
+            stats["total_premium"] += premium
+            stats["last_seen"] = now
+            stats["last_spot"] = spot_price
+
+        self._flow_stats[key] = stats
+        return dict(stats)
+
+    @staticmethod
+    def _format_currency(value: float) -> str:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return "$0"
+
+        if value >= 1_000_000:
+            return f"${value / 1_000_000:.2f}M"
+        if value >= 1_000:
+            return f"${value / 1_000:.0f}K"
+        return f"${value:,.0f}"
 
