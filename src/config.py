@@ -55,6 +55,7 @@ class Config:
     INDEX_WHALE_MIN_DTE = float(os.getenv('INDEX_WHALE_MIN_DTE', '0.0'))  # Allow same-day contracts
     INDEX_WHALE_MAX_DTE = float(os.getenv('INDEX_WHALE_MAX_DTE', '3.0'))  # 3 day maximum for intraday plays
     INDEX_WHALE_MAX_MULTI_LEG_RATIO = float(os.getenv('INDEX_WHALE_MAX_MULTI_LEG_RATIO', '0.15'))  # Allow small multi-leg (complex hedges)
+    INDEX_WHALE_MIN_SCORE = int(os.getenv('INDEX_WHALE_MIN_SCORE', '80'))
     
     # ORAKL Flow Settings
     SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', '5'))

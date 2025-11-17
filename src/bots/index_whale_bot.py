@@ -53,6 +53,7 @@ class IndexWhaleBot(BaseAutoBot):
         self.cooldown_intraday_seconds = 900  # 15 minutes for 1-3 DTE reversals
         self.cooldown_same_day_seconds = 300  # 5 minutes for 0DTE bursts
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
+        self.min_score = Config.INDEX_WHALE_MIN_SCORE
 
         self.open_hour = Config.INDEX_WHALE_OPEN_HOUR
         self.open_minute = Config.INDEX_WHALE_OPEN_MINUTE
@@ -102,6 +103,13 @@ class IndexWhaleBot(BaseAutoBot):
                 )
                 cooldown_seconds = self._get_cooldown_seconds(metrics)
 
+                voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
+                whale_score = self._calculate_whale_score(metrics, signal, voi_ratio)
+
+                if whale_score < self.min_score:
+                    self._log_skip(symbol, f"score {whale_score} < {self.min_score}")
+                    continue
+
                 if self._cooldown_active(cooldown_key, cooldown_seconds=cooldown_seconds):
                     hits = stats_snapshot.get("hits", 1)
                     total_premium = self._format_currency(stats_snapshot.get("total_premium", float(metrics.premium or 0.0)))
@@ -121,6 +129,7 @@ class IndexWhaleBot(BaseAutoBot):
                         "stats": stats_snapshot,
                         "cooldown_seconds": cooldown_seconds,
                         "cooldown_key": cooldown_key,
+                        "score": whale_score,
                     }
                 )
 
@@ -150,6 +159,7 @@ class IndexWhaleBot(BaseAutoBot):
             stats=stats,
             cooldown_seconds=cooldown_seconds,
             price_change_pct=payload.get("price_change_pct"),
+            score=payload.get("score"),
         )
         success = await self.post_to_discord(embed)
         
@@ -316,12 +326,13 @@ class IndexWhaleBot(BaseAutoBot):
         stats: Optional[Dict[str, Any]] = None,
         cooldown_seconds: Optional[int] = None,
         price_change_pct: Optional[float] = None,
+        score: Optional[int] = None,
     ) -> Dict:
         expiration_str = metrics.expiration.strftime("%m/%d/%Y")
         
         # Calculate quality score
         voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
-        whale_score = self._calculate_whale_score(metrics, signal, voi_ratio)
+        whale_score = score if score is not None else self._calculate_whale_score(metrics, signal, voi_ratio)
         
         title = (
             f"{metrics.underlying} {metrics.strike:.1f} "
