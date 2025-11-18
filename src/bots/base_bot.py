@@ -575,7 +575,40 @@ class BaseAutoBot(ABC):
             if not isinstance(embed, dict) or 'title' not in embed:
                 logger.error(f"Invalid embed structure: {embed}")
                 return False
-            
+
+            # Safety check for Index Whale Bot score threshold
+            if self.name == "Index Whale Bot":
+                min_score = getattr(self, "min_score", None)
+                if isinstance(min_score, (int, float)):
+                    embed_fields = embed.get("fields") or []
+                    score_found = False
+                    for field in embed_fields:
+                        value = field.get("value")
+                        if not isinstance(value, str):
+                            continue
+                        if "Score" in value:
+                            score_found = True
+                        if "**" in value and "/100" in value:
+                            try:
+                                score_segment = value.split("**", 1)[1]
+                                score_text = score_segment.split("/100", 1)[0]
+                                score_value = float(score_text.strip())
+                                if score_value < min_score:
+                                    logger.warning(
+                                        "%s blocked low-score embed (%.1f < %.1f)",
+                                        self.name,
+                                        score_value,
+                                        min_score,
+                                    )
+                                    return False
+                            except (IndexError, ValueError):
+                                continue
+                    if not score_found:
+                        logger.debug(
+                            "%s embed lacked score field; allowing post but continuing guard",
+                            self.name,
+                        )
+
             payload = {
                 "embeds": [embed],
                 "username": f"ORAKL {self.name}"
