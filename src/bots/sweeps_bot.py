@@ -28,13 +28,13 @@ class SweepsBot(BaseAutoBot):
         self.analyzer = analyzer
         self.signal_history = {}
         self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 250000)
-        self.MIN_VOLUME = 200
-        self.MIN_VOLUME_DELTA = 75
-        self.MAX_STRIKE_DISTANCE = 7  # percent
+        self.MIN_VOLUME = 150
+        self.MIN_VOLUME_DELTA = 60
+        self.MAX_STRIKE_DISTANCE = 12  # percent
         # Require a high conviction sweep score before alerting
-        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 90)
-        self.MIN_VOLUME_RATIO = 2.5
-        self.MIN_ALIGNMENT_CONFIDENCE = 40
+        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 88)
+        self.MIN_VOLUME_RATIO = 1.5
+        self.MIN_ALIGNMENT_CONFIDENCE = 25
         self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 750000
         self.TOP_SWEEPS_PER_SYMBOL = 1
         self.symbol_cooldown_seconds = 300  # prevent symbol-level floods

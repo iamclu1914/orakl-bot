@@ -24,7 +24,14 @@ class GoldenSweepsBot(SweepsBot):
         self.name = "Golden Sweeps Bot"
         self.scan_interval = Config.GOLDEN_SWEEPS_INTERVAL
         self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
-        self.MIN_SCORE = max(Config.MIN_GOLDEN_SCORE, self.MIN_SCORE)
+        self.MIN_SCORE = max(Config.MIN_GOLDEN_SCORE, 85)
+        # Golden sweeps can sit further from the money but still matter
+        self.MAX_STRIKE_DISTANCE = 25  # percent
+        # Loosen volume ratio so massive prints with limited history still alert
+        self.MIN_VOLUME_RATIO = 1.25
+        self.MIN_ALIGNMENT_CONFIDENCE = 20
+        # Golden prints often carry smaller absolute contract counts; allow smaller day volume
+        self.MIN_VOLUME = max(self.MIN_VOLUME // 2, 150)
 
     @timed()
     async def scan_and_post(self):
