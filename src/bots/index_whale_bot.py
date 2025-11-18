@@ -53,7 +53,7 @@ class IndexWhaleBot(BaseAutoBot):
         self.cooldown_intraday_seconds = 900  # 15 minutes for 1-3 DTE reversals
         self.cooldown_same_day_seconds = 300  # 5 minutes for 0DTE bursts
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
-        self.min_score = Config.INDEX_WHALE_MIN_SCORE
+        self.min_score = max(Config.INDEX_WHALE_MIN_SCORE, 90)
         logger.info("Index Whale Bot minimum score filter set to %d", self.min_score)
 
         self.open_hour = Config.INDEX_WHALE_OPEN_HOUR
