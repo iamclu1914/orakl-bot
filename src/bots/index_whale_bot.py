@@ -151,14 +151,18 @@ class IndexWhaleBot(BaseAutoBot):
         stats: Dict[str, Any] = payload.get("stats") or {}
         cooldown_seconds: int = payload.get("cooldown_seconds", self.cooldown_intraday_seconds)
         cooldown_key: str = payload.get("cooldown_key") or f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
-        score: Optional[int] = payload.get("score")
+        voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
+        score = payload.get("score")
+        try:
+            score_value = int(score) if score is not None else None
+        except (TypeError, ValueError):
+            score_value = None
 
-        if score is None:
-            voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
-            score = self._calculate_whale_score(metrics, signal, voi_ratio)
+        if score_value is None:
+            score_value = self._calculate_whale_score(metrics, signal, voi_ratio)
 
-        if score < self.min_score:
-            self._log_skip(metrics.underlying, f"score {score} < {self.min_score} (post guard)")
+        if score_value < self.min_score:
+            self._log_skip(metrics.underlying, f"score {score_value} < {self.min_score} (post guard)")
             return False
 
         embed = self._build_embed(
@@ -169,7 +173,7 @@ class IndexWhaleBot(BaseAutoBot):
             stats=stats,
             cooldown_seconds=cooldown_seconds,
             price_change_pct=payload.get("price_change_pct"),
-            score=score,
+            score=score_value,
         )
         success = await self.post_to_discord(embed)
         
