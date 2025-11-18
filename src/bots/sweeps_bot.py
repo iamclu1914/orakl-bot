@@ -27,12 +27,17 @@ class SweepsBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 150000)
-        self.MIN_VOLUME = 100
-        self.MIN_VOLUME_DELTA = 50
-        self.MAX_STRIKE_DISTANCE = 10  # percent
+        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 250000)
+        self.MIN_VOLUME = 200
+        self.MIN_VOLUME_DELTA = 75
+        self.MAX_STRIKE_DISTANCE = 7  # percent
         # Require a high conviction sweep score before alerting
-        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 81)
+        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 90)
+        self.MIN_VOLUME_RATIO = 2.5
+        self.MIN_ALIGNMENT_CONFIDENCE = 40
+        self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 750000
+        self.TOP_SWEEPS_PER_SYMBOL = 1
+        self.symbol_cooldown_seconds = 300  # prevent symbol-level floods
 
         # Enhanced analysis tools
         self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
@@ -73,33 +78,76 @@ class SweepsBot(BaseAutoBot):
                     )
                     sweep['volume_ratio'] = volume_ratio
 
+                    if volume_ratio < self.MIN_VOLUME_RATIO:
+                        self._log_skip(
+                            symbol,
+                            f"volume ratio {volume_ratio:.2f}x < {self.MIN_VOLUME_RATIO:.2f}x",
+                        )
+                        continue
+
+                    # Price action alignment check
+                    alignment = await self.enhanced_analyzer.check_price_action_alignment(
+                        symbol, sweep['type']
+                    )
+                    price_aligned = False
+                    alignment_confidence = 0
+                    momentum_strength = 0.0
+                    if alignment:
+                        alignment_confidence = alignment.get("confidence", 0)
+                        momentum_strength = alignment.get("strength", 0.0)
+                        price_aligned = alignment.get("aligned", False) and alignment_confidence >= self.MIN_ALIGNMENT_CONFIDENCE
+                        sweep["alignment_details"] = alignment
+
+                    sweep["price_aligned"] = price_aligned
+                    sweep["alignment_confidence"] = alignment_confidence
+                    sweep["momentum_strength"] = momentum_strength
+
+                    if not price_aligned and sweep["premium"] < self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM:
+                        self._log_skip(symbol, "price action misaligned (<confidence threshold)")
+                        continue
+
                     # Boost score for unusual volume
                     volume_boost = 0
-                    if volume_ratio >= 5.0:
+                    if volume_ratio >= 6.0:
                         volume_boost = 25
+                    elif volume_ratio >= 4.0:
+                        volume_boost = 18
                     elif volume_ratio >= 3.0:
-                        volume_boost = 15
-                    elif volume_ratio >= 2.0:
-                        volume_boost = 10
+                        volume_boost = 12
+                    elif volume_ratio >= 2.5:
+                        volume_boost = 8
 
-                    # Apply boost to base score
-                    sweep['sweep_score'] = min(
-                        sweep.get('sweep_score', 50) + volume_boost,
-                        100
+                    alignment_boost = 6 if price_aligned else -5
+
+                    sweep["enhanced_score"] = max(
+                        0,
+                        min(
+                            sweep.get("sweep_score", 50) + volume_boost + alignment_boost,
+                            100,
+                        ),
                     )
 
                     # Filter by minimum score
-                    if sweep['sweep_score'] >= self.MIN_SCORE:
+                    if sweep["enhanced_score"] >= self.MIN_SCORE:
                         enhanced_sweeps.append(sweep)
+                    else:
+                        self._log_skip(
+                            symbol,
+                            f"sweep score {sweep.get('enhanced_score', sweep.get('sweep_score'))} < {self.MIN_SCORE}",
+                        )
 
                 except Exception as e:
                     logger.debug(f"Error enhancing sweep: {e}")
                     # Include unenhanced sweep if it meets threshold
-                    if sweep.get('sweep_score', 0) >= self.MIN_SCORE:
+                    if sweep.get("enhanced_score", sweep.get("sweep_score", 0)) >= self.MIN_SCORE:
                         enhanced_sweeps.append(sweep)
 
-            # Return top 3 signals per symbol sorted by score
-            return sorted(enhanced_sweeps, key=lambda x: x.get('sweep_score', 0), reverse=True)[:3]
+            # Return top signals per symbol sorted by enhanced score
+            return sorted(
+                enhanced_sweeps,
+                key=lambda x: x.get("enhanced_score", x.get("sweep_score", 0)),
+                reverse=True,
+            )[: self.TOP_SWEEPS_PER_SYMBOL]
 
         except Exception as e:
             logger.error(f"Error scanning {symbol} for sweeps: {e}")
@@ -141,10 +189,15 @@ class SweepsBot(BaseAutoBot):
                     continue
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
+                open_interest = flow.get('open_interest')
 
                 # Filter: Minimum volume threshold
                 if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
                     self._log_skip(symbol, f"sweep volume too small ({total_volume} total / {volume_delta} delta)")
+                    continue
+
+                if open_interest is not None and total_volume <= open_interest:
+                    self._log_skip(symbol, f"sweep volume {total_volume} <= open interest {open_interest}")
                     continue
 
                 # Calculate DTE
@@ -270,9 +323,15 @@ class SweepsBot(BaseAutoBot):
 
         final_score = sweep.get('enhanced_score', sweep['sweep_score'])
 
-        # Only notify when sweep score is 90+
-        if int(final_score) < 90:
-            logger.debug(f"{self.name} - Skipping alert: score {int(final_score)} < 90")
+        # Only notify when sweep score meets tightened threshold
+        if int(final_score) < self.MIN_SCORE:
+            logger.debug(f"{self.name} - Skipping alert: score {int(final_score)} < {self.MIN_SCORE}")
+            return False
+
+        # Symbol-level cooldown to prevent firehose
+        symbol_cooldown_key = f"{sweep['symbol']}_{sweep['type']}_symbol"
+        if self._cooldown_active(symbol_cooldown_key, cooldown_seconds=self.symbol_cooldown_seconds):
+            self._log_skip(sweep['symbol'], f"symbol cooldown active ({self.symbol_cooldown_seconds // 60}m)")
             return False
 
         # Build confidence string
@@ -307,12 +366,16 @@ class SweepsBot(BaseAutoBot):
         ]
 
         # Add enhanced analysis fields
-        if volume_ratio >= 2.0:
-            fields.append({"name": "📊 Volume Analysis", "value": f"**{volume_ratio:.1f}x** above 30-day average (UNUSUAL)", "inline": False})
+        if volume_ratio >= self.MIN_VOLUME_RATIO:
+            fields.append({"name": "📊 Volume Analysis", "value": f"**{volume_ratio:.1f}x** above 30-day average (unusual)", "inline": False})
 
         if price_aligned:
             momentum_str = sweep.get('momentum_strength', 0)
-            fields.append({"name": "✅ Price Action Confirmed", "value": f"Options flow aligned with stock movement ({momentum_str:+.2f}%)", "inline": False})
+            alignment_conf = sweep.get('alignment_confidence', 0)
+            fields.append({"name": "✅ Price Action Confirmed", "value": f"Momentum: {momentum_str:+.2f}% | Confidence {alignment_conf}/100", "inline": False})
+        else:
+            if sweep.get('alignment_confidence') is not None:
+                fields.append({"name": "⚠️ Divergence", "value": "Price action not aligned (allowed due to premium size)", "inline": False})
 
         # Add implied move analysis
         if 'needed_move' in sweep:
@@ -334,5 +397,6 @@ class SweepsBot(BaseAutoBot):
         success = await self.post_to_discord(embed)
         if success:
             logger.info(f"🚨 SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${sweep['premium']:,.0f} Score:{int(final_score)}")
+            self._mark_cooldown(symbol_cooldown_key)
 
         return success
