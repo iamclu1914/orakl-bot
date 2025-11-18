@@ -75,7 +75,7 @@ class Config:
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '1000000'))  # $1M+ block trades
     BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2500'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
-    BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '5.0'))
+    BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '21.0'))
     BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '400'))
     BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '400'))
     BULLSEYE_MIN_VOI_RATIO = float(os.getenv('BULLSEYE_MIN_VOI_RATIO', '1.0'))  # Fresh positioning
