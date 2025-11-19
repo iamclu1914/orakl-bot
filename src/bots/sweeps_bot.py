@@ -27,15 +27,15 @@ class SweepsBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 250000)
+        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 150000)
         self.MIN_VOLUME = 150
         self.MIN_VOLUME_DELTA = 60
         self.MAX_STRIKE_DISTANCE = 12  # percent
         # Require a high conviction sweep score before alerting
-        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 88)
-        self.MIN_VOLUME_RATIO = 1.5
-        self.MIN_ALIGNMENT_CONFIDENCE = 25
-        self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 750000
+        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
+        self.MIN_VOLUME_RATIO = max(Config.SWEEPS_MIN_VOLUME_RATIO, 1.1)
+        self.MIN_ALIGNMENT_CONFIDENCE = max(Config.SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 20)
+        self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 500000
         self.TOP_SWEEPS_PER_SYMBOL = 1
         self.symbol_cooldown_seconds = 300  # prevent symbol-level floods
 
@@ -72,52 +72,82 @@ class SweepsBot(BaseAutoBot):
             enhanced_sweeps = []
             for sweep in sweeps:
                 try:
-                    # Volume Ratio Analysis
-                    volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
-                        symbol, sweep['volume']
-                    )
-                    sweep['volume_ratio'] = volume_ratio
+                    # Volume Ratio Analysis (prefer option metrics, fallback to neutral)
+                    volume_ratio_source = "vol_oi_delta"
+                    ratio_data_available = False
+                    raw_ratio = sweep.get("vol_oi_ratio") or 0.0
+                    if raw_ratio and raw_ratio > 0:
+                        ratio_data_available = True
+                        volume_ratio = float(raw_ratio)
+                    else:
+                        open_interest = sweep.get("open_interest")
+                        if open_interest and open_interest > 0:
+                            volume_ratio = sweep["volume"] / open_interest
+                            ratio_data_available = True
+                            volume_ratio_source = "volume_over_oi"
+                        else:
+                            volume_ratio = await self.enhanced_analyzer.calculate_volume_ratio(
+                                symbol, sweep["volume"]
+                            )
+                            volume_ratio_source = "fallback"
+                            if not volume_ratio or volume_ratio <= 0:
+                                volume_ratio = 1.0
 
-                    if volume_ratio < self.MIN_VOLUME_RATIO:
+                    sweep["volume_ratio"] = round(float(volume_ratio), 2)
+                    sweep["volume_ratio_source"] = volume_ratio_source
+                    sweep["volume_ratio_data_available"] = ratio_data_available
+
+                    if ratio_data_available and sweep["volume_ratio"] < self.MIN_VOLUME_RATIO:
                         self._log_skip(
                             symbol,
-                            f"volume ratio {volume_ratio:.2f}x < {self.MIN_VOLUME_RATIO:.2f}x",
+                            f"volume ratio {sweep['volume_ratio']:.2f}x < {self.MIN_VOLUME_RATIO:.2f}x",
                         )
                         continue
 
-                    # Price action alignment check
+                    # Price action alignment check (fallback to neutral if data unavailable)
                     alignment = await self.enhanced_analyzer.check_price_action_alignment(
-                        symbol, sweep['type']
+                        symbol, sweep["type"]
                     )
-                    price_aligned = False
+                    alignment_data_available = alignment is not None
+                    price_aligned = True
                     alignment_confidence = 0
                     momentum_strength = 0.0
-                    if alignment:
+                    if alignment_data_available:
                         alignment_confidence = alignment.get("confidence", 0)
                         momentum_strength = alignment.get("strength", 0.0)
                         price_aligned = alignment.get("aligned", False) and alignment_confidence >= self.MIN_ALIGNMENT_CONFIDENCE
                         sweep["alignment_details"] = alignment
+                    else:
+                        sweep["alignment_details"] = {"aligned": None, "reason": "insufficient intraday data"}
 
                     sweep["price_aligned"] = price_aligned
                     sweep["alignment_confidence"] = alignment_confidence
                     sweep["momentum_strength"] = momentum_strength
+                    sweep["alignment_data_available"] = alignment_data_available
 
-                    if not price_aligned and sweep["premium"] < self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM:
+                    if alignment_data_available and not price_aligned and sweep["premium"] < self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM:
                         self._log_skip(symbol, "price action misaligned (<confidence threshold)")
                         continue
 
                     # Boost score for unusual volume
                     volume_boost = 0
-                    if volume_ratio >= 6.0:
-                        volume_boost = 25
-                    elif volume_ratio >= 4.0:
-                        volume_boost = 18
-                    elif volume_ratio >= 3.0:
-                        volume_boost = 12
-                    elif volume_ratio >= 2.5:
-                        volume_boost = 8
+                    volume_ratio = sweep["volume_ratio"]
+                    if ratio_data_available:
+                        if volume_ratio >= 3.0:
+                            volume_boost = 18
+                        elif volume_ratio >= 2.0:
+                            volume_boost = 12
+                        elif volume_ratio >= 1.5:
+                            volume_boost = 6
+                        elif volume_ratio >= 1.2:
+                            volume_boost = 3
 
-                    alignment_boost = 6 if price_aligned else -5
+                    if not alignment_data_available:
+                        alignment_boost = 0
+                    elif price_aligned:
+                        alignment_boost = 6
+                    else:
+                        alignment_boost = -6
 
                     sweep["enhanced_score"] = max(
                         0,
@@ -336,12 +366,18 @@ class SweepsBot(BaseAutoBot):
 
         # Build confidence string
         volume_ratio = sweep.get('volume_ratio', 0)
+        ratio_data_available = sweep.get('volume_ratio_data_available', False)
         price_aligned = sweep.get('price_aligned', False)
+        alignment_data_available = sweep.get('alignment_data_available', False)
         confidence_parts = []
-        if volume_ratio >= 3.0:
+        if ratio_data_available and volume_ratio >= self.MIN_VOLUME_RATIO:
             confidence_parts.append(f"{volume_ratio:.1f}x Vol")
-        if price_aligned:
+        if price_aligned and alignment_data_available:
             confidence_parts.append("Price Aligned")
+        elif not alignment_data_available:
+            confidence_parts.append("Alignment Pending")
+        elif not price_aligned:
+            confidence_parts.append("Premium Override")
         confidence = " | ".join(confidence_parts)
 
         alert_type = sweep.get('alert_type', 'NEW')
@@ -366,16 +402,21 @@ class SweepsBot(BaseAutoBot):
         ]
 
         # Add enhanced analysis fields
-        if volume_ratio >= self.MIN_VOLUME_RATIO:
+        if ratio_data_available and volume_ratio >= self.MIN_VOLUME_RATIO:
             fields.append({"name": "📊 Volume Analysis", "value": f"**{volume_ratio:.1f}x** above 30-day average (unusual)", "inline": False})
 
-        if price_aligned:
+        if not ratio_data_available:
+            fields.append({"name": "ℹ️ Volume Context", "value": "No reliable OI baseline available; volume treated as neutral.", "inline": False})
+
+        if price_aligned and alignment_data_available:
             momentum_str = sweep.get('momentum_strength', 0)
             alignment_conf = sweep.get('alignment_confidence', 0)
             fields.append({"name": "✅ Price Action Confirmed", "value": f"Momentum: {momentum_str:+.2f}% | Confidence {alignment_conf}/100", "inline": False})
+        elif not alignment_data_available:
+            fields.append({"name": "ℹ️ Alignment", "value": "Intraday price alignment data unavailable; allowed on premium/volume strength.", "inline": False})
         else:
             if sweep.get('alignment_confidence') is not None:
-                fields.append({"name": "⚠️ Divergence", "value": "Price action not aligned (allowed due to premium size)", "inline": False})
+                fields.append({"name": "⚠️ Divergence", "value": f"Price action not aligned (allowed due to premium size ≥ ${self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM:,.0f})", "inline": False})
 
         # Add implied move analysis
         if 'needed_move' in sweep:
