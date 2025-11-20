@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from .base_bot import BaseAutoBot
@@ -12,6 +12,7 @@ from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import OptionTradeMetrics, build_metrics_from_flow
 from src.utils.market_hours import MarketHours
+from src.utils.enhanced_analysis import EnhancedAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ class BullseyeBot(BaseAutoBot):
         super().__init__(webhook_url, "Bullseye Bot", scan_interval=Config.BULLSEYE_INTERVAL)
         self.watchlist = watchlist
         self.fetcher = fetcher
+        
+        # Enhanced analysis
+        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
         
         # Thresholds tuned for hidden institutional blocks
         self.min_premium = Config.BULLSEYE_MIN_PREMIUM
@@ -172,6 +176,60 @@ class BullseyeBot(BaseAutoBot):
             if int(flow.get("open_interest") or 0) < Config.BULLSEYE_MIN_OPEN_INTEREST:
                 self._log_skip(symbol, f"OI {flow.get('open_interest', 0)} < {Config.BULLSEYE_MIN_OPEN_INTEREST}")
                 continue
+
+            # 10-minute Candle Verification
+            # Ensure the option contract itself traded > $100k in the last 10 minutes
+            # and shows aggressive buying pressure (green candle)
+            try:
+                bars_10m = await self.fetcher.get_aggregates(
+                    flow['ticker'],
+                    timespan='minute',
+                    multiplier=10,
+                    limit=1
+                )
+                
+                if not bars_10m.empty:
+                    last_bar = bars_10m.iloc[-1]
+                    # Calculate total premium for this 10m candle
+                    candle_premium = last_bar['volume'] * last_bar['close'] * 100
+                    
+                    if candle_premium < 100_000:
+                        self._log_skip(symbol, f"10m option candle premium ${candle_premium:,.0f} < $100k")
+                        continue
+
+                    # Check if candle direction matches option type (buyer dominance proxy)
+                    # For Calls: We want the option price to be RISING (Green Candle) = aggressive buying
+                    # For Puts: We ALSO want the option price to be RISING (Green Candle) = aggressive buying
+                    # The user clarified "both calls and puts" for 10 min candle, meaning 
+                    # regardless of type, the OPTION CONTRACT itself must be seeing aggressive buying (Green Candle).
+                    
+                    if last_bar['close'] < last_bar['open']:
+                        self._log_skip(symbol, "10m option candle is red (selling pressure on contract)")
+                        continue
+            except Exception as e:
+                logger.debug(f"{self.name} failed to verify 10m candle for {flow['ticker']}: {e}")
+
+            # Trend Alignment Check
+            try:
+                alignment = await self.enhanced_analyzer.check_price_action_alignment(symbol, metrics.option_type)
+                if alignment:
+                    # Momentum Check:
+                    # If CALL, want positive momentum. If PUT, want negative.
+                    # momentum_5m and momentum_15m are percentages (e.g., 0.5 for 0.5%)
+                    
+                    m5 = alignment.get('momentum_5m', 0)
+                    m15 = alignment.get('momentum_15m', 0)
+                    
+                    if metrics.option_type == 'CALL':
+                        if m5 < 0 and m15 < 0:
+                            self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
+                            continue
+                    elif metrics.option_type == 'PUT':
+                        if m5 > 0 and m15 > 0:
+                            self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
+                            continue
+            except Exception as e:
+                logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
 
             cooldown_key = self._build_cooldown_key(metrics)
             if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
