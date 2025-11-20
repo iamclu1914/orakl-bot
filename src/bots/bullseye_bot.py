@@ -30,8 +30,7 @@ class BullseyeBot(BaseAutoBot):
         super().__init__(webhook_url, "Bullseye Bot", scan_interval=Config.BULLSEYE_INTERVAL)
         self.watchlist = watchlist
         self.fetcher = fetcher
-        self.signal_history: Dict[str, datetime] = {}
-
+        
         # Thresholds tuned for hidden institutional blocks
         self.min_premium = Config.BULLSEYE_MIN_PREMIUM
         self.min_volume = Config.BULLSEYE_MIN_VOLUME
@@ -273,7 +272,6 @@ class BullseyeBot(BaseAutoBot):
         if success:
             cooldown_key = payload["cooldown_key"]
             self._mark_cooldown(cooldown_key)
-            self.signal_history[cooldown_key] = datetime.utcnow()
             logger.info(
                 "%s alert: %s %s %s premium $%s score %d",
                 self.name,

@@ -433,6 +433,9 @@ class BaseAutoBot(ABC):
                 backoff_time = min(30 * (1.5 ** self._consecutive_errors), 300)
                 logger.warning(f"{self.name} backing off for {int(backoff_time)}s after error")
                 await asyncio.sleep(backoff_time)
+            
+            # Periodic cleanup (approx every scan)
+            self._cleanup_cooldowns()
     
     async def _perform_scan(self):
         """Perform a single scan with generous timeout"""
@@ -762,6 +765,22 @@ class BaseAutoBot(ABC):
         if last_seen and (now - last_seen).total_seconds() < cooldown_seconds:
             return True
         return False
+
+    def _cleanup_cooldowns(self, max_age_hours: int = 24) -> None:
+        """Remove old cooldown entries to prevent memory leaks."""
+        try:
+            cutoff = datetime.now() - timedelta(hours=max_age_hours)
+            # Create list of keys to remove to avoid runtime error during iteration
+            to_remove = [k for k, v in self._cooldowns.items() if v < cutoff]
+            
+            for k in to_remove:
+                del self._cooldowns[k]
+                
+            if to_remove and len(to_remove) > 100:
+                logger.debug(f"{self.name} cleaned up {len(to_remove)} old cooldown entries")
+                
+        except Exception as e:
+            logger.error(f"{self.name} error cleaning cooldowns: {e}")
 
     def _mark_cooldown(self, key: str) -> None:
         """Mark a signal as posted for cooldown tracking"""
