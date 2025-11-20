@@ -31,7 +31,7 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_VOLUME_RATIO = max(Config.GOLDEN_SWEEPS_MIN_VOLUME_RATIO, 1.1)
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 15)
         # Golden prints often carry smaller absolute contract counts; allow smaller day volume
-        self.MIN_VOLUME = max(self.MIN_VOLUME // 2, 150)
+        self.MIN_VOLUME = max(self.MIN_VOLUME // 2, 50)
         self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 3_000_000
 
     @timed()

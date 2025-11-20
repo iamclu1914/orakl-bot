@@ -236,8 +236,9 @@ class SweepsBot(BaseAutoBot):
                     continue
 
                 if open_interest is not None and total_volume <= open_interest:
-                    self._log_skip(symbol, f"sweep volume {total_volume} <= open interest {open_interest}")
-                    continue
+                    # Relaxed filter: Don't skip just because Vol < OI. 
+                    # Sweeps are about aggressive execution, not just OI accumulation.
+                    pass
 
                 # Calculate DTE
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')

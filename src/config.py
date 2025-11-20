@@ -77,7 +77,7 @@ class Config:
     
     # Bullseye Bot Thresholds (institutional swing trades 1-5 DTE)
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '1000000'))  # $1M+ block trades
-    BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2500'))  # Day volume floor for liquidity
+    BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2000'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
     BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '21.0'))
     BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '400'))

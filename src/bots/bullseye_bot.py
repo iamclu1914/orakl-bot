@@ -37,7 +37,7 @@ class BullseyeBot(BaseAutoBot):
         
         # Thresholds tuned for hidden institutional blocks
         self.min_premium = Config.BULLSEYE_MIN_PREMIUM
-        self.min_volume = Config.BULLSEYE_MIN_VOLUME
+        self.min_volume = min(Config.BULLSEYE_MIN_VOLUME, 2500)
         self.min_volume_delta = Config.BULLSEYE_MIN_VOLUME_DELTA
         self.min_block_contracts = Config.BULLSEYE_MIN_BLOCK_CONTRACTS
         self.min_voi_ratio = Config.BULLSEYE_MIN_VOI_RATIO
@@ -106,20 +106,20 @@ class BullseyeBot(BaseAutoBot):
             )
         except Exception as exc:
             logger.error("%s failed to load flow for %s: %s", self.name, symbol, exc)
-                return signals
+            return signals
 
-            for flow in flows:
+        for flow in flows:
             metrics = build_metrics_from_flow(flow)
             if not metrics:
                 continue
 
             if not metrics.is_single_leg:
                 self._log_skip(symbol, "multi-leg structure (spread)")
-                    continue
+                continue
 
             if not metrics.is_ask_side:
                 self._log_skip(symbol, "not ask-side (no aggressive buyer)")
-                    continue
+                continue
 
             contract_price = metrics.price or 0.0
             if contract_price <= 0:
@@ -128,54 +128,54 @@ class BullseyeBot(BaseAutoBot):
 
             if contract_price < self.min_price:
                 self._log_skip(symbol, f"price ${contract_price:.2f} < ${self.min_price:.2f}")
-                    continue
+                continue
 
             dte = metrics.dte
             if dte < self.min_dte or dte > self.max_dte:
                 self._log_skip(symbol, f"DTE {dte:.2f} outside {self.min_dte}-{self.max_dte}")
-                    continue
+                continue
 
             percent_otm = abs(metrics.percent_otm)
             if percent_otm > self.max_percent_otm:
                 self._log_skip(symbol, f"%OTM {percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
-                    continue
+                continue
 
             volume_delta = int(flow.get("volume_delta") or 0)
             total_volume = int(flow.get("total_volume") or 0)
 
             if volume_delta < self.min_block_contracts:
                 self._log_skip(symbol, f"block size {volume_delta} < {self.min_block_contracts}")
-                        continue
+                continue
 
             if total_volume < self.min_volume:
                 self._log_skip(symbol, f"day volume {total_volume} < {self.min_volume}")
-                    continue
+                continue
 
             premium = float(metrics.premium or 0.0)
             if premium < self.min_premium:
                 self._log_skip(symbol, f"premium ${premium:,.0f} < ${self.min_premium:,.0f}")
-                    continue
+                continue
 
             voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
             if voi_ratio < self.min_voi_ratio:
                 self._log_skip(symbol, f"VOI {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
-                    continue
+                continue
 
             flow_intensity = (flow.get("flow_intensity") or "NORMAL").upper()
             if self.required_intensity and flow_intensity not in self.required_intensity:
                 self._log_skip(symbol, f"intensity {flow_intensity} below STRONG")
-                    continue
+                continue
 
             bid = float(flow.get("bid") or 0.0)
             ask = float(flow.get("ask") or 0.0)
             spread_pct = self._calculate_spread_pct(bid, ask)
             if spread_pct is not None and spread_pct > self.max_spread_pct:
                 self._log_skip(symbol, f"spread {spread_pct:.2f}% > {self.max_spread_pct:.2f}%")
-                    continue
+                continue
 
             if int(flow.get("open_interest") or 0) < Config.BULLSEYE_MIN_OPEN_INTEREST:
                 self._log_skip(symbol, f"OI {flow.get('open_interest', 0)} < {Config.BULLSEYE_MIN_OPEN_INTEREST}")
-                    continue
+                continue
                 
             # 10-minute Candle Verification
             # Ensure the option contract itself traded > $100k in the last 10 minutes
@@ -240,7 +240,7 @@ class BullseyeBot(BaseAutoBot):
                         if m5 > 0 and m15 > 0:
                             self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
                             continue
-        except Exception as e:
+            except Exception as e:
                 logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
 
             cooldown_key = self._build_cooldown_key(metrics)
@@ -304,7 +304,7 @@ class BullseyeBot(BaseAutoBot):
             score += 12
         elif voi_ratio >= 1.5:
             score += 8
-            else:
+        else:
             score += 5
 
         score += {
