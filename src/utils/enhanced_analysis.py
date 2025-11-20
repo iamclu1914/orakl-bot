@@ -16,6 +16,7 @@ class EnhancedAnalyzer:
     def __init__(self, fetcher):
         self.fetcher = fetcher
         self.volume_cache = {}  # Cache 30-day averages
+        self.price_action_cache = {}  # Cache intraday price data for alignment checks
 
     async def calculate_volume_ratio(self, symbol: str, current_volume: int) -> float:
         """
@@ -55,58 +56,78 @@ class EnhancedAnalyzer:
 
     async def check_price_action_alignment(self, symbol: str, opt_type: str) -> Optional[Dict]:
         """
-        Verify options flow matches stock price movement across multiple timeframes
-
+        Verify options flow matches stock price movement across multiple timeframes.
+        Uses caching to prevent redundant API calls for the same symbol in short succession.
+        
         Returns:
             Dict with alignment info or None if data unavailable
         """
         try:
             now = datetime.now()
-            # Polygon API requires YYYY-MM-DD format only
-            from_date = (now - timedelta(hours=2)).strftime('%Y-%m-%d')
-            to_date = now.strftime('%Y-%m-%d')
+            cache_key = f"{symbol}_pa_{now.strftime('%Y%m%d%H%M')}" # Cache per minute
+            
+            if cache_key in self.price_action_cache:
+                data = self.price_action_cache[cache_key]
+            else:
+                # Clear old cache entries randomly (simple cleanup)
+                if len(self.price_action_cache) > 500:
+                    self.price_action_cache = {}
+                    
+                # Fetch 1-minute bars for the last hour (covers both 5m and 15m needs)
+                from_date = now.strftime('%Y-%m-%d') # Intraday
+                to_date = from_date
+                
+                # We need at least 60 minutes of data to calculate 5m and 15m momentum reliably
+                # Polygon's range is inclusive
+                bars_1m = await self.fetcher.get_aggregates(
+                    symbol,
+                    timespan='minute',
+                    multiplier=1,
+                    from_date=from_date,
+                    to_date=to_date
+                )
+                
+                if bars_1m.empty or len(bars_1m) < 15:
+                    return None
+                
+                # Resample for 5m and 15m analysis
+                # We just need the last few closes and volume
+                # Use simple sampling for efficiency since we just want momentum direction
+                
+                # 5-minute momentum (approx last 5 bars vs 5 bars ago)
+                last_price = bars_1m.iloc[-1]['close']
+                price_5m_ago = bars_1m.iloc[-min(6, len(bars_1m))]['open']
+                momentum_5m = ((last_price - price_5m_ago) / price_5m_ago) * 100
+                
+                # 15-minute momentum
+                price_15m_ago = bars_1m.iloc[-min(16, len(bars_1m))]['open']
+                momentum_15m = ((last_price - price_15m_ago) / price_15m_ago) * 100
+                
+                # Volume analysis (avg of last 30 1m bars)
+                recent_bars = bars_1m.tail(30)
+                avg_vol_1m = recent_bars['volume'].mean()
+                current_vol_1m = bars_1m.iloc[-1]['volume']
+                volume_ratio = current_vol_1m / avg_vol_1m if avg_vol_1m > 0 else 1.0
+                
+                data = {
+                    'momentum_5m': momentum_5m,
+                    'momentum_15m': momentum_15m,
+                    'volume_ratio': volume_ratio
+                }
+                self.price_action_cache[cache_key] = data
 
-            # Get 5-minute bars (last 30 minutes = 6 bars)
-            bars_5m = await self.fetcher.get_aggregates(
-                symbol,
-                timespan='minute',
-                multiplier=5,
-                from_date=from_date,
-                to_date=to_date
-            )
-
-            # Get 15-minute bars (last 1 hour = 4 bars)
-            bars_15m = await self.fetcher.get_aggregates(
-                symbol,
-                timespan='minute',
-                multiplier=15,
-                from_date=from_date,
-                to_date=to_date
-            )
-
-            if bars_5m.empty or bars_15m.empty:
-                return None
-
-            # Calculate momentum across timeframes
-            momentum_5m = ((bars_5m.iloc[-1]['close'] - bars_5m.iloc[0]['close']) /
-                           bars_5m.iloc[0]['close']) * 100
-
-            momentum_15m = ((bars_15m.iloc[-1]['close'] - bars_15m.iloc[0]['close']) /
-                            bars_15m.iloc[0]['close']) * 100
-
-            # Volume confirmation
-            avg_volume_5m = bars_5m['volume'].mean()
-            current_volume = bars_5m.iloc[-1]['volume']
-            volume_ratio = current_volume / avg_volume_5m if avg_volume_5m > 0 else 1.0
+            momentum_5m = data['momentum_5m']
+            momentum_15m = data['momentum_15m']
+            volume_ratio = data['volume_ratio']
 
             # Check alignment
             if opt_type == 'CALL':
-                aligned_5m = momentum_5m > 0
-                aligned_15m = momentum_15m > 0
+                aligned_5m = momentum_5m > -0.05 # Allow slight noise
+                aligned_15m = momentum_15m > -0.05
                 strength = (momentum_5m + momentum_15m) / 2
             else:  # PUT
-                aligned_5m = momentum_5m < 0
-                aligned_15m = momentum_15m < 0
+                aligned_5m = momentum_5m < 0.05
+                aligned_15m = momentum_15m < 0.05
                 strength = abs((momentum_5m + momentum_15m) / 2)
 
             aligned = aligned_5m and aligned_15m

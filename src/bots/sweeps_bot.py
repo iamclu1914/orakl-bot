@@ -51,10 +51,15 @@ class SweepsBot(BaseAutoBot):
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
         if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
+            # Cleanup old signals during downtime
+            self.deduplicator.cleanup_old_signals()
             return
         
         # Use base class concurrent implementation
         await super().scan_and_post()
+        
+        # Periodic cleanup (every scan)
+        self.deduplicator.cleanup_old_signals()
     
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         """

@@ -456,10 +456,34 @@ class DataFetcher:
             params['expiration_date.lte'] = expiration_date_lte
             
         endpoint = "/v3/reference/options/contracts"
-        data = await self._make_request(endpoint, params)
         
-        if data and 'results' in data:
-            df = pd.DataFrame(data['results'])
+        all_contracts = []
+        while True:
+            data = await self._make_request(endpoint, params)
+            
+            if not data:
+                break
+                
+            if 'results' in data:
+                all_contracts.extend(data['results'])
+            
+            # Handle pagination
+            next_url = data.get('next_url')
+            if not next_url:
+                break
+                
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(next_url)
+            qs = parse_qs(parsed.query)
+            cursor = qs.get('cursor', [None])[0]
+            
+            if not cursor:
+                break
+                
+            params['cursor'] = cursor
+        
+        if all_contracts:
+            df = pd.DataFrame(all_contracts)
             return df
         return pd.DataFrame()
         
@@ -774,14 +798,49 @@ class DataFetcher:
                 # Filter by contract type if specified
                 params['contract_type'] = contract_type.lower()
 
-            data = await self._make_request(endpoint, params)
-
-            if data and 'results' in data and len(data['results']) > 0:
+            all_results = []
+            while True:
+                data = await self._make_request(endpoint, params)
+                
+                if not data:
+                    break
+                    
+                if 'results' in data:
+                    all_results.extend(data['results'])
+                    
+                # Check for next page
+                next_url = data.get('next_url')
+                if not next_url:
+                    break
+                    
+                # Update endpoint/params for next page
+                # Polygon next_url is a full URL, need to extract path or use directly if supported
+                # Our _make_request expects endpoint + params. 
+                # Simpler to just extract the cursor from next_url if possible, 
+                # but next_url usually contains the full query.
+                # Let's handle the full URL case in _make_request or adapt here.
+                # Since _make_request builds the URL, we can pass the cursor if present.
+                
+                # Parse cursor from next_url
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(next_url)
+                qs = parse_qs(parsed.query)
+                cursor = qs.get('cursor', [None])[0]
+                
+                if not cursor:
+                    break
+                    
+                params['cursor'] = cursor
+                # Remove other params that are encoded in cursor/next_url logic usually, 
+                # but keeping them is safer unless API complains. 
+                # Polygon documentation says cursor is sufficient for next page.
+                
+            if len(all_results) > 0:
                 logger.debug(
                     f"Retrieved option chain snapshot for {underlying}: "
-                    f"{len(data['results'])} contracts"
+                    f"{len(all_results)} contracts"
                 )
-                return data['results']
+                return all_results
 
             logger.debug(f"No option contracts found for {underlying}")
             return []
@@ -1245,6 +1304,7 @@ class DataFetcher:
             # If error, assume market is open during business hours as fallback
             return True
         
+    @cached(cache_name='market', ttl_seconds=60)
     async def get_aggregates(self, symbol: str, timespan: str = 'minute', 
                            multiplier: int = 5, from_date: str = None, to_date: str = None) -> pd.DataFrame:
         """Get aggregate bars for analysis"""
