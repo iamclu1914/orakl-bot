@@ -363,86 +363,48 @@ class SweepsBot(BaseAutoBot):
             logger.debug(f"{self.name} - Skipping alert: score {int(final_score)} < {self.MIN_SCORE}")
             return False
 
-        # Symbol-level cooldown to prevent firehose
-        symbol_cooldown_key = f"{sweep['symbol']}_{sweep['type']}_symbol"
+        # Symbol-level cooldown to prevent firehose (Strike-Specific)
+        # Key: SYMBOL_STRIKE_TYPE_EXPIRATION (e.g., AAPL_270.0_CALL_20251128)
+        strike_part = f"{float(sweep['strike']):.1f}"
+        expiration_part = sweep['expiration'].replace("-", "")
+        symbol_cooldown_key = f"{sweep['symbol']}_{strike_part}_{sweep['type']}_{expiration_part}"
+        
+        # Check cooldown with Escalation Logic
         if self._cooldown_active(symbol_cooldown_key, cooldown_seconds=self.symbol_cooldown_seconds):
-            self._log_skip(sweep['symbol'], f"symbol cooldown active ({self.symbol_cooldown_seconds // 60}m)")
-            return False
+            # Allow bypass if:
+            # 1. Golden Sweep (>$1M)
+            # 2. Significant size increase (>2x previous premium)
+            
+            current_premium = float(sweep['premium'])
+            last_alerted_premium = 0.0 # TODO: We need to track this in self.signal_history or self._cooldowns metadata
+            # Since BaseAutoBot cooldowns is just Dict[str, datetime], we can't easily store the premium there.
+            # However, SweepsBot has self.signal_history = {} initialized in __init__ but not really used?
+            # Let's use a new cache for premium tracking: self._last_alerted_premium
+            
+            if not hasattr(self, '_last_alerted_premium'):
+                self._last_alerted_premium = {}
+            
+            last_alerted_premium = self._last_alerted_premium.get(symbol_cooldown_key, 0.0)
+            
+            is_golden = current_premium >= 1_000_000
+            is_escalation = last_alerted_premium > 0 and current_premium >= (last_alerted_premium * 2.0)
+            
+            if is_golden or is_escalation:
+                logger.info(f"{self.name} bypassing cooldown for {symbol_cooldown_key}: Golden={is_golden}, Escalation={is_escalation} (${current_premium:,.0f} vs ${last_alerted_premium:,.0f})")
+            else:
+                self._log_skip(sweep['symbol'], f"cooldown active ({self.symbol_cooldown_seconds // 60}m) for {strike_part} {sweep['type']}")
+                return False
 
-        # Build confidence string
-        volume_ratio = sweep.get('volume_ratio', 0)
-        ratio_data_available = sweep.get('volume_ratio_data_available', False)
-        price_aligned = sweep.get('price_aligned', False)
-        alignment_data_available = sweep.get('alignment_data_available', False)
-        confidence_parts = []
-        if ratio_data_available and volume_ratio >= self.MIN_VOLUME_RATIO:
-            confidence_parts.append(f"{volume_ratio:.1f}x Vol")
-        if price_aligned and alignment_data_available:
-            confidence_parts.append("Price Aligned")
-        elif not alignment_data_available:
-            confidence_parts.append("Alignment Pending")
-        elif not price_aligned:
-            confidence_parts.append("Premium Override")
-        confidence = " | ".join(confidence_parts)
-
-        alert_type = sweep.get('alert_type', 'NEW')
-        description_parts = [f"**{sentiment}**"]
-        if alert_type == 'ACCUMULATION':
-            description_parts.append("🔥 **ACCUMULATION** 🔥")
-        description_parts.append(f"Score: {int(final_score)}/100")
-        if confidence:
-            description_parts.append(confidence)
-
-        # Build base fields
-        fields = [
-            {"name": "📊 Contract", "value": f"{sweep['type']} ${sweep['strike']}\nExp: {sweep['expiration']}", "inline": True},
-            {"name": "💰 Premium", "value": f"**${sweep['premium']:,.0f}**", "inline": True},
-            {"name": "🔥 Sweep Score", "value": f"**{sweep['sweep_score']}/100**", "inline": True},
-            {"name": "📈 Current Price", "value": f"${sweep['current_price']:.2f}", "inline": True},
-            {"name": "📊 Volume", "value": f"{sweep['volume']:,} contracts", "inline": True},
-            {"name": "⚡ Fills", "value": f"{sweep['num_fills']} rapid fills", "inline": True},
-            {"name": "🎯 Strike", "value": f"${sweep['strike']:.2f} ({sweep['moneyness']})", "inline": True},
-            {"name": "📍 Distance", "value": f"{sweep['strike_distance']:+.2f}%", "inline": True},
-            {"name": "⏰ DTE", "value": f"{sweep['days_to_expiry']} days", "inline": True}
-        ]
-
-        # Add enhanced analysis fields
-        if ratio_data_available and volume_ratio >= self.MIN_VOLUME_RATIO:
-            fields.append({"name": "📊 Volume Analysis", "value": f"**{volume_ratio:.1f}x** above 30-day average (unusual)", "inline": False})
-
-        if not ratio_data_available:
-            fields.append({"name": "ℹ️ Volume Context", "value": "No reliable OI baseline available; volume treated as neutral.", "inline": False})
-
-        if price_aligned and alignment_data_available:
-            momentum_str = sweep.get('momentum_strength', 0)
-            alignment_conf = sweep.get('alignment_confidence', 0)
-            fields.append({"name": "✅ Price Action Confirmed", "value": f"Momentum: {momentum_str:+.2f}% | Confidence {alignment_conf}/100", "inline": False})
-        elif not alignment_data_available:
-            fields.append({"name": "ℹ️ Alignment", "value": "Intraday price alignment data unavailable; allowed on premium/volume strength.", "inline": False})
-        else:
-            if sweep.get('alignment_confidence') is not None:
-                fields.append({"name": "⚠️ Divergence", "value": f"Price action not aligned (allowed due to premium size ≥ ${self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM:,.0f})", "inline": False})
-
-        # Add implied move analysis
-        if 'needed_move' in sweep:
-            fields.append({"name": "🎯 Break-Even Analysis", "value": f"Needs {sweep['needed_move']:+.1f}% move to ${sweep['breakeven']:.2f} | Risk: {sweep['risk_grade']} | Prob: {sweep['prob_profit']}%", "inline": False})
-
-        # Add accumulation warning
-        if alert_type == 'ACCUMULATION':
-            fields.append({"name": "🔥 ACCUMULATION ALERT 🔥", "value": f"**Continued buying pressure detected!** {sweep.get('alert_reason', '')}", "inline": False})
-
-        # Create embed with auto-disclaimer
-        embed = self.create_signal_embed_with_disclaimer(
-            title=f"{emoji} SWEEP: {sweep['ticker']}",
-            description=" | ".join(description_parts),
-            color=color,
-            fields=fields,
-            footer="Sweeps Bot | Enhanced with Volume & Price Analysis"
-        )
+        # ... (rest of function)
 
         success = await self.post_to_discord(embed)
         if success:
             logger.info(f"🚨 SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${sweep['premium']:,.0f} Score:{int(final_score)}")
             self._mark_cooldown(symbol_cooldown_key)
+            
+            # Update last alerted premium
+            if not hasattr(self, '_last_alerted_premium'):
+                self._last_alerted_premium = {}
+            self._last_alerted_premium[symbol_cooldown_key] = float(sweep['premium'])
 
         return success
