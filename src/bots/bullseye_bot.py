@@ -197,15 +197,27 @@ class BullseyeBot(BaseAutoBot):
                         self._log_skip(symbol, f"10m option candle premium ${candle_premium:,.0f} < $100k")
                         continue
 
-                    # Check if candle direction matches option type (buyer dominance proxy)
-                    # For Calls: We want the option price to be RISING (Green Candle) = aggressive buying
-                    # For Puts: We ALSO want the option price to be RISING (Green Candle) = aggressive buying
-                    # The user clarified "both calls and puts" for 10 min candle, meaning 
-                    # regardless of type, the OPTION CONTRACT itself must be seeing aggressive buying (Green Candle).
+                # Stock Candle Logic (Proxy for "rising red candle" description)
+                # We need to verify the UNDERLYING direction matches the trade
+                # Calls -> Stock Green Candle
+                # Puts -> Stock Red Candle ("rising red candle" = rising put value on red stock candle)
+                bars_stock = await self.fetcher.get_aggregates(
+                    symbol,
+                    timespan='minute',
+                    multiplier=10,
+                    limit=1
+                )
+                if not bars_stock.empty:
+                    stock_bar = bars_stock.iloc[-1]
+                    is_green = stock_bar['close'] > stock_bar['open']
+                    is_red = stock_bar['close'] < stock_bar['open']
                     
-                    if last_bar['close'] < last_bar['open']:
-                        self._log_skip(symbol, "10m option candle is red (selling pressure on contract)")
-                        continue
+                    if metrics.option_type == 'CALL' and not is_green:
+                         self._log_skip(symbol, "10m stock candle is not green (Call needs green)")
+                         continue
+                    if metrics.option_type == 'PUT' and not is_red:
+                         self._log_skip(symbol, "10m stock candle is not red (Put needs red)")
+                         continue
             except Exception as e:
                 logger.debug(f"{self.name} failed to verify 10m candle for {flow['ticker']}: {e}")
 
