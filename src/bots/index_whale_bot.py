@@ -21,6 +21,7 @@ from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import OptionTradeMetrics, build_metrics_from_flow
 from src.utils.whale_flow_tracker import WhaleFlowSignal, WhaleFlowTracker
+from src.utils.enhanced_analysis import EnhancedAnalyzer
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class IndexWhaleBot(BaseAutoBot):
         self._price_history: Dict[str, Deque[tuple[datetime, float]]] = {
             symbol: deque(maxlen=120) for symbol in self.watchlist
         }
+        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
 
         self.min_premium = Config.INDEX_WHALE_MIN_PREMIUM
         self.min_volume_delta = Config.INDEX_WHALE_MIN_VOLUME_DELTA
@@ -50,8 +52,8 @@ class IndexWhaleBot(BaseAutoBot):
         self.min_dte = Config.INDEX_WHALE_MIN_DTE
         self.max_dte = Config.INDEX_WHALE_MAX_DTE
         self.max_multi_leg_ratio = Config.INDEX_WHALE_MAX_MULTI_LEG_RATIO
-        self.cooldown_intraday_seconds = 900  # 15 minutes for 1-3 DTE reversals
-        self.cooldown_same_day_seconds = 300  # 5 minutes for 0DTE bursts
+        self.cooldown_intraday_seconds = 1800  # 30 minutes for 1-3 DTE reversals
+        self.cooldown_same_day_seconds = 900   # 15 minutes for 0DTE bursts (reduced noise)
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
         self.min_score = max(Config.INDEX_WHALE_MIN_SCORE, 90)
         logger.info("Index Whale Bot minimum score filter set to %d", self.min_score)
@@ -87,6 +89,10 @@ class IndexWhaleBot(BaseAutoBot):
                 if not self._passes_filters(metrics):
                     continue
 
+                # Async Trend Check for 1-3 DTE
+                if not await self._check_trend_alignment(metrics):
+                    continue
+
                 spot_price = flow.get("underlying_price")
                 if not spot_price or spot_price <= 0:
                     spot_price = await self.fetcher.get_stock_price(symbol)
@@ -113,12 +119,21 @@ class IndexWhaleBot(BaseAutoBot):
 
                 if self._cooldown_active(cooldown_key, cooldown_seconds=cooldown_seconds):
                     hits = stats_snapshot.get("hits", 1)
-                    total_premium = self._format_currency(stats_snapshot.get("total_premium", float(metrics.premium or 0.0)))
-                    self._log_skip(
-                        symbol,
-                        f"cooldown active ({cooldown_seconds // 60}m) - repeat hit x{hits} total {total_premium}",
-                    )
-                    continue
+                    total_premium = stats_snapshot.get("total_premium", 0.0)
+                    last_alerted_premium = stats_snapshot.get("last_alerted_premium", 0.0)
+                    
+                    # Smart Deduplication: Only re-alert if premium increased significantly (+$1M or +50%)
+                    premium_increase = total_premium - last_alerted_premium
+                    significant_increase = premium_increase >= 1_000_000 or (last_alerted_premium > 0 and premium_increase / last_alerted_premium >= 0.5)
+                    
+                    if not significant_increase:
+                        self._log_skip(
+                            symbol,
+                            f"cooldown active ({cooldown_seconds // 60}m) - repeat hit x{hits} (increase ${premium_increase:,.0f} too small)",
+                        )
+                        continue
+                    # If significant, we allow it through (bypass cooldown for this hit)
+                    logger.info(f"{symbol} bypassing cooldown: Significant premium increase +${premium_increase:,.0f}")
 
                 signals.append(
                     {
@@ -181,6 +196,9 @@ class IndexWhaleBot(BaseAutoBot):
             self._mark_cooldown(cooldown_key)
             if cooldown_key in self._flow_stats:
                 self._flow_stats[cooldown_key]["last_alerted"] = datetime.utcnow()
+                # Track premium at time of alert for deduplication
+                current_total = stats.get("total_premium", float(metrics.premium or 0.0))
+                self._flow_stats[cooldown_key]["last_alerted_premium"] = current_total
             logger.info(
                 "IndexWhale Alert: %s %.2f %s premium $%s [%s]",
                 metrics.underlying,
@@ -233,8 +251,59 @@ class IndexWhaleBot(BaseAutoBot):
         if metrics.dte > self.max_dte:
             self._log_skip(symbol, f"DTE {metrics.dte:.2f} > {self.max_dte:.2f}")
             return False
+
+        # Trend/Reversal Logic:
+        # 0DTE: Pure momentum allowed (ignore trend check to catch rapid intraday moves)
+        # 1-3 DTE: Must align with trend OR be a valid divergence play
+        if metrics.dte >= 1.0:
+            # Check if this flow fights the trend without a divergence pattern
+            # We can't easily check 'signal.label' here because signal isn't generated yet.
+            # So we rely on EnhancedAnalyzer's simple momentum check.
+            # Note: This is an async check, so we'd need to refactor _passes_filters to be async
+            # or call it before passing filters.
+            # For now, let's SKIP this inside _passes_filters and move it to the main loop
+            # where we can await the analyzer.
+            pass
             
         return True
+
+    async def _check_trend_alignment(self, metrics: OptionTradeMetrics) -> bool:
+        """
+        Verify 1-3 DTE flows align with trend or signal divergence.
+        Returns True if flow should be kept, False if it fights trend blindly.
+        """
+        if metrics.dte < 1.0:
+            return True  # 0DTE is pure chaos/momentum, allowed
+            
+        try:
+            alignment = await self.enhanced_analyzer.check_price_action_alignment(metrics.underlying, metrics.option_type)
+            if not alignment:
+                return True # If data missing, give benefit of doubt
+                
+            # If aligned (Call+Green or Put+Red), it's good
+            if alignment.get('aligned', False):
+                return True
+                
+            # If NOT aligned (fighting trend), we only allow it if it looks like a "Divergence" play.
+            # Divergence usually means Price making Lower Lows but Momentum making Higher Highs (or vice versa).
+            # Our simple check_price_action_alignment returns 'confidence'.
+            # If we are fighting trend, we require High Confidence that it's NOT just noise.
+            # Actually, simpler logic:
+            # If 1-3 DTE Call, and 5m/15m momentum is NEGATIVE, it's a Reversal bet.
+            # We want to see if volume confirms it.
+            
+            # For now, let's just filter out WEAK fighting.
+            # If fighting trend, volume ratio must be > 2.0 to prove conviction.
+            if not alignment.get('aligned', False):
+                vol_ratio = alignment.get('volume_ratio', 1.0)
+                if vol_ratio < 2.0:
+                     self._log_skip(metrics.underlying, f"fighting trend (1-3 DTE) with weak vol ratio {vol_ratio:.1f}x")
+                     return False
+                     
+            return True
+        except Exception as e:
+            logger.error(f"Error checking trend alignment: {e}")
+            return True
 
     def _within_session(self) -> bool:
         now = datetime.now(self.tz)
@@ -475,6 +544,7 @@ class IndexWhaleBot(BaseAutoBot):
                 "first_spot": spot_price,
                 "last_spot": spot_price,
                 "last_alerted": None,
+                "last_alerted_premium": 0.0,
             }
 
         if not stats or not stats.get("first_seen") or stats["first_seen"].date() != now.date():
