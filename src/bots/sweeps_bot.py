@@ -219,9 +219,13 @@ class SweepsBot(BaseAutoBot):
                 strike = flow['strike']
                 expiration = flow['expiration']
                 premium = flow['premium']
+                
+                # STRICT FILTER: Skip any sweep that qualifies as "Golden" ($1M+)
+                # These are handled by the dedicated GoldenSweepsBot
                 if premium >= Config.GOLDEN_MIN_PREMIUM:
-                    self._log_skip(symbol, f"sweep premium ${premium:,.0f} qualifies as golden sweep")
+                    self._log_skip(symbol, f"sweep premium ${premium:,.0f} qualifies as golden sweep (skipped in standard channel)")
                     continue
+                
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
                 open_interest = flow.get('open_interest')
