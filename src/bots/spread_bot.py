@@ -5,14 +5,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set
 
 from .base_bot import BaseAutoBot
 from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import build_metrics_from_flow, OptionTradeMetrics
-
+from src.utils.enhanced_analysis import EnhancedAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,9 @@ class SpreadBot(BaseAutoBot):
 
         # Remove empty strings and sort for deterministic ordering
         self.watchlist = sorted(ticker for ticker in base_watchlist if ticker)
+        
+        # Enhanced analysis
+        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
 
         # Thresholds
         self.min_premium = Config.SPREAD_MIN_PREMIUM
@@ -127,6 +130,67 @@ class SpreadBot(BaseAutoBot):
                 if voi_ratio < self.min_voi_ratio:
                     self._log_skip(symbol, f"VOI ratio {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
                     continue
+
+                # 10-minute Candle Verification (Mirroring Bullseye Logic)
+                try:
+                    bars_10m = await self.fetcher.get_aggregates(
+                        flow['ticker'],
+                        timespan='minute',
+                        multiplier=10,
+                        limit=1
+                    )
+                    
+                    if not bars_10m.empty:
+                        last_bar = bars_10m.iloc[-1]
+                        # Calculate total premium for this 10m candle
+                        candle_premium = last_bar['volume'] * last_bar['close'] * 100
+                        
+                        if candle_premium < 100_000:
+                            self._log_skip(symbol, f"10m option candle premium ${candle_premium:,.0f} < $100k")
+                            continue
+                            
+                    # Underlying Stock Trend Verification
+                    bars_stock = await self.fetcher.get_aggregates(
+                        symbol,
+                        timespan='minute',
+                        multiplier=10,
+                        limit=1
+                    )
+                    if not bars_stock.empty:
+                        stock_bar = bars_stock.iloc[-1]
+                        is_green = stock_bar['close'] > stock_bar['open']
+                        is_red = stock_bar['close'] < stock_bar['open']
+                        
+                        if metrics.option_type == 'CALL' and not is_green:
+                             self._log_skip(symbol, "10m stock candle is not green (Call needs green)")
+                             continue
+                        if metrics.option_type == 'PUT' and not is_red:
+                             self._log_skip(symbol, "10m stock candle is not red (Put needs red)")
+                             continue
+
+                except Exception as e:
+                    logger.debug(f"{self.name} failed to verify 10m candle for {flow['ticker']}: {e}")
+
+                # Trend Alignment Check (EnhancedAnalyzer)
+                try:
+                    alignment = await self.enhanced_analyzer.check_price_action_alignment(symbol, metrics.option_type)
+                    if alignment:
+                        # Momentum Check:
+                        # If CALL, want positive momentum. If PUT, want negative.
+                        
+                        m5 = alignment.get('momentum_5m', 0)
+                        m15 = alignment.get('momentum_15m', 0)
+                        
+                        if metrics.option_type == 'CALL':
+                            if m5 < 0 and m15 < 0:
+                                self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
+                                continue
+                        elif metrics.option_type == 'PUT':
+                            if m5 > 0 and m15 > 0:
+                                self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
+                                continue
+                except Exception as e:
+                    logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
 
                 # Check cooldown BEFORE adding to signals (prevents duplicates)
                 cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
