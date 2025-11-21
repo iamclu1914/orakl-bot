@@ -89,6 +89,25 @@ class IndexWhaleBot(BaseAutoBot):
                 if not self._passes_filters(metrics):
                     continue
 
+                if not metrics.is_ask_side:
+                    bid = flow.get("bid")
+                    ask = flow.get("ask")
+                    trade_price = metrics.price or flow.get("last_price")
+                    spread = (ask - bid) if (bid is not None and ask is not None) else None
+                    midpoint = ((ask + bid) / 2) if (bid is not None and ask is not None) else None
+                    midprint_ok = (
+                        spread is not None
+                        and spread <= 0.05
+                        and trade_price is not None
+                        and midpoint is not None
+                        and trade_price >= midpoint
+                    )
+                    voi_override = (metrics.volume_over_oi or 0.0) >= 2.5
+                    premium_override = (metrics.premium or 0.0) >= 150_000
+                    if not (midprint_ok or (voi_override and premium_override)):
+                        self._log_skip(symbol, "not ask-side (no tight spread / conviction)")
+                        continue
+
                 # Async Trend Check for 1-3 DTE
                 if not await self._check_trend_alignment(metrics):
                     continue
@@ -235,12 +254,8 @@ class IndexWhaleBot(BaseAutoBot):
             self._log_skip(symbol, f"OTM {metrics.percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
             return False
             
-        if not metrics.is_ask_side:
-            self._log_skip(symbol, "not ask-side")
-            return False
-            
-        if metrics.volume_over_oi <= 1.0:
-            self._log_skip(symbol, f"VOI {metrics.volume_over_oi:.2f}x <= 1.0x")
+        if metrics.volume_over_oi <= 0.8:
+            self._log_skip(symbol, f"VOI {metrics.volume_over_oi:.2f}x <= 0.8x")
             return False
             
         # DTE bounds for intraday reversals (1-3 days)

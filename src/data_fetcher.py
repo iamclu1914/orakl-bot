@@ -1015,6 +1015,7 @@ class DataFetcher:
 
             # Step 3: Aggregate trades for each contract
             flows = []
+            max_results = 25
 
             # Diagnostic counters
             total_contracts = len(current_snapshot)
@@ -1199,6 +1200,8 @@ class DataFetcher:
                     }
 
                     flows.append(flow)
+                    if len(flows) >= max_results:
+                        break
 
                 except DataValidationException as e:
                     logger.debug(f"Skipping invalid contract data: {e}")

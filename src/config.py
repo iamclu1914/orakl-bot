@@ -51,11 +51,11 @@ class Config:
     # Index Whale Bot Thresholds (for intraday 1-3 DTE reversals)
     INDEX_WHALE_MIN_PREMIUM = float(os.getenv('INDEX_WHALE_MIN_PREMIUM', '30000'))  # Allow smaller intraday sweeps
     INDEX_WHALE_MIN_VOLUME_DELTA = int(os.getenv('INDEX_WHALE_MIN_VOLUME_DELTA', '20'))  # Slightly smaller prints
-    INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.05'))  # Allow up to 5% OTM
+    INDEX_WHALE_MAX_PERCENT_OTM = float(os.getenv('INDEX_WHALE_MAX_PERCENT_OTM', '0.06'))  # Allow up to 6% OTM
     INDEX_WHALE_MIN_DTE = float(os.getenv('INDEX_WHALE_MIN_DTE', '0.0'))  # Allow same-day contracts
-    INDEX_WHALE_MAX_DTE = float(os.getenv('INDEX_WHALE_MAX_DTE', '3.0'))  # 3 day maximum for intraday plays
-    INDEX_WHALE_MAX_MULTI_LEG_RATIO = float(os.getenv('INDEX_WHALE_MAX_MULTI_LEG_RATIO', '0.15'))  # Allow small multi-leg (complex hedges)
-    INDEX_WHALE_MIN_SCORE = int(os.getenv('INDEX_WHALE_MIN_SCORE', '90'))
+    INDEX_WHALE_MAX_DTE = float(os.getenv('INDEX_WHALE_MAX_DTE', '4.0'))  # 4 day maximum for intraday plays
+    INDEX_WHALE_MAX_MULTI_LEG_RATIO = float(os.getenv('INDEX_WHALE_MAX_MULTI_LEG_RATIO', '0.20'))  # Allow small multi-leg (complex hedges)
+    INDEX_WHALE_MIN_SCORE = int(os.getenv('INDEX_WHALE_MIN_SCORE', '85'))
     
     # ORAKL Flow Settings
     SCAN_INTERVAL_MINUTES = int(os.getenv('SCAN_INTERVAL_MINUTES', '5'))
@@ -83,7 +83,7 @@ class Config:
     BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '400'))
     BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '400'))
     BULLSEYE_MIN_VOI_RATIO = float(os.getenv('BULLSEYE_MIN_VOI_RATIO', '1.0'))  # Fresh positioning
-    BULLSEYE_MIN_OPEN_INTEREST = int(os.getenv('BULLSEYE_MIN_OPEN_INTEREST', '1000'))
+    BULLSEYE_MIN_OPEN_INTEREST = int(os.getenv('BULLSEYE_MIN_OPEN_INTEREST', '500')) # Lowered to allow Vol > OI logic to work
     BULLSEYE_MIN_PRICE = float(os.getenv('BULLSEYE_MIN_PRICE', '0.25'))
     BULLSEYE_MIN_ITM_PROBABILITY = float(os.getenv('BULLSEYE_MIN_ITM_PROBABILITY', '0.35'))  # 35% minimum
     BULLSEYE_DELTA_MIN = float(os.getenv('BULLSEYE_DELTA_MIN', '0.35'))  # ATM range
@@ -93,15 +93,15 @@ class Config:
     BULLSEYE_COOLDOWN_SECONDS = int(os.getenv('BULLSEYE_COOLDOWN_SECONDS', '1800'))  # 30 minutes
     BULLSEYE_MAX_ALERTS_PER_SCAN = int(os.getenv('BULLSEYE_MAX_ALERTS_PER_SCAN', '3'))
     # 99 Cent Store Bot Thresholds (sub-$1 swing trades with high conviction)
-    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '250000'))  # $250K+ for conviction
-    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1500'))  # 1500 contracts for liquidity
-    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '750'))  # Strong new flow
-    SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.0'))  # Contract price must be < $1.00
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '200000'))  # $200K+ for conviction
+    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))  # 1000 contracts for liquidity
+    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '500'))  # Strong new flow
+    SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.00'))  # Hard cap: sub-$1.00 contracts only
     SPREAD_MIN_PRICE = float(os.getenv('SPREAD_MIN_PRICE', '0.05'))  # Avoid illiquid penny options
-    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '2.0'))  # High conviction flow
-    SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '5.0'))  # 5 days minimum for swing trades
-    SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '21.0'))  # Up to 3 weeks for swing trades
-    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.10'))  # 10% OTM max for higher probability
+    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '1.5'))  # High conviction flow
+    SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '2.0'))  # 2 days minimum for swing trades
+    SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '30.0'))  # Up to 4 weeks for swing trades
+    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.15'))  # 15% OTM max for higher probability
 
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '85'))

@@ -530,8 +530,15 @@ class BaseAutoBot(ABC):
             async with semaphore:
                 return await self._scan_symbol_safe(symbol)
 
-        tasks = [run_symbol(symbol) for symbol in watchlist]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = []
+        batch_size = max(1, self.concurrency_limit)
+        for offset in range(0, total_symbols, batch_size):
+            batch = watchlist[offset:offset + batch_size]
+            batch_results = await asyncio.gather(
+                *(run_symbol(symbol) for symbol in batch),
+                return_exceptions=True
+            )
+            results.extend(batch_results)
 
         for result in results:
             if isinstance(result, list):

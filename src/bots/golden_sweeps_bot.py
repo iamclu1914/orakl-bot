@@ -24,9 +24,9 @@ class GoldenSweepsBot(SweepsBot):
         self.name = "Golden Sweeps Bot"
         self.scan_interval = Config.GOLDEN_SWEEPS_INTERVAL
         self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
-        self.MIN_SCORE = max(Config.MIN_GOLDEN_SCORE, 85)
+        self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 80)
         # Golden sweeps can sit further from the money but still matter
-        self.MAX_STRIKE_DISTANCE = 25  # percent
+        self.MAX_STRIKE_DISTANCE = 40  # percent
         # Loosen volume ratio so massive prints with limited history still alert
         self.MIN_VOLUME_RATIO = max(Config.GOLDEN_SWEEPS_MIN_VOLUME_RATIO, 1.1)
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 15)
@@ -69,8 +69,10 @@ class GoldenSweepsBot(SweepsBot):
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
 
-                if total_volume < self.MIN_VOLUME or volume_delta < self.MIN_VOLUME_DELTA:
-                    self._log_skip(symbol, f"golden sweep volume too small ({total_volume} total / {volume_delta} delta)")
+                # Filter by trade size (volume_delta) instead of day volume for Golden Sweeps
+                # We want to catch massive single orders even if day volume is low
+                if volume_delta < 50:
+                    self._log_skip(symbol, f"golden sweep size {volume_delta} < 50 contracts")
                     continue
 
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -84,8 +86,11 @@ class GoldenSweepsBot(SweepsBot):
 
                 strike_distance = ((strike - current_price) / current_price) * 100
                 if abs(strike_distance) > self.MAX_STRIKE_DISTANCE:
-                    self._log_skip(symbol, f'golden sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
-                    continue
+                    # Allow exception for DEEP OTM if premium is massive (>$5M)
+                    if premium < 5_000_000:
+                        self._log_skip(symbol, f'golden sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
+                        continue
+
 
                 if opt_type == 'CALL':
                     moneyness = 'ITM' if strike < current_price else 'OTM' if strike > current_price else 'ATM'

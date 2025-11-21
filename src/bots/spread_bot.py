@@ -42,7 +42,8 @@ class SpreadBot(BaseAutoBot):
         self.min_premium = Config.SPREAD_MIN_PREMIUM
         self.min_volume = Config.SPREAD_MIN_VOLUME
         self.min_volume_delta = Config.SPREAD_MIN_VOLUME_DELTA
-        self.max_price = Config.SPREAD_MAX_PRICE  # Contract price must be < $1.00
+        raw_max_price = Config.SPREAD_MAX_PRICE
+        self.max_price = min(raw_max_price, 1.00)  # Double-lock sub-$1 requirement
         self.min_price = Config.SPREAD_MIN_PRICE  # Avoid illiquid penny options
         self.min_voi_ratio = Config.SPREAD_MIN_VOI_RATIO  # Min VOI for speculative heat
         self.min_dte = Config.SPREAD_MIN_DTE
