@@ -55,7 +55,11 @@ class IndexWhaleBot(BaseAutoBot):
         self.cooldown_intraday_seconds = 1800  # 30 minutes for 1-3 DTE reversals
         self.cooldown_same_day_seconds = 900   # 15 minutes for 0DTE bursts (reduced noise)
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
-        self.min_score = max(Config.INDEX_WHALE_MIN_SCORE, 90)
+        self.min_score = max(Config.INDEX_WHALE_MIN_SCORE, 80)
+        self.volume_over_oi_floor = 0.7
+        self.midprint_spread_pct_cap = 5.5
+        self.midprint_midpoint_factor = 0.97
+        self.midprint_premium_override = max(self.min_premium * 2.5, 120_000)
         logger.info("Index Whale Bot minimum score filter set to %d", self.min_score)
 
         self.open_hour = Config.INDEX_WHALE_OPEN_HOUR
@@ -93,17 +97,22 @@ class IndexWhaleBot(BaseAutoBot):
                     bid = flow.get("bid")
                     ask = flow.get("ask")
                     trade_price = metrics.price or flow.get("last_price")
-                    spread = (ask - bid) if (bid is not None and ask is not None) else None
                     midpoint = ((ask + bid) / 2) if (bid is not None and ask is not None) else None
+                    spread_pct = None
+                    if midpoint and midpoint > 0 and bid is not None and ask is not None:
+                        try:
+                            spread_pct = ((ask - bid) / midpoint) * 100
+                        except TypeError:
+                            spread_pct = None
                     midprint_ok = (
-                        spread is not None
-                        and spread <= 0.05
+                        spread_pct is not None
+                        and spread_pct <= self.midprint_spread_pct_cap
                         and trade_price is not None
                         and midpoint is not None
-                        and trade_price >= midpoint
+                        and trade_price >= midpoint * self.midprint_midpoint_factor
                     )
                     voi_override = (metrics.volume_over_oi or 0.0) >= 2.5
-                    premium_override = (metrics.premium or 0.0) >= 150_000
+                    premium_override = (metrics.premium or 0.0) >= self.midprint_premium_override
                     if not (midprint_ok or (voi_override and premium_override)):
                         self._log_skip(symbol, "not ask-side (no tight spread / conviction)")
                         continue
@@ -254,12 +263,13 @@ class IndexWhaleBot(BaseAutoBot):
             self._log_skip(symbol, f"OTM {metrics.percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
             return False
             
-        if metrics.volume_over_oi <= 0.8:
-            self._log_skip(symbol, f"VOI {metrics.volume_over_oi:.2f}x <= 0.8x")
+        volume_over_oi = metrics.volume_over_oi if metrics.volume_over_oi is not None else 0.0
+        if volume_over_oi < self.volume_over_oi_floor:
+            self._log_skip(symbol, f"VOI {volume_over_oi:.2f}x < {self.volume_over_oi_floor:.2f}x")
             return False
             
         # DTE bounds for intraday reversals (1-3 days)
-        if metrics.dte < self.min_dte:
+        if metrics.dte + 0.05 < self.min_dte:
             self._log_skip(symbol, f"DTE {metrics.dte:.2f} < {self.min_dte:.2f}")
             return False
             

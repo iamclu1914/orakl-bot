@@ -36,6 +36,10 @@ class SweepsBot(BaseAutoBot):
         self.MIN_VOLUME_RATIO = max(Config.SWEEPS_MIN_VOLUME_RATIO, 1.1)
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 20)
         self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 500000
+        self.PRICE_ALIGNMENT_OVERRIDE_VOI = 2.5
+        self.VOLUME_RATIO_FLEX_MULTIPLIER = 0.85  # allow 15% flexibility when premium is massive
+        self.STRIKE_DISTANCE_OVERRIDE_PREMIUM = 350000
+        self.STRIKE_DISTANCE_EXTENSION = 3  # percent
         self.TOP_SWEEPS_PER_SYMBOL = 1
         self.symbol_cooldown_seconds = 300  # prevent symbol-level floods
 
@@ -103,11 +107,16 @@ class SweepsBot(BaseAutoBot):
                     sweep["volume_ratio_data_available"] = ratio_data_available
 
                     if ratio_data_available and sweep["volume_ratio"] < self.MIN_VOLUME_RATIO:
-                        self._log_skip(
-                            symbol,
-                            f"volume ratio {sweep['volume_ratio']:.2f}x < {self.MIN_VOLUME_RATIO:.2f}x",
-                        )
-                        continue
+                        flex_threshold = self.MIN_VOLUME_RATIO * self.VOLUME_RATIO_FLEX_MULTIPLIER
+                        if not (
+                            sweep["premium"] >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM
+                            and sweep["volume_ratio"] >= flex_threshold
+                        ):
+                            self._log_skip(
+                                symbol,
+                                f"volume ratio {sweep['volume_ratio']:.2f}x < {self.MIN_VOLUME_RATIO:.2f}x",
+                            )
+                            continue
 
                     # Price action alignment check (fallback to neutral if data unavailable)
                     alignment = await self.enhanced_analyzer.check_price_action_alignment(
@@ -130,9 +139,14 @@ class SweepsBot(BaseAutoBot):
                     sweep["momentum_strength"] = momentum_strength
                     sweep["alignment_data_available"] = alignment_data_available
 
-                    if alignment_data_available and not price_aligned and sweep["premium"] < self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM:
-                        self._log_skip(symbol, "price action misaligned (<confidence threshold)")
-                        continue
+                    if alignment_data_available and not price_aligned:
+                        alignment_override = (
+                            sweep["premium"] >= self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM
+                            or sweep["volume_ratio"] >= self.PRICE_ALIGNMENT_OVERRIDE_VOI
+                        )
+                        if not alignment_override:
+                            self._log_skip(symbol, "price action misaligned (<confidence threshold)")
+                            continue
 
                     # Boost score for unusual volume
                     volume_boost = 0
@@ -256,8 +270,13 @@ class SweepsBot(BaseAutoBot):
                 # Strike analysis
                 strike_distance = ((strike - current_price) / current_price) * 100
                 if abs(strike_distance) > self.MAX_STRIKE_DISTANCE:
-                    self._log_skip(symbol, f'sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
-                    continue
+                    extended_cap = self.MAX_STRIKE_DISTANCE + self.STRIKE_DISTANCE_EXTENSION
+                    if not (
+                        premium >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM
+                        and abs(strike_distance) <= extended_cap
+                    ):
+                        self._log_skip(symbol, f'sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
+                        continue
                 if opt_type == 'CALL':
                     moneyness = 'ITM' if strike < current_price else 'OTM' if strike > current_price else 'ATM'
                 else:

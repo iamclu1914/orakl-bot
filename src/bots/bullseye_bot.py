@@ -50,6 +50,16 @@ class BullseyeBot(BaseAutoBot):
         self.max_alerts_per_scan = Config.BULLSEYE_MAX_ALERTS_PER_SCAN
         self.required_intensity = {"STRONG", "AGGRESSIVE"}
 
+        # High-conviction overrides / mid-print allowances
+        self.midprint_spread_pct_cap = 4.5  # allow tight mid-prints through
+        self.midprint_midpoint_factor = 0.98  # trade must print at/above 98% of midpoint
+        self.midprint_voi_override = 1.5
+        self.midprint_premium_override = max(self.min_premium * 1.25, 1_250_000)
+        self.high_conviction_premium = max(self.min_premium * 1.5, 1_500_000)
+        self.low_price_floor = max(0.15, self.min_price * 0.6)
+        self.low_volume_override = max(self.min_block_contracts * 2, 1000)
+        self.percent_otm_extension = 0.03  # allow +3% OTM when premium is massive
+
     async def scan_and_post(self):
         logger.info("%s scanning for institutional block flow", self.name)
 
@@ -113,13 +123,41 @@ class BullseyeBot(BaseAutoBot):
             if not metrics:
                 continue
 
+            premium = float(metrics.premium or 0.0)
+            volume_delta = int(flow.get("volume_delta") or 0)
+            total_volume = int(flow.get("total_volume") or 0)
+            voi_ratio = flow.get("vol_oi_ratio")
+            if voi_ratio is None:
+                voi_ratio = metrics.volume_over_oi or 0.0
+            else:
+                try:
+                    voi_ratio = float(voi_ratio)
+                except (TypeError, ValueError):
+                    voi_ratio = metrics.volume_over_oi or 0.0
+
+            bid = float(flow.get("bid") or 0.0)
+            ask = float(flow.get("ask") or 0.0)
+            spread_pct = self._calculate_spread_pct(bid, ask)
+
             if not metrics.is_single_leg:
                 self._log_skip(symbol, "multi-leg structure (spread)")
                 continue
 
             if not metrics.is_ask_side:
-                self._log_skip(symbol, "not ask-side (no aggressive buyer)")
-                continue
+                midpoint = ((bid + ask) / 2) if (bid > 0 and ask > 0) else None
+                trade_price = metrics.price or flow.get("last_price")
+                midprint_ok = (
+                    spread_pct is not None
+                    and spread_pct <= self.midprint_spread_pct_cap
+                    and midpoint
+                    and trade_price is not None
+                    and trade_price >= midpoint * self.midprint_midpoint_factor
+                )
+                voi_override = voi_ratio >= self.midprint_voi_override
+                premium_override = premium >= self.midprint_premium_override
+                if not (midprint_ok or (voi_override and premium_override)):
+                    self._log_skip(symbol, "not ask-side (no aggressive buyer)")
+                    continue
 
             contract_price = metrics.price or 0.0
             if contract_price <= 0:
@@ -127,55 +165,76 @@ class BullseyeBot(BaseAutoBot):
                 continue
 
             if contract_price < self.min_price:
-                self._log_skip(symbol, f"price ${contract_price:.2f} < ${self.min_price:.2f}")
-                continue
+                if not (
+                    premium >= self.high_conviction_premium
+                    and contract_price >= self.low_price_floor
+                ):
+                    self._log_skip(symbol, f"price ${contract_price:.2f} < ${self.min_price:.2f}")
+                    continue
 
             dte = metrics.dte
             if dte < self.min_dte or dte > self.max_dte:
-                self._log_skip(symbol, f"DTE {dte:.2f} outside {self.min_dte}-{self.max_dte}")
-                continue
+                allow_short_dte = (
+                    dte >= -0.05
+                    and premium >= self.high_conviction_premium
+                    and volume_delta >= self.min_block_contracts
+                )
+                allow_far_dte = (
+                    dte > self.max_dte
+                    and premium >= self.high_conviction_premium
+                    and (dte - self.max_dte) <= 5.0
+                )
+                if not (allow_short_dte or allow_far_dte):
+                    self._log_skip(symbol, f"DTE {dte:.2f} outside {self.min_dte}-{self.max_dte}")
+                    continue
 
             percent_otm = abs(metrics.percent_otm)
             if percent_otm > self.max_percent_otm:
-                self._log_skip(symbol, f"%OTM {percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
-                continue
-
-            volume_delta = int(flow.get("volume_delta") or 0)
-            total_volume = int(flow.get("total_volume") or 0)
+                if not (
+                    premium >= self.high_conviction_premium
+                    and percent_otm <= self.max_percent_otm + self.percent_otm_extension
+                ):
+                    self._log_skip(symbol, f"%OTM {percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
+                    continue
 
             if volume_delta < self.min_block_contracts:
                 self._log_skip(symbol, f"block size {volume_delta} < {self.min_block_contracts}")
                 continue
 
             if total_volume < self.min_volume:
-                self._log_skip(symbol, f"day volume {total_volume} < {self.min_volume}")
-                continue
+                if not (
+                    premium >= self.high_conviction_premium
+                    and volume_delta >= self.low_volume_override
+                ):
+                    self._log_skip(symbol, f"day volume {total_volume} < {self.min_volume}")
+                    continue
 
-            premium = float(metrics.premium or 0.0)
             if premium < self.min_premium:
                 self._log_skip(symbol, f"premium ${premium:,.0f} < ${self.min_premium:,.0f}")
                 continue
 
-            voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
             if voi_ratio < self.min_voi_ratio:
-                self._log_skip(symbol, f"VOI {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
-                continue
+                if not (
+                    premium >= self.high_conviction_premium
+                    and voi_ratio >= max(self.min_voi_ratio * 0.8, 0.8)
+                ):
+                    self._log_skip(symbol, f"VOI {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
+                    continue
 
             flow_intensity = (flow.get("flow_intensity") or "NORMAL").upper()
             if self.required_intensity and flow_intensity not in self.required_intensity:
                 self._log_skip(symbol, f"intensity {flow_intensity} below STRONG")
                 continue
 
-            bid = float(flow.get("bid") or 0.0)
-            ask = float(flow.get("ask") or 0.0)
-            spread_pct = self._calculate_spread_pct(bid, ask)
             if spread_pct is not None and spread_pct > self.max_spread_pct:
                 self._log_skip(symbol, f"spread {spread_pct:.2f}% > {self.max_spread_pct:.2f}%")
                 continue
 
-            if int(flow.get("open_interest") or 0) < Config.BULLSEYE_MIN_OPEN_INTEREST:
-                self._log_skip(symbol, f"OI {flow.get('open_interest', 0)} < {Config.BULLSEYE_MIN_OPEN_INTEREST}")
-                continue
+            # Enforce Volume > Open Interest (Net New Positioning)
+            if int(flow.get("open_interest") or 0) > 0:
+                if total_volume <= int(flow.get("open_interest") or 0):
+                    self._log_skip(symbol, f"Vol {total_volume} <= OI {flow.get('open_interest')} (not new positioning)")
+                    continue
                 
             # 10-minute Candle Verification
             # Ensure the option contract itself traded > $100k in the last 10 minutes

@@ -54,6 +54,12 @@ class SpreadBot(BaseAutoBot):
 
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         signals: List[Dict] = []
+        logged_reasons: Set[str] = set()
+
+        def log_once(reason: str) -> None:
+            if reason not in logged_reasons:
+                self._log_skip(symbol, reason)
+                logged_reasons.add(reason)
 
         try:
             flows = await self.fetcher.detect_unusual_flow(
@@ -70,67 +76,97 @@ class SpreadBot(BaseAutoBot):
 
                 # CRITICAL: Single-leg filter (prevents multi-leg spreads)
                 if not metrics.is_single_leg:
-                    self._log_skip(symbol, "multi-leg spread detected")
+                    log_once("multi-leg spread detected")
                     continue
 
                 # Filter: Contract price must be under $1.00 but above minimum
                 contract_price = metrics.price
                 if contract_price is None or contract_price <= 0:
-                    self._log_skip(symbol, "missing contract price")
+                    log_once("missing contract price")
                     continue
 
                 if contract_price < self.min_price:
-                    self._log_skip(symbol, f"price ${contract_price:.2f} < ${self.min_price:.2f} (illiquid)")
+                    log_once(f"price ${contract_price:.2f} < ${self.min_price:.2f} (illiquid)")
                     continue
 
                 if contract_price > self.max_price:
-                    self._log_skip(symbol, f"price ${contract_price:.2f} > ${self.max_price:.2f}")
+                    log_once(f"price ${contract_price:.2f} > ${self.max_price:.2f}")
                     continue
 
+                premium = float(metrics.premium or 0.0)
+                voi_ratio = flow.get("vol_oi_ratio")
+                if voi_ratio is None:
+                    voi_ratio = metrics.volume_over_oi or 0.0
+                else:
+                    try:
+                        voi_ratio = float(voi_ratio)
+                    except (TypeError, ValueError):
+                        voi_ratio = metrics.volume_over_oi or 0.0
+
                 # Filter: Premium must meet whale threshold
-                if metrics.premium < self.min_premium:
-                    self._log_skip(symbol, f"premium ${metrics.premium:,.0f} < ${self.min_premium:,.0f}")
+                if premium < self.min_premium:
+                    log_once(f"premium ${premium:,.0f} < ${self.min_premium:,.0f}")
                     continue
 
                 # Filter: Must be OTM (directional speculation, not stock substitute)
                 if not metrics.is_otm:
-                    self._log_skip(symbol, "not OTM (ITM = stock substitute)")
+                    log_once("not OTM (ITM = stock substitute)")
                     continue
 
                 if metrics.percent_otm > self.max_percent_otm:
-                    self._log_skip(symbol, f"OTM {metrics.percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
+                    log_once(f"OTM {metrics.percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
                     continue
 
                 # Filter: Ask-side for directional conviction
                 if not metrics.is_ask_side:
-                    self._log_skip(symbol, "not ask-side (no directional conviction)")
-                    continue
+                    bid = float(flow.get("bid") or 0.0)
+                    ask = float(flow.get("ask") or 0.0)
+                    midpoint = ((bid + ask) / 2) if (bid > 0 and ask > 0) else None
+                    trade_price = float(contract_price or flow.get("last_price") or 0.0)
+                    spread_pct = None
+                    if midpoint:
+                        spread_pct = ((ask - bid) / midpoint) * 100 if midpoint else None
+                    midprint_ok = (
+                        spread_pct is not None
+                        and spread_pct <= 5.0
+                        and trade_price >= midpoint * 0.97
+                    )
+                    voi_override = voi_ratio >= (self.min_voi_ratio + 0.3)
+                    premium_override = premium >= (self.min_premium * 1.2)
+                    if not (midprint_ok or (voi_override and premium_override)):
+                        log_once("not ask-side (no directional conviction)")
+                        continue
 
                 # Filter: DTE bounds (1-7 days for speculative plays)
                 if metrics.dte < self.min_dte:
-                    self._log_skip(symbol, f"DTE {metrics.dte:.2f} < {self.min_dte:.2f}")
+                    log_once(f"DTE {metrics.dte:.2f} < {self.min_dte:.2f}")
                     continue
 
                 if metrics.dte > self.max_dte:
-                    self._log_skip(symbol, f"DTE {metrics.dte:.2f} > {self.max_dte:.2f} (too far out)")
+                    log_once(f"DTE {metrics.dte:.2f} > {self.max_dte:.2f} (too far out)")
                     continue
 
                 # Filter: Volume must meet threshold
                 total_volume = flow.get("total_volume", 0)
                 if total_volume < self.min_volume:
-                    self._log_skip(symbol, f"volume {total_volume} < {self.min_volume}")
+                    log_once(f"volume {total_volume} < {self.min_volume}")
                     continue
 
                 volume_delta = flow.get("volume_delta", 0)
                 if volume_delta < self.min_volume_delta:
-                    self._log_skip(symbol, f"volume delta {volume_delta} < {self.min_volume_delta}")
+                    log_once(f"volume delta {volume_delta} < {self.min_volume_delta}")
                     continue
 
                 # Filter: VOI ratio for speculative heat
-                voi_ratio = flow.get("vol_oi_ratio", 0.0) or metrics.volume_over_oi or 0.0
                 if voi_ratio < self.min_voi_ratio:
-                    self._log_skip(symbol, f"VOI ratio {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
-                    continue
+                    voi_override = (
+                        premium >= (self.min_premium * 1.4)
+                        and volume_delta >= (self.min_volume_delta * 2)
+                        and voi_ratio >= max(self.min_voi_ratio * 0.8, 1.0)
+                    )
+                    if not voi_override:
+                        log_once(f"VOI ratio {voi_ratio:.2f}x < {self.min_voi_ratio:.2f}x")
+                        continue
 
                 # 10-minute Candle Verification (Mirroring Bullseye Logic)
                 try:
@@ -163,10 +199,10 @@ class SpreadBot(BaseAutoBot):
                         is_red = stock_bar['close'] < stock_bar['open']
                         
                         if metrics.option_type == 'CALL' and not is_green:
-                             self._log_skip(symbol, "10m stock candle is not green (Call needs green)")
+                             log_once("10m stock candle is not green (Call needs green)")
                              continue
                         if metrics.option_type == 'PUT' and not is_red:
-                             self._log_skip(symbol, "10m stock candle is not red (Put needs red)")
+                             log_once("10m stock candle is not red (Put needs red)")
                              continue
 
                 except Exception as e:
@@ -184,11 +220,11 @@ class SpreadBot(BaseAutoBot):
                         
                         if metrics.option_type == 'CALL':
                             if m5 < 0 and m15 < 0:
-                                self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
+                                log_once(f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
                                 continue
                         elif metrics.option_type == 'PUT':
                             if m5 > 0 and m15 > 0:
-                                self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
+                                log_once(f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
                                 continue
                 except Exception as e:
                     logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
@@ -200,12 +236,11 @@ class SpreadBot(BaseAutoBot):
                     if stats_snapshot.get("hits", 1) > 1:
                         total_premium = self._format_currency(stats_snapshot.get("total_premium", 0.0))
                         hits = stats_snapshot.get("hits", 1)
-                        self._log_skip(
-                            symbol,
-                            f"cooldown ({self.cooldown_seconds // 60}m) active - repeat hit x{hits} total {total_premium}",
+                        log_once(
+                            f"cooldown ({self.cooldown_seconds // 60}m) active - repeat hit x{hits} total {total_premium}"
                         )
                     else:
-                        self._log_skip(symbol, f"cooldown active (already alerted in last {self.cooldown_seconds // 60} min)")
+                        log_once(f"cooldown active (already alerted in last {self.cooldown_seconds // 60} min)")
                     continue
 
                 signals.append(
