@@ -27,7 +27,11 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
         self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 80)
         # Golden sweeps can sit further from the money but still matter
-        self.MAX_STRIKE_DISTANCE = 60  # percent
+        self.MAX_STRIKE_DISTANCE = Config.GOLDEN_MAX_STRIKE_DISTANCE  # percent
+        logger.info(
+            "Golden Sweeps max strike distance set to %.1f%% (env override ready)",
+            self.MAX_STRIKE_DISTANCE,
+        )
         # Loosen volume ratio so massive prints with limited history still alert
         self.MIN_VOLUME_RATIO = max(Config.GOLDEN_SWEEPS_MIN_VOLUME_RATIO, 1.1)
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 15)
