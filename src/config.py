@@ -72,7 +72,7 @@ class Config:
     SWEEPS_MIN_ALIGNMENT_CONFIDENCE = int(os.getenv('SWEEPS_MIN_ALIGNMENT_CONFIDENCE', '20'))
     GOLDEN_SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('GOLDEN_SWEEPS_MIN_VOLUME_RATIO', '1.1'))
     GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE = int(os.getenv('GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE', '15'))
-    GOLDEN_MAX_STRIKE_DISTANCE = float(os.getenv('GOLDEN_MAX_STRIKE_DISTANCE', '60.0'))  # percent OTM allowed for golden sweeps
+    GOLDEN_MAX_STRIKE_DISTANCE = float(os.getenv('GOLDEN_MAX_STRIKE_DISTANCE', '100.0'))  # percent OTM/ITM allowed for golden sweeps (100 = any strike)
     MIN_VOLUME_RATIO = float(os.getenv('MIN_VOLUME_RATIO', '3.0'))  # 3x volume for unusual
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
     
