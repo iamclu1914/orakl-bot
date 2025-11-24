@@ -34,6 +34,8 @@ class SweepsBot(BaseAutoBot):
         # Require a high conviction sweep score before alerting
         self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
         self.MIN_VOLUME_RATIO = max(Config.SWEEPS_MIN_VOLUME_RATIO, 1.1)
+        # Disable price-action alignment for standard sweeps (alignment proved too restrictive)
+        self.SKIP_ALIGNMENT_CHECK = True
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 20)
         self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 500000
         self.PRICE_ALIGNMENT_OVERRIDE_VOI = 2.5
