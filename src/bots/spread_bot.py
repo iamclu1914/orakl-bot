@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set
@@ -13,6 +14,7 @@ from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import build_metrics_from_flow, OptionTradeMetrics
 from src.utils.enhanced_analysis import EnhancedAnalyzer
+from src.utils.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,279 @@ class SpreadBot(BaseAutoBot):
         self.max_percent_otm = Config.SPREAD_MAX_PERCENT_OTM
         self.cooldown_seconds = 1800  # 30 minute cooldown to prevent spam
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
+        self.golden_fallback_hours = getattr(Config, "SPREAD_GOLDEN_FALLBACK_HOURS", 2.0)
+        self.trigger_spread_pct_cap = getattr(Config, "SPREAD_TRIGGER_SPREAD_PCT_CAP", 12.5)
+        self.trigger_midpoint_factor = getattr(Config, "SPREAD_TRIGGER_MIDPOINT_FACTOR", 0.95)
+        self.trigger_min_volume = getattr(
+            Config, "SPREAD_TRIGGER_MIN_VOLUME", max(200, self.min_volume // 2)
+        )
+        self._last_golden_event_at: Optional[datetime] = None
+        self._subscription_registered = False
+        self._subscription_lock = asyncio.Lock()
+        self._golden_scan_lock = asyncio.Lock()
 
+    async def start(self):
+        await self._ensure_subscription()
+        await super().start()
+
+    async def scan_and_post(self):
+        await self._ensure_subscription()
+
+        if self._should_run_fallback():
+            await super().scan_and_post()
+        else:
+            logger.debug("%s fallback disabled (recent golden sweeps)", self.name)
+
+    async def _ensure_subscription(self) -> None:
+        if self._subscription_registered:
+            return
+
+        async with self._subscription_lock:
+            if self._subscription_registered:
+                return
+            await event_bus.subscribe("golden_sweep_detected", self._handle_golden_sweep_event)
+            self._subscription_registered = True
+
+    def _should_run_fallback(self) -> bool:
+        if self.golden_fallback_hours <= 0:
+            return True
+        if not self._last_golden_event_at:
+            return True
+
+        elapsed = datetime.utcnow() - self._last_golden_event_at
+        return elapsed >= timedelta(hours=self.golden_fallback_hours)
+
+    async def _handle_golden_sweep_event(self, **payload: Any) -> None:
+        if not self.running:
+            return
+
+        symbol = payload.get("symbol")
+        option_type = (payload.get("option_type") or payload.get("direction") or "").upper()
+
+        if not symbol or option_type not in {"CALL", "PUT"}:
+            return
+
+        self._last_golden_event_at = datetime.utcnow()
+
+        try:
+            async with self._golden_scan_lock:
+                await self._scan_golden_triggered(symbol, option_type, payload)
+        except Exception as exc:
+            logger.exception("%s golden sweep processing failed for %s: %s", self.name, symbol, exc)
+
+    @staticmethod
+    def _extract_numeric(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        if isinstance(value, dict):
+            for key in ("price", "p", "value", "midpoint", "bid", "ask", "close", "last"):
+                extracted = SpreadBot._extract_numeric(value.get(key))
+                if extracted is not None:
+                    return extracted
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_trade_price(self, contract: Dict[str, Any]) -> Optional[float]:
+        day_data = contract.get("day", {}) or {}
+        last_trade = contract.get("last_trade") or {}
+        last_quote = contract.get("last_quote") or {}
+
+        candidates = [
+            day_data.get("close"),
+            day_data.get("last"),
+            last_trade.get("price"),
+            last_trade.get("p"),
+        ]
+
+        quote_last = last_quote.get("last")
+        candidates.append(quote_last)
+        if isinstance(quote_last, dict):
+            candidates.extend([quote_last.get("price"), quote_last.get("p")])
+
+        candidates.extend(
+            [
+                last_quote.get("midpoint"),
+                last_quote.get("ask"),
+                last_quote.get("bid"),
+                day_data.get("open"),
+                day_data.get("high"),
+                day_data.get("low"),
+            ]
+        )
+
+        for candidate in candidates:
+            value = self._extract_numeric(candidate)
+            if value and value > 0:
+                return value
+        return None
+
+    def _resolve_underlying_price(self, contract: Dict[str, Any]) -> Optional[float]:
+        asset = contract.get("underlying_asset") or {}
+        for key in ("price", "close", "prev_close"):
+            value = self._extract_numeric(asset.get(key))
+            if value and value > 0:
+                return value
+        return None
+
+    async def _scan_golden_triggered(self, symbol: str, option_type: str, event_payload: Dict[str, Any]) -> None:
+        contracts = await self.fetcher.get_option_chain_snapshot(
+            symbol, contract_type="call" if option_type == "CALL" else "put"
+        )
+
+        if not contracts:
+            logger.debug("%s golden trigger: no contracts for %s", self.name, symbol)
+            return
+
+        underlying_price = None
+        best_candidate: Optional[Dict[str, Any]] = None
+        now = datetime.utcnow()
+
+        for contract in contracts:
+            details = contract.get("details") or {}
+            strike = self._extract_numeric(details.get("strike_price"))
+            expiration_str = details.get("expiration_date")
+
+            if strike is None or not expiration_str:
+                continue
+
+            try:
+                expiration_dt = datetime.fromisoformat(expiration_str)
+            except ValueError:
+                continue
+
+            dte = max((expiration_dt - now).total_seconds() / 86400.0, 0.0)
+            if dte < self.min_dte or dte > self.max_dte:
+                continue
+
+            day_data = contract.get("day", {}) or {}
+            volume = int(day_data.get("volume") or 0)
+            if volume < self.trigger_min_volume:
+                continue
+
+            last_quote = contract.get("last_quote") or {}
+            ask = self._extract_numeric(last_quote.get("ask"))
+            bid = self._extract_numeric(last_quote.get("bid"))
+            midpoint = self._extract_numeric(last_quote.get("midpoint"))
+
+            trade_price = ask or self._resolve_trade_price(contract)
+            if not trade_price or trade_price <= 0:
+                continue
+
+            contract_price = float(trade_price)
+
+            if contract_price < self.min_price or contract_price > self.max_price:
+                continue
+
+            if midpoint and contract_price < midpoint * self.trigger_midpoint_factor:
+                continue
+
+            spread_pct = None
+            if ask and bid and ask > 0 and bid > 0:
+                spread_pct = ((ask - bid) / ask) * 100.0
+                if spread_pct > self.trigger_spread_pct_cap:
+                    continue
+
+            if midpoint is None and ask and bid:
+                midpoint = (ask + bid) / 2.0
+
+            candidate_underlying = self._resolve_underlying_price(contract)
+            if candidate_underlying:
+                underlying_price = candidate_underlying
+            candidate_underlying_value = candidate_underlying or underlying_price
+
+            open_interest = int(contract.get("open_interest") or 0)
+            premium = contract_price * volume * 100.0
+
+            candidate = {
+                "ticker": contract.get("ticker"),
+                "strike": float(strike),
+                "expiration": expiration_str,
+                "price": contract_price,
+                "ask": ask or contract_price,
+                "bid": bid,
+                "midpoint": midpoint,
+                "volume": volume,
+                "open_interest": open_interest,
+                "premium": premium,
+                "dte": dte,
+                "underlying_price": candidate_underlying_value,
+                "spread_pct": spread_pct,
+            }
+
+            if not candidate["ticker"]:
+                continue
+
+            if not best_candidate or candidate["volume"] > best_candidate["volume"]:
+                best_candidate = candidate
+            elif best_candidate and candidate["volume"] == best_candidate["volume"]:
+                if candidate["premium"] > best_candidate.get("premium", 0):
+                    best_candidate = candidate
+
+        if not best_candidate:
+            logger.info("%s golden trigger: no qualifying sub-$1 contracts for %s", self.name, symbol)
+            return
+
+        if not underlying_price:
+            underlying_price = await self.fetcher.get_stock_price(symbol)
+
+        flow_payload: Dict[str, Any] = {
+            "ticker": best_candidate["ticker"],
+            "underlying": symbol,
+            "type": option_type,
+            "strike": best_candidate["strike"],
+            "expiration": best_candidate["expiration"],
+            "volume_delta": best_candidate["volume"],
+            "total_volume": best_candidate["volume"],
+            "open_interest": best_candidate["open_interest"],
+            "last_price": best_candidate["price"],
+            "ask": best_candidate["ask"],
+            "bid": best_candidate["bid"],
+            "midpoint": best_candidate["midpoint"],
+            "premium": best_candidate["premium"],
+            "underlying_price": best_candidate.get("underlying_price") or underlying_price,
+            "timestamp": datetime.utcnow(),
+            "multi_leg_ratio": 0.0,
+        }
+
+        metrics = build_metrics_from_flow(flow_payload)
+        if not metrics:
+            logger.info("%s golden trigger: failed to build metrics for %s", self.name, symbol)
+            return
+
+        cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
+        stats_snapshot = self._update_flow_stats(cooldown_key, float(metrics.premium or 0.0))
+
+        if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
+            logger.debug("%s golden trigger: cooldown active for %s", self.name, cooldown_key)
+            return
+
+        payload = {
+            "metrics": metrics,
+            "contract_price": metrics.price,
+            "flow": flow_payload,
+            "stats": stats_snapshot,
+            "origin_event": event_payload,
+            "triggered_by_golden": True,
+        }
+
+        posted = await self._post_signal(payload)
+        if posted:
+            logger.info(
+                "%s golden trigger alert %s %.2f %s volume %s",
+                self.name,
+                metrics.underlying,
+                metrics.strike,
+                metrics.option_type,
+                best_candidate["volume"],
+            )
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
         signals: List[Dict] = []
         logged_reasons: Set[str] = set()

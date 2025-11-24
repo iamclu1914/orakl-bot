@@ -88,8 +88,8 @@ class Config:
     BULLSEYE_MIN_ITM_PROBABILITY = float(os.getenv('BULLSEYE_MIN_ITM_PROBABILITY', '0.35'))  # 35% minimum
     BULLSEYE_DELTA_MIN = float(os.getenv('BULLSEYE_DELTA_MIN', '0.35'))  # ATM range
     BULLSEYE_DELTA_MAX = float(os.getenv('BULLSEYE_DELTA_MAX', '0.65'))
-    BULLSEYE_MAX_STRIKE_DISTANCE = float(os.getenv('BULLSEYE_MAX_STRIKE_DISTANCE', '0.12'))  # 12% max OTM
-    BULLSEYE_MAX_SPREAD_PCT = float(os.getenv('BULLSEYE_MAX_SPREAD_PCT', '6.0'))  # 6% max bid-ask spread
+    BULLSEYE_MAX_STRIKE_DISTANCE = float(os.getenv('BULLSEYE_MAX_STRIKE_DISTANCE', '0.20'))  # 20% max OTM
+    BULLSEYE_MAX_SPREAD_PCT = float(os.getenv('BULLSEYE_MAX_SPREAD_PCT', '8.0'))  # 8% max bid-ask spread
     BULLSEYE_COOLDOWN_SECONDS = int(os.getenv('BULLSEYE_COOLDOWN_SECONDS', '1800'))  # 30 minutes
     BULLSEYE_MAX_ALERTS_PER_SCAN = int(os.getenv('BULLSEYE_MAX_ALERTS_PER_SCAN', '3'))
     # 99 Cent Store Bot Thresholds (sub-$1 swing trades with high conviction)

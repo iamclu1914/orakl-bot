@@ -1,13 +1,14 @@
 """Golden Sweeps Bot - 1 Million+ premium sweeps"""
 import logging
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Any
 
 from .sweeps_bot import SweepsBot
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.utils.monitoring import timed
+from src.utils.event_bus import event_bus
 from src.utils.market_hours import MarketHours
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
         self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 80)
         # Golden sweeps can sit further from the money but still matter
-        self.MAX_STRIKE_DISTANCE = 40  # percent
+        self.MAX_STRIKE_DISTANCE = 60  # percent
         # Loosen volume ratio so massive prints with limited history still alert
         self.MIN_VOLUME_RATIO = max(Config.GOLDEN_SWEEPS_MIN_VOLUME_RATIO, 1.1)
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 15)
@@ -228,6 +229,31 @@ class GoldenSweepsBot(SweepsBot):
 
         success = await self.post_to_discord(embed)
         if success:
-            logger.info(f"🚨 GOLDEN SWEEP: {sweep['ticker']} {sweep['type']} ${sweep['strike']} Premium:${premium_millions:.1f}M Score:{int(final_score)}")
+            logger.info(
+                "🚨 GOLDEN SWEEP: %s %s $%s Premium:$%0.1fM Score:%d",
+                sweep['ticker'],
+                sweep['type'],
+                sweep['strike'],
+                premium_millions,
+                int(final_score),
+            )
+            await self._publish_golden_sweep_event(sweep)
 
         return success
+
+    async def _publish_golden_sweep_event(self, sweep: Dict[str, Any]) -> None:
+        """Publish a golden sweep event for downstream trigger bots."""
+        try:
+            await event_bus.publish(
+                "golden_sweep_detected",
+                symbol=sweep.get("symbol"),
+                option_type=sweep.get("type"),
+                strike=sweep.get("strike"),
+                expiration=sweep.get("expiration"),
+                premium=sweep.get("premium"),
+                direction=sweep.get("type"),
+                timestamp=datetime.utcnow().isoformat(),
+                sweep=sweep,
+            )
+        except Exception as exc:
+            logger.exception("failed to publish golden sweep event: %s", exc)
