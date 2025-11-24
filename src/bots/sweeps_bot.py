@@ -119,27 +119,38 @@ class SweepsBot(BaseAutoBot):
                             continue
 
                     # Price action alignment check (fallback to neutral if data unavailable)
-                    alignment = await self.enhanced_analyzer.check_price_action_alignment(
-                        symbol, sweep["type"]
-                    )
-                    alignment_data_available = alignment is not None
-                    price_aligned = True
-                    alignment_confidence = 0
-                    momentum_strength = 0.0
-                    if alignment_data_available:
-                        alignment_confidence = alignment.get("confidence", 0)
-                        momentum_strength = alignment.get("strength", 0.0)
-                        price_aligned = alignment.get("aligned", False) and alignment_confidence >= self.MIN_ALIGNMENT_CONFIDENCE
-                        sweep["alignment_details"] = alignment
+                    # Skip alignment check entirely if SKIP_ALIGNMENT_CHECK is set (e.g., Golden Sweeps)
+                    skip_alignment = getattr(self, 'SKIP_ALIGNMENT_CHECK', False)
+                    
+                    if skip_alignment:
+                        # Bypass alignment - premium size IS the conviction signal
+                        price_aligned = True
+                        alignment_confidence = 100
+                        momentum_strength = 0.0
+                        alignment_data_available = False
+                        sweep["alignment_details"] = {"aligned": True, "reason": "alignment check disabled"}
                     else:
-                        sweep["alignment_details"] = {"aligned": None, "reason": "insufficient intraday data"}
+                        alignment = await self.enhanced_analyzer.check_price_action_alignment(
+                            symbol, sweep["type"]
+                        )
+                        alignment_data_available = alignment is not None
+                        price_aligned = True
+                        alignment_confidence = 0
+                        momentum_strength = 0.0
+                        if alignment_data_available:
+                            alignment_confidence = alignment.get("confidence", 0)
+                            momentum_strength = alignment.get("strength", 0.0)
+                            price_aligned = alignment.get("aligned", False) and alignment_confidence >= self.MIN_ALIGNMENT_CONFIDENCE
+                            sweep["alignment_details"] = alignment
+                        else:
+                            sweep["alignment_details"] = {"aligned": None, "reason": "insufficient intraday data"}
 
                     sweep["price_aligned"] = price_aligned
                     sweep["alignment_confidence"] = alignment_confidence
                     sweep["momentum_strength"] = momentum_strength
                     sweep["alignment_data_available"] = alignment_data_available
 
-                    if alignment_data_available and not price_aligned:
+                    if not skip_alignment and alignment_data_available and not price_aligned:
                         alignment_override = (
                             sweep["premium"] >= self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM
                             or sweep["volume_ratio"] >= self.PRICE_ALIGNMENT_OVERRIDE_VOI
