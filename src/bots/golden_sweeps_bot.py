@@ -35,11 +35,9 @@ class GoldenSweepsBot(SweepsBot):
         # Loosen volume ratio so massive prints with limited history still alert
         self.MIN_VOLUME_RATIO = max(Config.GOLDEN_SWEEPS_MIN_VOLUME_RATIO, 1.1)
         # Disable alignment check for Golden Sweeps - $1M+ premium IS the conviction signal
-        self.MIN_ALIGNMENT_CONFIDENCE = 0
         self.SKIP_ALIGNMENT_CHECK = True
         # Golden prints often carry smaller absolute contract counts; allow smaller day volume
         self.MIN_VOLUME = max(self.MIN_VOLUME // 2, 50)
-        self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 3_000_000
 
     @timed()
     async def scan_and_post(self):

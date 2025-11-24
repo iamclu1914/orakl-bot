@@ -61,6 +61,7 @@ class IndexWhaleBot(BaseAutoBot):
         self.midprint_midpoint_factor = 0.97
         self.midprint_premium_override = max(self.min_premium * 2.5, 120_000)
         logger.info("Index Whale Bot minimum score filter set to %d", self.min_score)
+        logger.info("Index Whale Bot DTE range: %.1f - %.1f (0DTE allowed: %s)", self.min_dte, self.max_dte, self.min_dte <= 0.1)
 
         self.open_hour = Config.INDEX_WHALE_OPEN_HOUR
         self.open_minute = Config.INDEX_WHALE_OPEN_MINUTE
@@ -268,7 +269,7 @@ class IndexWhaleBot(BaseAutoBot):
             self._log_skip(symbol, f"VOI {volume_over_oi:.2f}x < {self.volume_over_oi_floor:.2f}x")
             return False
             
-        # DTE bounds for intraday reversals (1-3 days)
+        # DTE bounds (0DTE allowed when min_dte <= 0)
         if metrics.dte + 0.05 < self.min_dte:
             self._log_skip(symbol, f"DTE {metrics.dte:.2f} < {self.min_dte:.2f}")
             return False
@@ -277,19 +278,6 @@ class IndexWhaleBot(BaseAutoBot):
             self._log_skip(symbol, f"DTE {metrics.dte:.2f} > {self.max_dte:.2f}")
             return False
 
-        # Trend/Reversal Logic:
-        # 0DTE: Pure momentum allowed (ignore trend check to catch rapid intraday moves)
-        # 1-3 DTE: Must align with trend OR be a valid divergence play
-        if metrics.dte >= 1.0:
-            # Check if this flow fights the trend without a divergence pattern
-            # We can't easily check 'signal.label' here because signal isn't generated yet.
-            # So we rely on EnhancedAnalyzer's simple momentum check.
-            # Note: This is an async check, so we'd need to refactor _passes_filters to be async
-            # or call it before passing filters.
-            # For now, let's SKIP this inside _passes_filters and move it to the main loop
-            # where we can await the analyzer.
-            pass
-            
         return True
 
     async def _check_trend_alignment(self, metrics: OptionTradeMetrics) -> bool:
