@@ -482,32 +482,8 @@ class IndexWhaleBot(BaseAutoBot):
             contract_lines.append(f"Volume Δ: **{int(volume_delta):,}**")
 
         streak_text = f"Streak: **{signal.streak} bursts**" if signal.streak else ""
-        notes = signal.notes or []
+        notes = [note for note in (signal.notes or []) if note != "Progressively further OTM strikes"]
         notes_text = "\n".join(notes) if notes else "Repeated hits alert"
-
-        context_lines: List[str] = []
-        if stats:
-            now = datetime.utcnow()
-            if hits > 1:
-                context_lines.append(f"Hits: **{hits}x**")
-                context_lines.append(f"Cumulative premium: **{self._format_currency(total_premium)}**")
-            if first_seen:
-                minutes_active = max(int((now - first_seen).total_seconds() // 60), 0)
-                context_lines.append(f"Active **{minutes_active} min**")
-            if last_seen:
-                minutes_since = max(int((now - last_seen).total_seconds() // 60), 0)
-                context_lines.append(f"Last hit **{minutes_since} min ago**")
-            if first_spot:
-                try:
-                    spot_change_pct = (spot_price - first_spot) / first_spot * 100
-                    context_lines.append(f"Spot Δ (since first): **{spot_change_pct:+.2f}%**")
-                except ZeroDivisionError:
-                    pass
-            if cooldown_seconds:
-                context_lines.append(f"Cooldown: **{cooldown_seconds // 60} min**")
-
-        if price_change_pct is not None:
-            context_lines.append(f"Spot Δ (5m): **{price_change_pct:+.2f}%**")
 
         fields = [
             {"name": "💥 Flow Snapshot", "value": "\n".join(flow_lines), "inline": True},
@@ -518,9 +494,6 @@ class IndexWhaleBot(BaseAutoBot):
         pattern_lines.append("")
         pattern_lines.append(notes_text)
         fields.append({"name": "🧭 Pattern Context", "value": "\n".join(pattern_lines), "inline": False})
-
-        if context_lines:
-            fields.append({"name": "⌛ Flow Timeline", "value": " • ".join(context_lines), "inline": False})
 
         description = ""
         return self.create_signal_embed_with_disclaimer(
@@ -581,4 +554,3 @@ class IndexWhaleBot(BaseAutoBot):
         if value >= 1_000:
             return f"${value / 1_000:.0f}K"
         return f"${value:,.0f}"
-
