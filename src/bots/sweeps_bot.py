@@ -1,7 +1,7 @@
 """Sweeps Bot - Large options sweeps tracker"""
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 import pandas as pd
 from .base_bot import BaseAutoBot
 from src.data_fetcher import DataFetcher
@@ -43,14 +43,26 @@ class SweepsBot(BaseAutoBot):
         self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 500000
         self.PRICE_ALIGNMENT_OVERRIDE_VOI = 2.5
         self.VOLUME_RATIO_FLEX_MULTIPLIER = 0.85  # allow 15% flexibility when premium is massive
-        self.STRIKE_DISTANCE_OVERRIDE_PREMIUM = 350000
-        self.STRIKE_DISTANCE_EXTENSION = 3  # percent
+        # Tiered strike distance overrides based on premium size
+        self.STRIKE_DISTANCE_OVERRIDE_PREMIUM = 350000  # Base tier for extension
+        self.STRIKE_DISTANCE_EXTENSION = 6  # percent (increased from 3)
+        self.STRIKE_DISTANCE_PREMIUM_TIERS = [
+            (500000, 20),   # $500K+ allows 20% OTM
+            (350000, 18),   # $350K+ allows 18% OTM
+        ]
+        # Short DTE gets wider allowance (0-3 DTE allows +5% more)
+        self.SHORT_DTE_STRIKE_EXTENSION = 5  # percent
+        self.SHORT_DTE_THRESHOLD = 3  # days
         self.TOP_SWEEPS_PER_SYMBOL = 1
         self.symbol_cooldown_seconds = 300  # prevent symbol-level floods
 
         # Enhanced analysis tools
         self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
         self.deduplicator = SmartDeduplicator()
+        
+        # Golden sweeps fallback tracking
+        self._golden_bot_last_healthy: Optional[datetime] = None
+        self._golden_fallback_threshold_seconds = 600  # 10 minutes without golden = emit fallback
 
     @timed()
     async def scan_and_post(self):
@@ -256,9 +268,15 @@ class SweepsBot(BaseAutoBot):
                 
                 # STRICT FILTER: Skip any sweep that qualifies as "Golden" ($1M+)
                 # These are handled by the dedicated GoldenSweepsBot
+                # FALLBACK: If Golden bot appears unhealthy, emit in standard channel
                 if premium >= Config.GOLDEN_MIN_PREMIUM:
-                    self._log_skip(symbol, f"sweep premium ${premium:,.0f} qualifies as golden sweep (skipped in standard channel)")
-                    continue
+                    if not self._is_golden_bot_healthy():
+                        logger.info(f"{self.name} emitting golden fallback for {symbol} ${premium:,.0f} (GoldenSweepsBot unhealthy)")
+                        # Mark as fallback and continue processing
+                        flow['_golden_fallback'] = True
+                    else:
+                        self._log_skip(symbol, f"sweep premium ${premium:,.0f} qualifies as golden sweep (skipped in standard channel)")
+                        continue
                 
                 total_volume = flow['total_volume']
                 volume_delta = flow['volume_delta']
@@ -287,16 +305,24 @@ class SweepsBot(BaseAutoBot):
                     opt_type, strike, current_price, days_to_expiry
                 )
 
-                # Strike analysis
+                # Strike analysis with tiered premium-based allowances
                 strike_distance = ((strike - current_price) / current_price) * 100
-                if abs(strike_distance) > self.MAX_STRIKE_DISTANCE:
-                    extended_cap = self.MAX_STRIKE_DISTANCE + self.STRIKE_DISTANCE_EXTENSION
-                    if not (
-                        premium >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM
-                        and abs(strike_distance) <= extended_cap
-                    ):
-                        self._log_skip(symbol, f'sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
-                        continue
+                abs_distance = abs(strike_distance)
+                
+                # Determine max allowed strike distance based on premium tier
+                max_allowed_distance = self.MAX_STRIKE_DISTANCE
+                for premium_threshold, allowed_distance in self.STRIKE_DISTANCE_PREMIUM_TIERS:
+                    if premium >= premium_threshold:
+                        max_allowed_distance = allowed_distance
+                        break
+                
+                # Short DTE gets additional allowance
+                if days_to_expiry <= self.SHORT_DTE_THRESHOLD:
+                    max_allowed_distance += self.SHORT_DTE_STRIKE_EXTENSION
+                
+                if abs_distance > max_allowed_distance:
+                    self._log_skip(symbol, f'sweep strike distance {strike_distance:.1f}% exceeds {max_allowed_distance}% (premium ${premium:,.0f}, DTE {days_to_expiry})')
+                    continue
                 if opt_type == 'CALL':
                     moneyness = 'ITM' if strike < current_price else 'OTM' if strike > current_price else 'ATM'
                 else:
@@ -349,6 +375,26 @@ class SweepsBot(BaseAutoBot):
 
         return sweeps
 
+    def _is_golden_bot_healthy(self) -> bool:
+        """
+        Check if GoldenSweepsBot appears healthy based on last known status.
+        If we haven't heard from it in a while, assume unhealthy.
+        """
+        if self._golden_bot_last_healthy is None:
+            # No status received yet - assume healthy for first few minutes of operation
+            return True
+        
+        elapsed = (datetime.now() - self._golden_bot_last_healthy).total_seconds()
+        return elapsed < self._golden_fallback_threshold_seconds
+    
+    def update_golden_bot_health(self, healthy: bool) -> None:
+        """
+        Called by bot manager to update Golden bot health status.
+        This allows SweepsBot to emit fallback alerts when Golden is down.
+        """
+        if healthy:
+            self._golden_bot_last_healthy = datetime.now()
+
     def _calculate_sweep_score(self, premium: float, volume: int,
                                num_fills: int, strike_distance: float) -> int:
         """Calculate sweep conviction score using generic scoring system"""
@@ -386,6 +432,12 @@ class SweepsBot(BaseAutoBot):
         """Post enhanced sweep signal to Discord"""
         color = 0x00FF00 if sweep['type'] == 'CALL' else 0xFF0000
         emoji = "🔥" if sweep['type'] == 'CALL' else "🔥"
+        
+        # Check if golden fallback alert
+        is_golden_fallback = sweep.get('_golden_fallback', False)
+        if is_golden_fallback:
+            emoji = "🏆⚠️"  # Golden + warning
+            color = 0xFFD700  # Gold color
 
         # Check if accumulation alert
         if sweep.get('alert_type') == 'ACCUMULATION':
@@ -439,7 +491,40 @@ class SweepsBot(BaseAutoBot):
                 self._log_skip(sweep['symbol'], f"cooldown active ({self.symbol_cooldown_seconds // 60}m) for {strike_part} {sweep['type']}")
                 return False
 
-        # ... (rest of function)
+        # Build embed
+        title_prefix = "[Golden Fallback] " if is_golden_fallback else ""
+        title = f"{emoji} {title_prefix}{sweep['ticker']} - {sentiment}"
+        
+        premium_fmt = f"${sweep['premium']/1_000_000:.1f}M" if sweep['premium'] >= 1_000_000 else f"${sweep['premium']/1_000:.0f}K"
+        
+        fields = [
+            {"name": "Strike", "value": f"${sweep['strike']:.2f}", "inline": True},
+            {"name": "Expiration", "value": sweep['expiration'], "inline": True},
+            {"name": "DTE", "value": str(sweep['days_to_expiry']), "inline": True},
+            {"name": "Premium", "value": premium_fmt, "inline": True},
+            {"name": "Volume", "value": f"{sweep['volume']:,}", "inline": True},
+            {"name": "Fills", "value": str(sweep.get('num_fills', 'N/A')), "inline": True},
+            {"name": "Current Price", "value": f"${sweep['current_price']:.2f}", "inline": True},
+            {"name": "Strike Distance", "value": f"{sweep['strike_distance']:.1f}%", "inline": True},
+            {"name": "Score", "value": f"{int(final_score)}/100", "inline": True},
+        ]
+        
+        # Add volume ratio if available
+        if sweep.get('volume_ratio'):
+            fields.append({"name": "Vol Ratio", "value": f"{sweep['volume_ratio']:.2f}x", "inline": True})
+        
+        # Add alert reason if available
+        if sweep.get('alert_reason'):
+            fields.append({"name": "Alert Type", "value": sweep['alert_reason'], "inline": False})
+
+        footer_text = "Golden Sweep Fallback" if is_golden_fallback else "Sweeps Bot"
+        embed = self.create_signal_embed_with_disclaimer(
+            title=title,
+            description=f"**{sweep['type']}** sweep detected with **{sweep['moneyness']}** positioning",
+            color=color,
+            fields=fields,
+            footer=footer_text
+        )
 
         success = await self.post_to_discord(embed)
         if success:

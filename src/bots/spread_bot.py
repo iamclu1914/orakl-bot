@@ -63,6 +63,8 @@ class SpreadBot(BaseAutoBot):
         self._subscription_registered = False
         self._subscription_lock = asyncio.Lock()
         self._golden_scan_lock = asyncio.Lock()
+        # Limit per-scan workload to avoid timeouts; rotate batches each scan.
+        self.scan_batch_size = getattr(Config, "SPREAD_SCAN_BATCH_SIZE", 100)
 
     async def start(self):
         await self._ensure_subscription()

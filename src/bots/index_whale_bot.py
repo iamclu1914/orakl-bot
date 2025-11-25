@@ -481,7 +481,6 @@ class IndexWhaleBot(BaseAutoBot):
         if volume_delta is not None:
             contract_lines.append(f"Volume Δ: **{int(volume_delta):,}**")
 
-        streak_text = f"Streak: **{signal.streak} bursts**" if signal.streak else ""
         notes = [note for note in (signal.notes or []) if note != "Progressively further OTM strikes"]
         notes_text = "\n".join(notes) if notes else "Repeated hits alert"
 

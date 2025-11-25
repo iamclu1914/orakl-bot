@@ -835,7 +835,20 @@ class BaseAutoBot(ABC):
             'reason': reason
         }
         self._skip_records.append(entry)
-        logger.info(f"{self.name} skip {symbol}: {reason}")
+        logger.debug(f"{self.name} skip {symbol}: {reason}")
+    
+    def get_skip_records(self, limit: int = 50) -> List[Dict[str, str]]:
+        """
+        Get recent skip records for diagnostics.
+        
+        Args:
+            limit: Maximum number of records to return (default 50)
+            
+        Returns:
+            List of skip record dictionaries with time, symbol, and reason
+        """
+        records = list(self._skip_records)
+        return records[-limit:] if len(records) > limit else records
     
     async def get_health(self) -> Dict[str, Any]:
         """
@@ -875,7 +888,10 @@ class BaseAutoBot(ABC):
         # 1. Running and scans are happening on schedule
         # 2. Not experiencing consecutive errors
         # 3. Either has successful webhooks OR hasn't needed to send any yet
-        scan_healthy = time_since_last_scan < self.scan_interval * 2
+        # Use max(scan_interval * 3, 180) for tolerance - ensures at least 3 min grace
+        # This prevents false "unhealthy" states for high-frequency bots (e.g., 60s interval)
+        health_tolerance = max(self.scan_interval * 3, 180)
+        scan_healthy = time_since_last_scan < health_tolerance
         error_healthy = self._consecutive_errors < 5
 
         # Webhook health: if we've sent signals, check success rate

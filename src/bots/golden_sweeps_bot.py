@@ -121,6 +121,17 @@ class GoldenSweepsBot(SweepsBot):
                 else:
                     sweep_score += 5
                 sweep_score = min(sweep_score, 100)
+                
+                # Premium-based score floor: massive sweeps should NEVER be filtered by low volume metrics
+                # This ensures $10M sweeps with missing volume_ratio still get alerted
+                premium_score_floor = 0
+                if premium >= 5_000_000:
+                    premium_score_floor = 75
+                elif premium >= 3_000_000:
+                    premium_score_floor = 70
+                elif premium >= 1_000_000:
+                    premium_score_floor = 65
+                sweep_score = max(sweep_score, premium_score_floor)
 
                 sweep = {
                     'ticker': symbol,
