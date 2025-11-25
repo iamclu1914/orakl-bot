@@ -309,6 +309,9 @@ class SpreadBot(BaseAutoBot):
             logger.debug("%s golden trigger: cooldown active for %s", self.name, cooldown_key)
             return
 
+        # Mark cooldown IMMEDIATELY (prevents duplicates on bot restart)
+        self._mark_cooldown(cooldown_key)
+
         payload = {
             "metrics": metrics,
             "contract_price": metrics.price,
@@ -519,6 +522,9 @@ class SpreadBot(BaseAutoBot):
                         log_once(f"cooldown active (already alerted in last {self.cooldown_seconds // 60} min)")
                     continue
 
+                # Mark cooldown IMMEDIATELY when adding signal (prevents duplicates on bot restart)
+                self._mark_cooldown(cooldown_key)
+                
                 signals.append(
                     {
                         "metrics": metrics,
@@ -633,7 +639,7 @@ class SpreadBot(BaseAutoBot):
         contract_price: float = payload["contract_price"]
         flow: Dict = payload["flow"]
 
-        # Build cooldown key
+        # Build cooldown key for tracking
         cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
         
         # Post the signal
@@ -643,7 +649,8 @@ class SpreadBot(BaseAutoBot):
         success = await self.post_to_discord(embed)
         
         if success:
-            self._mark_cooldown(cooldown_key)  # Mark AFTER successful post
+            # Note: Cooldown was already marked in _scan_symbol to prevent duplicates on restart
+            # Just update flow stats tracking here
             if cooldown_key in self._flow_stats:
                 self._flow_stats[cooldown_key]["last_alerted"] = datetime.utcnow()
             logger.info(
