@@ -108,7 +108,11 @@ class SweepsBot(BaseAutoBot):
                     sweep["volume_ratio_source"] = volume_ratio_source
                     sweep["volume_ratio_data_available"] = ratio_data_available
 
-                    if ratio_data_available and sweep["volume_ratio"] < self.MIN_VOLUME_RATIO:
+                    # Skip volume ratio check if SKIP_VOLUME_RATIO_CHECK is set (e.g., Golden Sweeps)
+                    # For $1M+ sweeps, premium size IS the conviction signal
+                    skip_volume_ratio = getattr(self, 'SKIP_VOLUME_RATIO_CHECK', False)
+
+                    if not skip_volume_ratio and ratio_data_available and sweep["volume_ratio"] < self.MIN_VOLUME_RATIO:
                         flex_threshold = self.MIN_VOLUME_RATIO * self.VOLUME_RATIO_FLEX_MULTIPLIER
                         if not (
                             sweep["premium"] >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM
