@@ -515,8 +515,6 @@ class IndexWhaleBot(BaseAutoBot):
         ]
 
         pattern_lines = [f"Pattern: **{signal.label}** ({signal.direction})"]
-        if streak_text:
-            pattern_lines.append(streak_text)
         pattern_lines.append("")
         pattern_lines.append(notes_text)
         fields.append({"name": "🧭 Pattern Context", "value": "\n".join(pattern_lines), "inline": False})

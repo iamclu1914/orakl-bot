@@ -142,7 +142,7 @@ class WhaleFlowTracker:
         # Priority 4: CONTINUATION - sustained pressure
         elif streak >= 4:  # Increased from 3 to 4 for higher conviction
             label = "CONTINUATION"
-            notes.append(f"{streak} consecutive bursts")
+            # Note: streak count intentionally not displayed in card
 
         # Priority 5: CHOP - indecision
         if self._alternating(history, direction):
