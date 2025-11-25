@@ -30,6 +30,8 @@ class SweepsBot(BaseAutoBot):
         self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 150000)
         self.MIN_VOLUME = 150
         self.MIN_VOLUME_DELTA = 60
+        # Limit per-scan workload to avoid timeouts; rotate batches each scan.
+        self.scan_batch_size = getattr(Config, "SWEEPS_SCAN_BATCH_SIZE", 200)
         self.MAX_STRIKE_DISTANCE = 12  # percent
         # Require a high conviction sweep score before alerting
         self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)

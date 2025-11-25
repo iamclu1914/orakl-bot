@@ -515,9 +515,33 @@ class BaseAutoBot(ABC):
         if not hasattr(self, '_scan_symbol'):
             raise NotImplementedError("Either implement scan_and_post or _scan_symbol")
 
-        watchlist = getattr(self, 'watchlist', [])
+        full_watchlist = getattr(self, 'watchlist', [])
+        batch_watchlist = full_watchlist
+        batch_limit = getattr(self, 'scan_batch_size', 0)
+        if batch_limit and len(full_watchlist) > batch_limit:
+            batches = (len(full_watchlist) + batch_limit - 1) // batch_limit
+            batch_index = self.metrics.scan_count % batches
+            start = batch_index * batch_limit
+            batch_watchlist = full_watchlist[start:start + batch_limit]
+            logger.info(
+                "%s starting concurrent scan batch %d/%d: %d of %d symbols (max %d concurrent)",
+                self.name,
+                batch_index + 1,
+                batches,
+                len(batch_watchlist),
+                len(full_watchlist),
+                self.concurrency_limit,
+            )
+        else:
+            logger.info(
+                "%s starting concurrent scan of %d symbols (max %d concurrent)",
+                self.name,
+                len(batch_watchlist),
+                self.concurrency_limit,
+            )
+
+        watchlist = batch_watchlist
         total_symbols = len(watchlist)
-        logger.info(f"{self.name} starting concurrent scan of {total_symbols} symbols (max {self.concurrency_limit} concurrent)")
 
         if total_symbols == 0:
             logger.debug(f"{self.name} watchlist empty, skipping scan")
