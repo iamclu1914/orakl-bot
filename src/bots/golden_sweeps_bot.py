@@ -29,8 +29,12 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 70)
         # Golden sweeps can sit further from the money but still matter
         self.MAX_STRIKE_DISTANCE = Config.GOLDEN_MAX_STRIKE_DISTANCE  # percent
-        # Limit per-scan workload; rotate batches each scan (defaults to 200 if unset).
-        self.scan_batch_size = getattr(Config, "GOLDEN_SWEEPS_SCAN_BATCH_SIZE", getattr(Config, "SWEEPS_SCAN_BATCH_SIZE", 200))
+        # Limit per-scan workload; rotate batches each scan (defaults to 120 if unset).
+        self.scan_batch_size = getattr(
+            Config,
+            "GOLDEN_SWEEPS_SCAN_BATCH_SIZE",
+            getattr(Config, "SWEEPS_SCAN_BATCH_SIZE", 120),
+        )
         logger.info(
             "Golden Sweeps max strike distance set to %.1f%% (env override ready)",
             self.MAX_STRIKE_DISTANCE,

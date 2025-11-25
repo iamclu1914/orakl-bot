@@ -66,6 +66,12 @@ class BullseyeBot(BaseAutoBot):
         self.trigger_min_volume = getattr(
             Config, "BULLSEYE_TRIGGER_MIN_VOLUME", max(self.min_block_contracts, 750)
         )
+        # Limit per-scan workload to prevent timeouts; rotate batches each scan.
+        self.scan_batch_size = getattr(
+            Config,
+            "BULLSEYE_SCAN_BATCH_SIZE",
+            getattr(Config, "SWEEPS_SCAN_BATCH_SIZE", 120),
+        )
 
     async def start(self):
         await self._ensure_subscription()
@@ -806,4 +812,3 @@ class BullseyeBot(BaseAutoBot):
 
     async def stop(self):
         await super().stop()
-
