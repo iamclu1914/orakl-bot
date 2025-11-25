@@ -82,7 +82,8 @@ class GoldenSweepsBot(SweepsBot):
 
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
                 days_to_expiry = (exp_date - datetime.now()).days
-                if days_to_expiry <= 0 or days_to_expiry > 90:
+                # Allow 0DTE up to 2-year LEAPS for Golden Sweeps - $1M+ on LEAPS is still conviction
+                if days_to_expiry < 0 or days_to_expiry > 730:
                     continue
 
                 prob_itm = self.analyzer.calculate_probability_itm(
@@ -90,12 +91,7 @@ class GoldenSweepsBot(SweepsBot):
                 )
 
                 strike_distance = ((strike - current_price) / current_price) * 100
-                if abs(strike_distance) > self.MAX_STRIKE_DISTANCE:
-                    # Allow exception for DEEP OTM if premium is massive (>$5M)
-                    if premium < 5_000_000:
-                        self._log_skip(symbol, f'golden sweep strike distance {strike_distance:.1f}% exceeds {self.MAX_STRIKE_DISTANCE}%')
-                        continue
-
+                # No strike distance filter for Golden Sweeps - $1M+ premium IS the conviction signal
 
                 if opt_type == 'CALL':
                     moneyness = 'ITM' if strike < current_price else 'OTM' if strike > current_price else 'ATM'
