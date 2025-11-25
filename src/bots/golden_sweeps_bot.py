@@ -25,7 +25,8 @@ class GoldenSweepsBot(SweepsBot):
         self.name = "Golden Sweeps Bot"
         self.scan_interval = Config.GOLDEN_SWEEPS_INTERVAL
         self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)
-        self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 80)
+        # Golden prints should alert even with moderate contract counts; ease the score gate.
+        self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 70)
         # Golden sweeps can sit further from the money but still matter
         self.MAX_STRIKE_DISTANCE = Config.GOLDEN_MAX_STRIKE_DISTANCE  # percent
         logger.info(
@@ -38,6 +39,8 @@ class GoldenSweepsBot(SweepsBot):
         self.SKIP_ALIGNMENT_CHECK = True
         # Golden prints often carry smaller absolute contract counts; allow smaller day volume
         self.MIN_VOLUME = max(self.MIN_VOLUME // 2, 50)
+        # Allow smaller contract bursts to qualify as golden sweeps
+        self.MIN_VOLUME_DELTA = max(self.MIN_VOLUME_DELTA // 2, 20)
 
     @timed()
     async def scan_and_post(self):
@@ -76,8 +79,8 @@ class GoldenSweepsBot(SweepsBot):
 
                 # Filter by trade size (volume_delta) instead of day volume for Golden Sweeps
                 # We want to catch massive single orders even if day volume is low
-                if volume_delta < 50:
-                    self._log_skip(symbol, f"golden sweep size {volume_delta} < 50 contracts")
+                if volume_delta < self.MIN_VOLUME_DELTA:
+                    self._log_skip(symbol, f"golden sweep size {volume_delta} < {self.MIN_VOLUME_DELTA} contracts")
                     continue
 
                 exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -102,6 +105,16 @@ class GoldenSweepsBot(SweepsBot):
                 sweep_score = self._calculate_sweep_score(
                     premium, total_volume, num_fills, abs(strike_distance)
                 )
+                # Reward outsized premium so $1M+ sweeps are never filtered out by score alone
+                if premium >= 5_000_000:
+                    sweep_score += 20
+                elif premium >= 3_000_000:
+                    sweep_score += 15
+                elif premium >= 2_000_000:
+                    sweep_score += 10
+                else:
+                    sweep_score += 5
+                sweep_score = min(sweep_score, 100)
 
                 sweep = {
                     'ticker': symbol,
