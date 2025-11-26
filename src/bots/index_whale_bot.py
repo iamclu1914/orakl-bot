@@ -55,6 +55,7 @@ class IndexWhaleBot(BaseAutoBot):
         self.cooldown_intraday_seconds = 1800  # 30 minutes for 1-3 DTE reversals
         self.cooldown_same_day_seconds = 900   # 15 minutes for 0DTE bursts (reduced noise)
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
+        self._underlying_cooldown: Dict[str, datetime] = {}
         self.min_score = max(Config.INDEX_WHALE_MIN_SCORE, 80)
         self.volume_over_oi_floor = 0.7
         self.midprint_spread_pct_cap = 5.5
@@ -132,6 +133,12 @@ class IndexWhaleBot(BaseAutoBot):
                 signal = self.whale_tracker.process_trade(metrics, price_change_pct)
 
                 cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
+                open_interest = flow.get("open_interest", 0) or 0
+                volume_delta = flow.get("volume_delta", 0) or 0
+                if open_interest > 0 and volume_delta <= open_interest:
+                    self._log_skip(symbol, "volume delta not greater than open interest")
+                    continue
+
                 stats_snapshot = self._update_flow_stats(
                     cooldown_key,
                     metrics=metrics,
@@ -183,7 +190,19 @@ class IndexWhaleBot(BaseAutoBot):
             return []
 
         signals.sort(key=lambda item: item["metrics"].premium, reverse=True)
-        return signals[:3]
+
+        if not signals:
+            return []
+
+        top_signal = signals[0]
+        now = datetime.utcnow()
+        last_alert = self._underlying_cooldown.get(symbol)
+        if last_alert and (now - last_alert).total_seconds() < 300:
+            self._log_skip(symbol, "5m underlying cooldown – already alerted best contract")
+            return []
+
+        self._underlying_cooldown[symbol] = now
+        return [top_signal]
 
     async def _post_signal(self, payload: Dict) -> bool:
         metrics: OptionTradeMetrics = payload["metrics"]
@@ -228,6 +247,7 @@ class IndexWhaleBot(BaseAutoBot):
                 # Track premium at time of alert for deduplication
                 current_total = stats.get("total_premium", float(metrics.premium or 0.0))
                 self._flow_stats[cooldown_key]["last_alerted_premium"] = current_total
+            self._underlying_cooldown[metrics.underlying] = datetime.utcnow()
             logger.info(
                 "IndexWhale Alert: %s %.2f %s premium $%s [%s]",
                 metrics.underlying,
