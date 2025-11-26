@@ -352,10 +352,19 @@ class SweepsBot(BaseAutoBot):
                     'sweep_score': sweep_score,
                     'time_span': 0,  # Not available in REST (was time between trades)
                     'volume_delta': volume_delta,
+                    'open_interest': flow.get('open_interest', 0),
                     'delta': flow.get('delta', 0),
                     'gamma': flow.get('gamma', 0),
                     'vega': flow.get('vega', 0)
                 }
+
+                is_block_contract = (
+                    volume_delta >= getattr(Config, "BULLSEYE_MIN_BLOCK_CONTRACTS", 400)
+                    and premium >= getattr(Config, "BULLSEYE_MIN_PREMIUM", 1_000_000)
+                )
+                sweep['execution_type'] = 'BLOCK' if is_block_contract else 'SWEEP'
+                if is_block_contract:
+                    sweep['block_reason'] = f"{volume_delta:,} contracts vs OI {flow.get('open_interest', 0):,}"
 
                 # CRITICAL FEATURE #4: Smart Deduplication
                 signal_key = f"{symbol}_{opt_type}_{strike}_{expiration}"
@@ -444,8 +453,13 @@ class SweepsBot(BaseAutoBot):
             emoji = "🔥⚡🔥"
             color = 0xFF4500  # Orange-red
 
-        # Determine sentiment
-        if sweep['moneyness'] == 'ITM':
+        execution_type = sweep.get('execution_type', 'SWEEP').upper()
+
+        # Determine sentiment / labeling
+        if execution_type == 'BLOCK':
+            sentiment = "Institutional Block Trade"
+            emoji = "🧱🔥"
+        elif sweep['moneyness'] == 'ITM':
             sentiment = "Aggressive ITM Sweep"
         elif sweep['moneyness'] == 'ATM':
             sentiment = "ATM Sweep"
@@ -493,7 +507,8 @@ class SweepsBot(BaseAutoBot):
 
         # Build embed
         title_prefix = "[Golden Fallback] " if is_golden_fallback else ""
-        title = f"{emoji} {title_prefix}{sweep['ticker']} - {sentiment}"
+        block_suffix = " • Block" if execution_type == 'BLOCK' else ""
+        title = f"{emoji} {title_prefix}{sweep['ticker']} - {sentiment}{block_suffix}"
         
         premium_fmt = f"${sweep['premium']/1_000_000:.1f}M" if sweep['premium'] >= 1_000_000 else f"${sweep['premium']/1_000:.0f}K"
         
@@ -516,6 +531,13 @@ class SweepsBot(BaseAutoBot):
         # Add alert reason if available
         if sweep.get('alert_reason'):
             fields.append({"name": "Alert Type", "value": sweep['alert_reason'], "inline": False})
+
+        if execution_type == 'BLOCK':
+            oi_value = sweep.get('open_interest') or sweep.get('flow', {}).get('open_interest')
+            block_context = sweep.get('block_reason') or "Block-sized single print"
+            fields.append({"name": "Block Context", "value": block_context, "inline": False})
+            if oi_value is not None:
+                fields.append({"name": "Open Interest", "value": f"{oi_value:,}", "inline": True})
 
         footer_text = "Golden Sweep Fallback" if is_golden_fallback else "Sweeps Bot"
         embed = self.create_signal_embed_with_disclaimer(

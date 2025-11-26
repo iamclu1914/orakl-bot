@@ -257,6 +257,10 @@ class GoldenSweepsBot(SweepsBot):
             footer="ORAKL Bot - Golden Sweeps"
         )
 
+        # Persist final score info on sweep for downstream consumers
+        sweep['final_score'] = final_score
+        sweep['score_passed'] = final_score >= Config.MIN_GOLDEN_SCORE
+
         success = await self.post_to_discord(embed)
         if success:
             logger.info(
@@ -284,6 +288,8 @@ class GoldenSweepsBot(SweepsBot):
                 direction=sweep.get("type"),
                 timestamp=datetime.utcnow().isoformat(),
                 sweep=sweep,
+                final_score=sweep.get("final_score"),
+                score_passed=sweep.get("score_passed", True),
             )
         except Exception as exc:
             logger.exception("failed to publish golden sweep event: %s", exc)

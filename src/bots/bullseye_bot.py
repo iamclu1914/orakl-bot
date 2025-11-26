@@ -97,6 +97,27 @@ class BullseyeBot(BaseAutoBot):
         if not symbol or option_type not in {"CALL", "PUT"}:
             return
 
+        sweep_payload = payload.get("sweep") or {}
+        min_score = getattr(Config, "MIN_GOLDEN_SCORE", 85)
+        payload_score = (
+            payload.get("final_score")
+            or sweep_payload.get("final_score")
+            or sweep_payload.get("enhanced_score")
+            or sweep_payload.get("sweep_score")
+        )
+
+        score_passed_flag = payload.get("score_passed")
+        if score_passed_flag is False or (
+            isinstance(payload_score, (int, float)) and payload_score < min_score
+        ):
+            logger.debug(
+                "%s ignoring golden sweep event for %s (score %.1f below threshold)",
+                self.name,
+                symbol,
+                float(payload_score) if payload_score is not None else -1.0,
+            )
+            return
+
         try:
             async with self._golden_scan_lock:
                 await self._scan_golden_triggered(symbol, option_type, payload)
@@ -241,6 +262,8 @@ class BullseyeBot(BaseAutoBot):
                 else "STRONG"
             )
 
+            execution_type = "BLOCK" if volume >= self.min_block_contracts else "SWEEP"
+
             candidate = {
                 "ticker": contract.get("ticker"),
                 "strike": float(strike),
@@ -257,6 +280,7 @@ class BullseyeBot(BaseAutoBot):
                 "spread_pct": spread_pct,
                 "voi_ratio": voi_ratio,
                 "intensity": intensity,
+                "execution_type": execution_type,
             }
 
             if not candidate["ticker"]:
@@ -298,6 +322,7 @@ class BullseyeBot(BaseAutoBot):
             "vol_oi_ratio": best_candidate["voi_ratio"],
             "flow_intensity": best_candidate["intensity"],
             "last_trade_timestamp": datetime.now(timezone.utc),
+            "execution_type": best_candidate.get("execution_type", "SWEEP"),
         }
 
         metrics = build_metrics_from_flow(flow_payload)
@@ -722,6 +747,7 @@ class BullseyeBot(BaseAutoBot):
         bid_price = float(flow.get("bid") or 0.0)
         ask_price = float(flow.get("ask") or 0.0)
         flow_intensity = (flow.get("flow_intensity") or "NORMAL").upper()
+        execution_type = (flow.get("execution_type") or "SWEEP").upper()
 
         premium_fmt = (
             f"${metrics.premium / 1_000_000:.1f}M"
@@ -748,12 +774,18 @@ class BullseyeBot(BaseAutoBot):
         else:
             recency_text = "recent"
 
+        execution_line = ""
+        if execution_type == "BLOCK":
+            execution_line = "Execution: **Block Contract (single print)**\n"
+        execution_section = f"{execution_line}\n" if execution_line else ""
+
         description = (
             "**Institutional Block Print**\n\n"
             f"Fill: **${contract_price:.2f}** @ ask ({option_type_short})\n"
             f"Block Size: **{volume_delta:,} contracts**\n"
             f"Premium: **{premium_fmt}**\n"
-            f"Intensity: **{flow_intensity}** ({recency_text})\n\n"
+            f"Intensity: **{flow_intensity}** ({recency_text})\n"
+            f"{execution_section}"
             "**Market Context**\n\n"
             f"DTE: **{dte_days}** | % OTM: **{metrics.percent_otm * 100:.2f}%**\n"
             f"Vol/OI: **{voi_ratio:.2f}x** | Day Vol: **{total_volume:,}** | OI: **{oi_value:,}**\n"
@@ -782,9 +814,10 @@ class BullseyeBot(BaseAutoBot):
             },
         ]
 
+        block_suffix = " • Block Contract" if execution_type == "BLOCK" else ""
         title = (
             f"{metrics.underlying} {metrics.strike} {option_type_short} "
-            f"{expiration_fmt} ({dte_days}D) • Bullseye Block"
+            f"{expiration_fmt} ({dte_days}D) • Bullseye Block{block_suffix}"
         )
 
         embed = self.create_signal_embed_with_disclaimer(
