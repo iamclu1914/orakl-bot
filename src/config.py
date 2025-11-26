@@ -42,11 +42,11 @@ class Config:
     ALERT_CHANNEL_ID = int(os.getenv('ALERT_CHANNEL_ID', '1427156934582079588'))
     
     # Bot Scan Intervals (seconds) - Original intervals restored
-    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '180'))  # 3 minutes
+    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '600'))  # 10 minutes
     SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '300'))  # 5 minutes (reduced from 15 to close gap)
-    INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '60'))  # 60 seconds REST polling
-    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '120'))  # 2 minutes
+    INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '600'))  # 10 minutes REST polling
+    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '600'))  # 10 minutes
     
     # Batch sizes for scan workload management (prevents timeouts)
     SPREAD_SCAN_BATCH_SIZE = int(os.getenv('SPREAD_SCAN_BATCH_SIZE', '100'))
@@ -80,12 +80,12 @@ class Config:
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
     
     # Bullseye Bot Thresholds (institutional swing trades 1-5 DTE)
-    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '1000000'))  # $1M+ block trades
+    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '500000'))  # lowered to $500K
     BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2000'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
     BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '21.0'))
     BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '400'))
-    BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '400'))
+    BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '200'))
     BULLSEYE_MIN_VOI_RATIO = float(os.getenv('BULLSEYE_MIN_VOI_RATIO', '1.0'))  # Fresh positioning
     BULLSEYE_MIN_OPEN_INTEREST = int(os.getenv('BULLSEYE_MIN_OPEN_INTEREST', '500')) # Lowered to allow Vol > OI logic to work
     BULLSEYE_MIN_PRICE = float(os.getenv('BULLSEYE_MIN_PRICE', '0.25'))

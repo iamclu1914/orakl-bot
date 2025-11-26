@@ -52,11 +52,11 @@ class BullseyeBot(BaseAutoBot):
         self.required_intensity = {"STRONG", "AGGRESSIVE"}
 
         # High-conviction overrides / mid-print allowances
-        self.midprint_spread_pct_cap = 6.5  # allow wider mid-prints through
-        self.midprint_midpoint_factor = 0.96  # trade must print at/above 96% of midpoint
+        self.midprint_spread_pct_cap = 8.0  # allow wider mid-prints through
+        self.midprint_midpoint_factor = 0.94  # trade must print at/above 94% of midpoint
         self.midprint_voi_override = 1.5
-        self.midprint_premium_override = max(self.min_premium * 1.25, 1_250_000)
-        self.high_conviction_premium = max(self.min_premium * 1.5, 1_500_000)
+        self.midprint_premium_override = max(self.min_premium * 1.1, 750_000)
+        self.high_conviction_premium = max(self.min_premium * 1.3, 1_000_000)
         self.low_price_floor = max(0.15, self.min_price * 0.6)
         self.low_volume_override = max(self.min_block_contracts * 2, 1000)
         self.percent_otm_extension = 0.05  # allow +5% OTM when premium is massive
