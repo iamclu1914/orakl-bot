@@ -322,6 +322,18 @@ class BullseyeBot(BaseAutoBot):
             logger.debug("%s trigger: score %d below threshold for %s", self.name, score, symbol)
             return False
 
+        oi_value = flow_payload.get("open_interest") or 0
+        if oi_value and volume <= oi_value:
+            self._log_skip(symbol, f"volume {volume} <= OI {oi_value}")
+            return False
+
+        trend_data = await self.enhanced_analyzer.get_trend_alignment(symbol)
+        if trend_data:
+            desired = "BULLISH" if option_type == "CALL" else "BEARISH"
+            if not all(tf_info.get("trend") == desired for tf_info in trend_data.values()):
+                self._log_skip(symbol, f"trend misaligned ({desired} required)")
+                return False
+
         payload = {
             "metrics": metrics,
             "flow": flow_payload,
@@ -331,6 +343,7 @@ class BullseyeBot(BaseAutoBot):
             "spread_pct": candidate.get("spread_pct"),
             "origin_event": event_payload,
             "triggered_by_golden": candidate.get("origin") != "event",
+            "trend_data": trend_data,
         }
 
         posted = await self._post_signal(payload)
@@ -669,10 +682,6 @@ class BullseyeBot(BaseAutoBot):
                     self._log_skip(symbol, f"%OTM {percent_otm*100:.2f}% > {self.max_percent_otm*100:.2f}%")
                     continue
 
-            if volume_delta < self.min_block_contracts:
-                self._log_skip(symbol, f"block size {volume_delta} < {self.min_block_contracts}")
-                continue
-
             if total_volume < self.min_volume:
                 if not (
                     premium >= self.high_conviction_premium
@@ -703,11 +712,11 @@ class BullseyeBot(BaseAutoBot):
                 continue
 
             # Enforce Volume > Open Interest (Net New Positioning)
-            if int(flow.get("open_interest") or 0) > 0:
-                if total_volume <= int(flow.get("open_interest") or 0):
-                    self._log_skip(symbol, f"Vol {total_volume} <= OI {flow.get('open_interest')} (not new positioning)")
-                    continue
-                
+            oi_value = int(flow.get("open_interest") or 0)
+            if oi_value and volume_delta <= oi_value:
+                self._log_skip(symbol, f"volume {volume_delta} <= OI {oi_value} (no fresh positioning)")
+                continue
+
             # 10-minute Candle Verification
             # Ensure the option contract itself traded > $100k in the last 10 minutes
             # and shows aggressive buying pressure (green candle)
@@ -774,6 +783,12 @@ class BullseyeBot(BaseAutoBot):
             except Exception as e:
                 logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
 
+            trend_data = await self.enhanced_analyzer.get_trend_alignment(symbol)
+            if trend_data:
+                desired_trend = "BULLISH" if metrics.option_type.upper() == "CALL" else "BEARISH"
+                if not all(tf_info.get("trend") == desired_trend for tf_info in trend_data.values()):
+                    self._log_skip(symbol, f"trend misaligned ({desired_trend} required)")
+                    continue
             cooldown_key = self._build_cooldown_key(metrics)
             if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
                 self._log_skip(symbol, f"cooldown active ({cooldown_key})")
@@ -795,6 +810,7 @@ class BullseyeBot(BaseAutoBot):
                     "score": score,
                     "cooldown_key": cooldown_key,
                     "spread_pct": spread_pct,
+                    "trend_data": trend_data,
                 }
             )
 
@@ -867,7 +883,14 @@ class BullseyeBot(BaseAutoBot):
         contract_price: float = payload["contract_price"]
         score: int = payload["score"]
 
-        embed = self._build_embed(metrics, contract_price, flow, score, payload.get("spread_pct"))
+        embed = self._build_embed(
+            metrics,
+            contract_price,
+            flow,
+            score,
+            payload.get("spread_pct"),
+            payload.get("trend_data"),
+        )
         success = await self.post_to_discord(embed)
 
         if success:
@@ -892,6 +915,7 @@ class BullseyeBot(BaseAutoBot):
         flow: Dict[str, Any],
         score: int,
         spread_pct: Optional[float],
+        trend_data: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         dte_days = int(round(metrics.dte))
         expiration_fmt = (
@@ -1007,6 +1031,17 @@ class BullseyeBot(BaseAutoBot):
             {"name": "Bullseye Score", "value": f"{score}/100", "inline": True},
         ]
 
+        if trend_data:
+            tf_priority = {"1h": 0, "4h": 1, "1d": 2}
+            ordered = sorted(trend_data.items(), key=lambda kv: tf_priority.get(kv[0], 99))
+            trends_only = {tf: info.get("trend", "UNKNOWN") for tf, info in ordered}
+            unique = set(trends_only.values())
+            if len(unique) == 1:
+                summary = f"{unique.pop()} ({'/'.join(trends_only.keys())})"
+            else:
+                summary = " | ".join(f"{tf}:{trend}" for tf, trend in trends_only.items())
+            fields.append({"name": "Trend Alignment", "value": summary, "inline": True})
+
         if execution_type == "BLOCK":
             fields.append(
                 {
@@ -1017,6 +1052,10 @@ class BullseyeBot(BaseAutoBot):
             )
             fields.append(
                 {"name": "Spread", "value": f"{spread_text} ({spread_label})", "inline": True}
+            )
+        else:
+            fields.append(
+                {"name": "Execution", "value": "Sweep accumulation", "inline": False}
             )
 
         embed = self.create_signal_embed_with_disclaimer(

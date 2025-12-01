@@ -4,7 +4,8 @@ Critical features for high-probability signal detection
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence, Tuple
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class EnhancedAnalyzer:
         self.fetcher = fetcher
         self.volume_cache = {}  # Cache 30-day averages
         self.price_action_cache = {}  # Cache intraday price data for alignment checks
+        self.trend_cache: Dict[Tuple[str, str], Dict[str, object]] = {}
 
     async def calculate_volume_ratio(self, symbol: str, current_volume: int) -> float:
         """
@@ -148,6 +150,90 @@ class EnhancedAnalyzer:
         except Exception as e:
             logger.error(f"Error checking price action for {symbol}: {e}")
             return None
+
+    async def get_trend_alignment(
+        self,
+        symbol: str,
+        timeframes: Sequence[str] = ("1h", "4h", "1d"),
+    ) -> Optional[Dict[str, Dict[str, object]]]:
+        """
+        Determine bullish/bearish trend state across multiple timeframes using EMA clouds.
+
+        Returns dict mapping timeframe -> {trend, ema values}. Returns None if data unavailable.
+        """
+        try:
+            results: Dict[str, Dict[str, object]] = {}
+            for tf in timeframes:
+                cache_key = (symbol, tf)
+                cached = self.trend_cache.get(cache_key)
+                if cached:
+                    age_sec = (datetime.utcnow() - cached["timestamp"]).total_seconds()
+                    if age_sec < 300:
+                        results[tf] = cached["data"]
+                        continue
+
+                tf_map = {"1h": ("hour", 1), "4h": ("hour", 4), "1d": ("day", 1)}
+                if tf not in tf_map:
+                    continue
+                timespan, multiplier = tf_map[tf]
+
+                from_date = (datetime.utcnow() - timedelta(days=60)).strftime("%Y-%m-%d")
+                bars = await self.fetcher.get_aggregates(
+                    symbol,
+                    timespan=timespan,
+                    multiplier=multiplier,
+                    from_date=from_date,
+                )
+
+                if bars.empty or len(bars) < 60:
+                    return None
+
+                closes = bars["close"].to_numpy(dtype=float)
+                ema5 = self._ema(closes, 5)
+                ema12 = self._ema(closes, 12)
+                ema34 = self._ema(closes, 34)
+                ema50 = self._ema(closes, 50)
+                close = closes[-1]
+
+                bullish_price = close > ema50[-1]
+                bullish_cloud_3450 = ema34[-1] > ema50[-1]
+                bullish_cloud_512 = ema5[-1] > ema12[-1]
+
+                bearish_price = close < ema50[-1]
+                bearish_cloud_3450 = ema34[-1] < ema50[-1]
+                bearish_cloud_512 = ema5[-1] < ema12[-1]
+
+                if bullish_price and bullish_cloud_3450 and bullish_cloud_512:
+                    trend = "BULLISH"
+                elif bearish_price and bearish_cloud_3450 and bearish_cloud_512:
+                    trend = "BEARISH"
+                else:
+                    trend = "NEUTRAL"
+
+                data = {
+                    "trend": trend,
+                    "close": close,
+                    "ema5": ema5[-1],
+                    "ema12": ema12[-1],
+                    "ema34": ema34[-1],
+                    "ema50": ema50[-1],
+                }
+                self.trend_cache[cache_key] = {
+                    "timestamp": datetime.utcnow(),
+                    "data": data,
+                }
+                results[tf] = data
+
+            return results if results else None
+        except Exception as exc:
+            logger.error("Error computing trend alignment for %s: %s", symbol, exc)
+            return None
+
+    @staticmethod
+    def _ema(values: np.ndarray, period: int) -> np.ndarray:
+        if len(values) < period:
+            return np.full_like(values[-1:], values[-1], dtype=float)
+        return pd.Series(values).ewm(span=period, adjust=False).mean().to_numpy()
 
     def _calculate_alignment_confidence(self, aligned: bool, strength: float,
                                        volume_confirmed: bool) -> int:
