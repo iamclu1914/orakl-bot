@@ -85,6 +85,7 @@ class BullseyeBot(BaseAutoBot):
             if self._subscription_registered:
                 return
             await event_bus.subscribe("golden_sweep_detected", self._handle_golden_sweep_event)
+            await event_bus.subscribe("sweep_detected", self._handle_sweep_event)
             self._subscription_registered = True
 
     async def _handle_golden_sweep_event(self, **payload: Any) -> None:
@@ -106,10 +107,7 @@ class BullseyeBot(BaseAutoBot):
             or sweep_payload.get("sweep_score")
         )
 
-        score_passed_flag = payload.get("score_passed")
-        if score_passed_flag is False or (
-            isinstance(payload_score, (int, float)) and payload_score < min_score
-        ):
+        if self._is_score_blocked(payload_score, payload.get("score_passed")):
             logger.debug(
                 "%s ignoring golden sweep event for %s (score %.1f below threshold)",
                 self.name,
@@ -117,6 +115,236 @@ class BullseyeBot(BaseAutoBot):
                 float(payload_score) if payload_score is not None else -1.0,
             )
             return
+    async def _handle_sweep_event(self, **payload: Any) -> None:
+        if not self.running:
+            return
+
+        symbol = payload.get("symbol")
+        if not symbol:
+            return
+
+        option_type = (payload.get("option_type") or payload.get("direction") or "").upper()
+        if option_type not in {"CALL", "PUT"}:
+            return
+
+        sweep_payload = payload.get("sweep") or payload
+        payload_score = (
+            sweep_payload.get("enhanced_score")
+            or sweep_payload.get("sweep_score")
+            or payload.get("score")
+        )
+
+        if self._is_score_blocked(payload_score, payload.get("score_passed")):
+            return
+
+        try:
+            async with self._golden_scan_lock:
+                await self._scan_golden_triggered(symbol, option_type, payload)
+        except Exception as exc:
+            logger.exception("%s sweep processing failed for %s: %s", self.name, symbol, exc)
+
+    @staticmethod
+    def _is_score_blocked(payload_score: Optional[float], score_passed_flag: Optional[bool]) -> bool:
+        if score_passed_flag is False:
+            return True
+        min_score = getattr(Config, "BULLSEYE_MIN_SWEEP_SCORE", 65)
+        if isinstance(payload_score, (int, float)):
+            return payload_score < min_score
+        return False
+
+    async def _candidate_from_event(
+        self,
+        symbol: str,
+        option_type: str,
+        event_payload: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        sweep = event_payload.get("sweep") or {}
+        if not sweep:
+            return None
+
+        expiration = sweep.get("expiration")
+        strike = sweep.get("strike")
+        premium = sweep.get("premium")
+        volume = sweep.get("volume_delta") or sweep.get("volume")
+
+        try:
+            strike = float(strike)
+            premium = float(premium or 0.0)
+            volume = int(volume or 0)
+        except (TypeError, ValueError):
+            return None
+
+        if premium <= 0 or volume <= 0 or not expiration:
+            return None
+
+        contract_price = sweep.get("contract_price") or sweep.get("price") or sweep.get("avg_price")
+        if contract_price is None:
+            try:
+                contract_price = premium / (volume * 100.0)
+            except ZeroDivisionError:
+                contract_price = None
+
+        if contract_price is None or contract_price <= 0:
+            return None
+
+        underlying_price = sweep.get("current_price") or event_payload.get("underlying_price")
+        try:
+            expiration_dt = datetime.fromisoformat(expiration)
+            dte = max((expiration_dt - datetime.utcnow()).total_seconds() / 86400.0, 0.0)
+        except ValueError:
+            dte = sweep.get("days_to_expiry")
+            if isinstance(dte, (int, float)):
+                dte = float(dte)
+            else:
+                dte = None
+
+        bid = sweep.get("bid")
+        ask = sweep.get("ask")
+        midpoint = sweep.get("midpoint")
+        spread_pct = None
+        try:
+            bid_val = float(bid) if bid is not None else None
+            ask_val = float(ask) if ask is not None else None
+        except (TypeError, ValueError):
+            bid_val = ask_val = None
+
+        if bid_val and ask_val and bid_val > 0 and ask_val > 0:
+            spread_pct = self._calculate_spread_pct(bid_val, ask_val)
+            if midpoint is None:
+                midpoint = (bid_val + ask_val) / 2.0
+
+        voi_ratio = sweep.get("volume_ratio") or sweep.get("vol_oi_ratio")
+        if voi_ratio is None:
+            open_interest = sweep.get("open_interest")
+            try:
+                if open_interest:
+                    voi_ratio = float(volume) / float(open_interest)
+            except (TypeError, ValueError, ZeroDivisionError):
+                voi_ratio = None
+
+        intensity = (sweep.get("flow_intensity") or sweep.get("alert_type") or "SWEEP").upper()
+
+        ticker = sweep.get("ticker") or sweep.get("option_symbol")
+        if not ticker:
+            ticker = f"{symbol}{expiration.replace('-', '')}{option_type[0]}{int(strike * 1000)}"
+
+        candidate = {
+            "ticker": ticker,
+            "strike": strike,
+            "expiration": expiration,
+            "price": float(contract_price),
+            "ask": ask_val or float(contract_price),
+            "bid": bid_val,
+            "midpoint": midpoint if midpoint is not None else float(contract_price),
+            "volume": volume,
+            "open_interest": sweep.get("open_interest") or 0,
+            "premium": premium,
+            "dte": dte if isinstance(dte, (int, float)) else None,
+            "underlying_price": underlying_price,
+            "spread_pct": spread_pct,
+            "voi_ratio": float(voi_ratio) if isinstance(voi_ratio, (int, float)) else 0.0,
+            "intensity": intensity,
+            "execution_type": sweep.get("execution_type", "SWEEP"),
+            "origin": "event",
+        }
+        return candidate
+
+    async def _finalize_candidate(
+        self,
+        symbol: str,
+        option_type: str,
+        candidate: Dict[str, Any],
+        event_payload: Dict[str, Any],
+        underlying_price: Optional[float] = None,
+    ) -> bool:
+        volume = int(candidate.get("volume") or 0)
+        if volume <= 0:
+            return False
+
+        premium = float(candidate.get("premium") or 0.0)
+        if premium <= 0:
+            return False
+
+        underlying_price = (
+            candidate.get("underlying_price")
+            or underlying_price
+            or await self.fetcher.get_stock_price(symbol)
+        )
+
+        candidate["underlying_price"] = underlying_price
+
+        flow_payload: Dict[str, Any] = {
+            "ticker": candidate["ticker"],
+            "underlying": symbol,
+            "type": option_type,
+            "strike": candidate["strike"],
+            "expiration": candidate["expiration"],
+            "volume_delta": volume,
+            "total_volume": volume,
+            "open_interest": candidate.get("open_interest"),
+            "last_price": candidate["price"],
+            "ask": candidate.get("ask"),
+            "bid": candidate.get("bid"),
+            "midpoint": candidate.get("midpoint"),
+            "premium": premium,
+            "underlying_price": candidate.get("underlying_price"),
+            "timestamp": datetime.now(timezone.utc),
+            "multi_leg_ratio": 0.0,
+            "vol_oi_ratio": candidate.get("voi_ratio", 0.0),
+            "flow_intensity": candidate.get("intensity", "SWEEP"),
+            "last_trade_timestamp": datetime.now(timezone.utc),
+            "execution_type": candidate.get("execution_type", "SWEEP"),
+        }
+
+        metrics = build_metrics_from_flow(flow_payload)
+        if not metrics:
+            logger.info("%s trigger: failed to build metrics for %s", self.name, symbol)
+            return False
+
+        cooldown_key = self._build_cooldown_key(metrics)
+        if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
+            logger.debug("%s trigger: cooldown active for %s", self.name, cooldown_key)
+            return False
+
+        score = self._calculate_block_score(
+            metrics=metrics,
+            voi_ratio=candidate.get("voi_ratio", 0.0),
+            block_size=volume,
+            intensity=candidate.get("intensity", "SWEEP"),
+            spread_pct=candidate.get("spread_pct"),
+        )
+
+        min_score = Config.BULLSEYE_MIN_SCORE
+        if candidate.get("execution_type", "SWEEP").upper() == "SWEEP":
+            min_score = getattr(Config, "BULLSEYE_MIN_SWEEP_SCORE", 65)
+
+        if score < min_score:
+            logger.debug("%s trigger: score %d below threshold for %s", self.name, score, symbol)
+            return False
+
+        payload = {
+            "metrics": metrics,
+            "flow": flow_payload,
+            "contract_price": metrics.price,
+            "score": score,
+            "cooldown_key": cooldown_key,
+            "spread_pct": candidate.get("spread_pct"),
+            "origin_event": event_payload,
+            "triggered_by_golden": candidate.get("origin") != "event",
+        }
+
+        posted = await self._post_signal(payload)
+        if posted:
+            logger.info(
+                "%s trigger alert %s %.2f %s volume %s premium %s",
+                self.name,
+                metrics.underlying,
+                metrics.strike,
+                metrics.option_type,
+                volume,
+                f"{metrics.premium:,.0f}",
+            )
+        return posted
 
         try:
             async with self._golden_scan_lock:
@@ -187,6 +415,12 @@ class BullseyeBot(BaseAutoBot):
         return None
 
     async def _scan_golden_triggered(self, symbol: str, option_type: str, event_payload: Dict[str, Any]) -> None:
+        event_candidate = await self._candidate_from_event(symbol, option_type, event_payload)
+        if event_candidate:
+            processed = await self._finalize_candidate(symbol, option_type, event_candidate, event_payload)
+            if processed:
+                return
+
         contracts = await self.fetcher.get_option_chain_snapshot(
             symbol, contract_type="call" if option_type == "CALL" else "put"
         )
@@ -295,80 +529,7 @@ class BullseyeBot(BaseAutoBot):
         if not best_candidate:
             logger.info("%s golden trigger: no qualifying contracts for %s", self.name, symbol)
             return
-
-        if not underlying_price:
-            underlying_price = await self.fetcher.get_stock_price(symbol)
-
-        if not best_candidate.get("underlying_price"):
-            best_candidate["underlying_price"] = underlying_price
-
-        flow_payload: Dict[str, Any] = {
-            "ticker": best_candidate["ticker"],
-            "underlying": symbol,
-            "type": option_type,
-            "strike": best_candidate["strike"],
-            "expiration": best_candidate["expiration"],
-            "volume_delta": best_candidate["volume"],
-            "total_volume": best_candidate["volume"],
-            "open_interest": best_candidate["open_interest"],
-            "last_price": best_candidate["price"],
-            "ask": best_candidate["ask"],
-            "bid": best_candidate["bid"],
-            "midpoint": best_candidate["midpoint"],
-            "premium": best_candidate["premium"],
-            "underlying_price": best_candidate.get("underlying_price") or underlying_price,
-            "timestamp": datetime.now(timezone.utc),
-            "multi_leg_ratio": 0.0,
-            "vol_oi_ratio": best_candidate["voi_ratio"],
-            "flow_intensity": best_candidate["intensity"],
-            "last_trade_timestamp": datetime.now(timezone.utc),
-            "execution_type": best_candidate.get("execution_type", "SWEEP"),
-        }
-
-        metrics = build_metrics_from_flow(flow_payload)
-        if not metrics:
-            logger.info("%s golden trigger: failed to build metrics for %s", self.name, symbol)
-            return
-
-        cooldown_key = self._build_cooldown_key(metrics)
-        if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
-            logger.debug("%s golden trigger: cooldown active for %s", self.name, cooldown_key)
-            return
-
-        score = self._calculate_block_score(
-            metrics=metrics,
-            voi_ratio=best_candidate["voi_ratio"],
-            block_size=best_candidate["volume"],
-            intensity=best_candidate["intensity"],
-            spread_pct=best_candidate["spread_pct"],
-        )
-
-        if score < Config.BULLSEYE_MIN_SCORE:
-            logger.debug("%s golden trigger: score %d below threshold for %s", self.name, score, symbol)
-            return
-
-        payload = {
-            "metrics": metrics,
-            "flow": flow_payload,
-            "contract_price": metrics.price,
-            "score": score,
-            "cooldown_key": cooldown_key,
-            "spread_pct": best_candidate["spread_pct"],
-            "origin_event": event_payload,
-            "triggered_by_golden": True,
-        }
-
-        posted = await self._post_signal(payload)
-        if posted:
-            logger.info(
-                "%s golden trigger alert %s %.2f %s volume %s premium %s",
-                self.name,
-                metrics.underlying,
-                metrics.strike,
-                metrics.option_type,
-                best_candidate["volume"],
-                f"{metrics.premium:,.0f}",
-            )
+        await self._finalize_candidate(symbol, option_type, best_candidate, event_payload, underlying_price)
 
     async def scan_and_post(self):
         await self._ensure_subscription()
@@ -748,16 +909,13 @@ class BullseyeBot(BaseAutoBot):
         ask_price = float(flow.get("ask") or 0.0)
         flow_intensity = (flow.get("flow_intensity") or "NORMAL").upper()
         execution_type = (flow.get("execution_type") or "SWEEP").upper()
+        spot_price = flow.get("underlying_price") or metrics.underlying_price or 0.0
 
         premium_fmt = (
             f"${metrics.premium / 1_000_000:.1f}M"
             if metrics.premium >= 1_000_000
             else f"${metrics.premium / 1_000:.0f}K"
         )
-
-        target_30 = contract_price * 1.30
-        target_50 = contract_price * 1.50
-        target_80 = contract_price * 1.80
 
         spread_text = (
             f"${bid_price:.2f} / ${ask_price:.2f}"
@@ -774,51 +932,92 @@ class BullseyeBot(BaseAutoBot):
         else:
             recency_text = "recent"
 
-        execution_line = ""
-        if execution_type == "BLOCK":
-            execution_line = "Execution: **Block Contract (single print)**\n"
-        execution_section = f"{execution_line}\n" if execution_line else ""
+        prob_itm = flow.get("probability_itm")
+        if prob_itm is None:
+            try:
+                # Rough approximation from percent OTM
+                pct_otm = metrics.percent_otm * 100.0
+                prob_itm = max(0.0, min(100.0, 100.0 - abs(pct_otm)))
+            except Exception:
+                prob_itm = None
+        if isinstance(prob_itm, float) and prob_itm <= 1.0:
+            prob_itm *= 100.0
+
+        momentum_direction = "BULLISH" if metrics.option_type.upper() == "CALL" else "BEARISH"
+        momentum_value = voi_ratio if isinstance(voi_ratio, (int, float)) else 0.0
+
+        liquidity_label = "Moderate"
+        if spread_pct is None:
+            liquidity_label = "n/a"
+        elif spread_pct <= 2.0:
+            liquidity_label = "Excellent"
+        elif spread_pct <= 4.0:
+            liquidity_label = "Good"
+        elif spread_pct <= 7.0:
+            liquidity_label = "Fair"
+
+        expected_move = (
+            flow.get("expected_move_5d")
+            or flow.get("expected_move")
+            or flow.get("implied_move_5d")
+        )
+
+        current_price_line = "n/a"
+        try:
+            if spot_price:
+                current_price_line = f"${float(spot_price):.2f}"
+        except Exception:
+            current_price_line = "n/a"
 
         description = (
-            "**Institutional Block Print**\n\n"
-            f"Fill: **${contract_price:.2f}** @ ask ({option_type_short})\n"
-            f"Block Size: **{volume_delta:,} contracts**\n"
-            f"Premium: **{premium_fmt}**\n"
-            f"Intensity: **{flow_intensity}** ({recency_text})\n"
-            f"{execution_section}"
-            "**Market Context**\n\n"
-            f"DTE: **{dte_days}** | % OTM: **{metrics.percent_otm * 100:.2f}%**\n"
-            f"Vol/OI: **{voi_ratio:.2f}x** | Day Vol: **{total_volume:,}** | OI: **{oi_value:,}**\n"
-            f"Spread: **{spread_text}** ({spread_label})\n\n"
-            "**Targets**\n"
-            f"30%: **${target_30:.2f}**\n"
-            f"50%: **${target_50:.2f}**\n"
-            f"80%: **${target_80:.2f}**"
+            f"Current Price: **{current_price_line}**\n\n"
+            "**Contract Details**\n\n"
+            f"${metrics.strike:.2f} {metrics.option_type.upper()} expiring {expiration_fmt} ({dte_days} days)"
         )
 
-        narrative = (
-            f"{metrics.underlying} drew a {flow_intensity.lower()} block with only {dte_days}D to expiry. "
-            f"Institution put ${metrics.premium:,.0f} to work expecting a move soon."
-        )
+        title = f"{metrics.underlying} ${metrics.strike:.1f} {option_type_short} - Bullseye Signal"
 
         fields = [
+            {"name": "Premium", "value": premium_fmt, "inline": True},
+            {"name": "Volume", "value": f"{total_volume:,}", "inline": True},
+            {"name": "Open Interest", "value": f"{oi_value:,}", "inline": True},
             {
-                "name": "Block Score",
-                "value": f"**{score} / 100** conviction score",
+                "name": "ITM Probability",
+                "value": f"{prob_itm:.1f}%" if isinstance(prob_itm, (int, float)) else "n/a",
                 "inline": True,
             },
             {
-                "name": "Why it matters",
-                "value": narrative,
-                "inline": False,
+                "name": "Momentum",
+                "value": f"{momentum_value:.2f} {momentum_direction}"
+                if isinstance(momentum_value, (int, float))
+                else momentum_direction,
+                "inline": True,
             },
+            {"name": "Liquidity", "value": liquidity_label, "inline": True},
+            {
+                "name": "Expected Move (5d)",
+                "value": (
+                    f"${expected_move:.2f}"
+                    if isinstance(expected_move, (int, float))
+                    else "n/a"
+                ),
+                "inline": True,
+            },
+            {"name": "Flow Intensity", "value": f"{flow_intensity} ({recency_text})", "inline": True},
+            {"name": "Bullseye Score", "value": f"{score}/100", "inline": True},
         ]
 
-        block_suffix = " • Block Contract" if execution_type == "BLOCK" else ""
-        title = (
-            f"{metrics.underlying} {metrics.strike} {option_type_short} "
-            f"{expiration_fmt} ({dte_days}D) • Bullseye Block{block_suffix}"
-        )
+        if execution_type == "BLOCK":
+            fields.append(
+                {
+                    "name": "Execution",
+                    "value": "Block contract (single print)",
+                    "inline": False,
+                }
+            )
+            fields.append(
+                {"name": "Spread", "value": f"{spread_text} ({spread_label})", "inline": True}
+            )
 
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
@@ -845,3 +1044,4 @@ class BullseyeBot(BaseAutoBot):
 
     async def stop(self):
         await super().stop()
+

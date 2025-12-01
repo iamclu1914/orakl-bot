@@ -512,6 +512,8 @@ class SweepsBot(BaseAutoBot):
         
         premium_fmt = f"${sweep['premium']/1_000_000:.1f}M" if sweep['premium'] >= 1_000_000 else f"${sweep['premium']/1_000:.0f}K"
         
+        oi_value = sweep.get('open_interest')
+
         fields = [
             {"name": "Strike", "value": f"${sweep['strike']:.2f}", "inline": True},
             {"name": "Expiration", "value": sweep['expiration'], "inline": True},
@@ -524,14 +526,13 @@ class SweepsBot(BaseAutoBot):
             {"name": "Score", "value": f"{int(final_score)}/100", "inline": True},
         ]
         
+        if oi_value is not None:
+            fields.insert(5, {"name": "Open Interest", "value": f"{int(oi_value):,}", "inline": True})
+
         # Add volume ratio if available
         if sweep.get('volume_ratio'):
             fields.append({"name": "Vol Ratio", "value": f"{sweep['volume_ratio']:.2f}x", "inline": True})
         
-        # Add alert reason if available
-        if sweep.get('alert_reason'):
-            fields.append({"name": "Alert Type", "value": sweep['alert_reason'], "inline": False})
-
         if execution_type == 'BLOCK':
             oi_value = sweep.get('open_interest') or sweep.get('flow', {}).get('open_interest')
             block_context = sweep.get('block_reason') or "Block-sized single print"

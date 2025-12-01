@@ -498,21 +498,12 @@ class IndexWhaleBot(BaseAutoBot):
             contract_lines.append(f"Day Vol: **{int(volume):,}**")
         if open_interest is not None:
             contract_lines.append(f"OI: **{int(open_interest):,}**")
-        if volume_delta is not None:
-            contract_lines.append(f"Volume Δ: **{int(volume_delta):,}**")
-
-        notes = [note for note in (signal.notes or []) if note != "Progressively further OTM strikes"]
-        notes_text = "\n".join(notes) if notes else "Repeated hits alert"
+        # Volume delta shown elsewhere; omit in card per UX request
 
         fields = [
             {"name": "💥 Flow Snapshot", "value": "\n".join(flow_lines), "inline": True},
             {"name": "📊 Contract Setup", "value": "\n".join(contract_lines), "inline": True},
         ]
-
-        pattern_lines = [f"Pattern: **{signal.label}** ({signal.direction})"]
-        pattern_lines.append("")
-        pattern_lines.append(notes_text)
-        fields.append({"name": "🧭 Pattern Context", "value": "\n".join(pattern_lines), "inline": False})
 
         description = ""
         return self.create_signal_embed_with_disclaimer(

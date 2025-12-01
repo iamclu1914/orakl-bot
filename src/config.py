@@ -83,7 +83,7 @@ class Config:
     BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '500000'))  # lowered to $500K
     BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2000'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
-    BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '21.0'))
+    BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '45.0'))
     BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '400'))
     BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '200'))
     BULLSEYE_MIN_VOI_RATIO = float(os.getenv('BULLSEYE_MIN_VOI_RATIO', '1.0'))  # Fresh positioning
@@ -96,6 +96,7 @@ class Config:
     BULLSEYE_MAX_SPREAD_PCT = float(os.getenv('BULLSEYE_MAX_SPREAD_PCT', '8.0'))  # 8% max bid-ask spread
     BULLSEYE_COOLDOWN_SECONDS = int(os.getenv('BULLSEYE_COOLDOWN_SECONDS', '1800'))  # 30 minutes
     BULLSEYE_MAX_ALERTS_PER_SCAN = int(os.getenv('BULLSEYE_MAX_ALERTS_PER_SCAN', '3'))
+    BULLSEYE_MIN_SWEEP_SCORE = int(os.getenv('BULLSEYE_MIN_SWEEP_SCORE', '65'))
     # 99 Cent Store Bot Thresholds (sub-$1 swing trades with high conviction)
     SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '200000'))  # $200K+ for conviction
     SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))  # 1000 contracts for liquidity
