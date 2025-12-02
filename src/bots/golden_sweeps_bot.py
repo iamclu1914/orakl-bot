@@ -34,8 +34,8 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 70)
         # Golden sweeps can sit further from the money but still matter
         self.MAX_STRIKE_DISTANCE = Config.GOLDEN_MAX_STRIKE_DISTANCE  # percent
-        # NO BATCHING - scan ALL tickers every cycle using shared FlowCache
-        self.scan_batch_size = 0
+        # Independent scanning - scan in batches for efficiency
+        self.scan_batch_size = 50
         logger.info(
             "Golden Sweeps max strike distance set to %.1f%% (env override ready)",
             self.MAX_STRIKE_DISTANCE,
@@ -64,7 +64,7 @@ class GoldenSweepsBot(SweepsBot):
         
         # Scan symbols and collect all golden sweeps
         all_sweeps = []
-        max_alerts = 15  # Allow more golden alerts but still limit
+        max_alerts = 5  # Limit alerts per cycle to avoid Discord rate limits
         
         # Use smaller batch for faster results
         batch_size = 50
@@ -126,10 +126,13 @@ class GoldenSweepsBot(SweepsBot):
                 success = await self._post_signal(sweep)
                 if success:
                     posted += 1
+                    # Add delay between posts to avoid Discord rate limits
+                    if posted < max_alerts:
+                        await asyncio.sleep(1.5)
             except Exception as e:
                 logger.error(f"{self.name} error posting signal: {e}")
         
-        logger.info(f"{self.name} posted {posted} golden sweep alerts")
+        logger.info(f"{self.name} scan complete - posted {posted} golden sweep alerts")
 
     async def _post_signal(self, sweep: Dict) -> bool:
         """Post enhanced golden sweep signal to Discord"""

@@ -66,8 +66,8 @@ class SpreadBot(BaseAutoBot):
         self._subscription_registered = False
         self._subscription_lock = asyncio.Lock()
         self._golden_scan_lock = asyncio.Lock()
-        # NO BATCHING - scan ALL tickers every cycle using shared FlowCache
-        self.scan_batch_size = 0
+        # Independent scanning - scan in batches for efficiency
+        self.scan_batch_size = 50
 
     async def start(self):
         await self._ensure_subscription()
@@ -127,10 +127,13 @@ class SpreadBot(BaseAutoBot):
                 success = await self._post_signal(signal)
                 if success:
                     posted += 1
+                    # Add delay between posts to avoid Discord rate limits
+                    if posted < max_alerts:
+                        await asyncio.sleep(1.5)
             except Exception as e:
                 logger.error(f"{self.name} error posting signal: {e}")
         
-        logger.info(f"{self.name} posted {posted} alerts")
+        logger.info(f"{self.name} scan complete - posted {posted} alerts")
 
     async def _ensure_subscription(self) -> None:
         if self._subscription_registered:

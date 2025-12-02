@@ -1,6 +1,7 @@
 """Base class for auto-posting bots"""
 import asyncio
 import aiohttp
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List

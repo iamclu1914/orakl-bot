@@ -37,9 +37,8 @@ class SweepsBot(BaseAutoBot):
         # Loosen volume gates so medium-size sweeps can alert.
         self.MIN_VOLUME = max(getattr(Config, "SWEEPS_MIN_VOLUME", 0), 100)
         self.MIN_VOLUME_DELTA = max(getattr(Config, "SWEEPS_MIN_VOLUME_DELTA", 0), 50)
-        # NO BATCHING - scan ALL tickers every cycle using shared FlowCache
-        # This matches Gamma Bot's efficiency pattern
-        self.scan_batch_size = 0
+        # Independent scanning - scan in batches for efficiency
+        self.scan_batch_size = 50
         self.MAX_STRIKE_DISTANCE = 12  # percent
         # Require a high conviction sweep score before alerting
         self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
@@ -117,10 +116,13 @@ class SweepsBot(BaseAutoBot):
                 success = await self._post_signal(sweep)
                 if success:
                     posted += 1
+                    # Add delay between posts to avoid Discord rate limits
+                    if posted < max_alerts:
+                        await asyncio.sleep(1.5)
             except Exception as e:
                 logger.error(f"{self.name} error posting signal: {e}")
         
-        logger.info(f"{self.name} posted {posted} alerts")
+        logger.info(f"{self.name} scan complete - posted {posted} alerts")
         
         # Periodic cleanup
         self.deduplicator.cleanup_old_signals()

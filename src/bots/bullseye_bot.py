@@ -70,9 +70,8 @@ class BullseyeBot(BaseAutoBot):
         self.trigger_min_volume = getattr(
             Config, "BULLSEYE_TRIGGER_MIN_VOLUME", max(self.min_block_contracts, 750)
         )
-        # NO BATCHING - scan ALL tickers every cycle using shared FlowCache
-        # This matches Gamma Bot's efficiency pattern
-        self.scan_batch_size = 0
+        # Independent scanning - scan in batches for efficiency
+        self.scan_batch_size = 50
         
         # Skip expensive validation API calls (candles, trend) - use local filtering only
         self.skip_expensive_validation = getattr(Config, 'BULLSEYE_SKIP_EXPENSIVE_VALIDATION', True)
@@ -613,13 +612,16 @@ class BullseyeBot(BaseAutoBot):
                 if success:
                     posted_symbols.add(symbol)
                     alerts_posted += 1
+                    # Add delay between posts to avoid Discord rate limits
+                    if alerts_posted < max_alerts:
+                        await asyncio.sleep(1.5)
                     if alerts_posted >= max_alerts:
                         break
             except Exception as e:
                 logger.debug("%s error validating candidate: %s", self.name, e)
                 continue
         
-        logger.info("%s posted %d alerts", self.name, alerts_posted)
+        logger.info("%s scan complete - posted %d alerts", self.name, alerts_posted)
 
     async def _fast_scan_symbol(self, symbol: str) -> List[Dict[str, Any]]:
         """
