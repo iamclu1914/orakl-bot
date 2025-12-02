@@ -211,11 +211,12 @@ class GammaRatioBot(BaseAutoBot):
         
         self.fetcher = fetcher
         
-        # Priority symbols - always scanned every cycle
+        # Priority symbols - always scanned every cycle (most important first)
         self.priority_symbols = [
-            'SPY', 'QQQ', 'IWM', 'DIA',  # Major indices
+            'SPY', 'QQQ', 'IWM', 'DIA', 'XLF', 'XLE', 'XLK',  # Major indices/ETFs
             'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',  # Mega caps
-            'AMD', 'NFLX', 'CRM', 'AVGO', 'COST', 'JPM', 'V', 'MA'  # High volume
+            'AMD', 'NFLX', 'CRM', 'AVGO', 'COST', 'JPM', 'V', 'MA',  # High volume
+            'SOXL', 'SMH', 'ARKK', 'MU', 'INTC', 'PLTR', 'ORCL'  # Popular options
         ]
         
         # Put priority symbols first in watchlist
@@ -442,13 +443,16 @@ class GammaRatioBot(BaseAutoBot):
             # TODO: Add multipart form support to base_bot for chart images
             
             # Post to Discord
+            logger.info(f"{self.name} posting alert for {symbol} G={G:.2f} ({regime})...")
             success = await self.post_to_discord(embed)
             
             if success:
                 logger.info(
-                    f"🎯 GAMMA ALERT: {symbol} G={G:.2f} ({regime}) - "
+                    f"🎯 GAMMA ALERT POSTED: {symbol} G={G:.2f} ({regime}) - "
                     f"Call:{fmt_gamma(call_gamma)} Put:{fmt_gamma(put_gamma)}"
                 )
+            else:
+                logger.warning(f"{self.name} - Discord post failed for {symbol}")
             
             return success
             
