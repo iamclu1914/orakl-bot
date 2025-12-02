@@ -132,14 +132,21 @@ class FlowCache:
             logger.debug("FlowCache is fresh (%.1fs old), skipping refresh", self.age_seconds)
             return False
         
-        # If a refresh is already in progress, WAIT for it to complete
-        while self._state.refresh_in_progress:
-            logger.debug("FlowCache refresh in progress, waiting for completion...")
+        # If a refresh is already in progress, WAIT for it to complete (max 120s)
+        wait_count = 0
+        max_wait_seconds = 120
+        while self._state.refresh_in_progress and wait_count < max_wait_seconds:
+            if wait_count % 10 == 0:  # Log every 10 seconds
+                logger.info("FlowCache: Waiting for prefetch to complete (%ds)...", wait_count)
             await asyncio.sleep(1)
+            wait_count += 1
             # Check if it became fresh while waiting
             if self.is_fresh:
-                logger.debug("FlowCache became fresh while waiting (%.1fs old)", self.age_seconds)
+                logger.info("FlowCache became fresh while waiting (%.1fs old)", self.age_seconds)
                 return False
+        
+        if wait_count >= max_wait_seconds:
+            logger.warning("FlowCache: Timed out waiting for prefetch after %ds", max_wait_seconds)
         
         async with self._lock:
             # Double-check after acquiring lock
