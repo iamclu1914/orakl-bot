@@ -661,9 +661,29 @@ class BaseAutoBot(ABC):
                     self.metrics.webhook_failure_count += 1
                     
                     if response.status == 429:  # Rate limited
-                        retry_after = int(response.headers.get('X-RateLimit-Reset-After', 60))
+                        # Discord returns fractional seconds in either header or body
+                        retry_after_header = response.headers.get('X-RateLimit-Reset-After')
+                        retry_after = None
+                        if retry_after_header:
+                            try:
+                                retry_after = float(retry_after_header)
+                            except ValueError:
+                                retry_after = None
+                        if retry_after is None:
+                            try:
+                                error_json = json.loads(error_text)
+                                retry_after = float(error_json.get('retry_after', 1.0))
+                            except (ValueError, TypeError, json.JSONDecodeError):
+                                retry_after = 1.0
+                        retry_after = max(retry_after, 0.1)
+                        logger.warning(
+                            "%s rate limited by Discord; sleeping for %.2fs before retry",
+                            self.name,
+                            retry_after
+                        )
+                        await asyncio.sleep(retry_after + 0.05)  # small safety buffer
                         raise WebhookException(
-                            f"Discord rate limit hit, retry after {retry_after}s",
+                            f"Discord rate limit hit, retry after {retry_after:.2f}s",
                             status_code=429
                         )
                     
