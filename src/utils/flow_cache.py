@@ -59,6 +59,7 @@ class FlowCacheState:
     refresh_duration_ms: float = 0
     error_count: int = 0
     last_error: Optional[str] = None
+    has_data: bool = False
 
 
 class FlowCache:
@@ -87,6 +88,8 @@ class FlowCache:
         self._state = FlowCacheState()
         self._lock = asyncio.Lock()
         self._fetcher = None
+        # If we already have cached data (from previous run), mark it
+        self._state.has_data = bool(self._state.flows_by_symbol)
         
     @property
     def is_fresh(self) -> bool:
@@ -102,6 +105,10 @@ class FlowCache:
         if not self._state.last_refresh:
             return float('inf')
         return (datetime.now() - self._state.last_refresh).total_seconds()
+    
+    def has_data(self) -> bool:
+        """Return True if any cached flows are available."""
+        return self._state.has_data
     
     def set_fetcher(self, fetcher) -> None:
         """Set the data fetcher reference."""
@@ -132,10 +139,10 @@ class FlowCache:
             logger.debug("FlowCache is fresh (%.1fs old), skipping refresh", self.age_seconds)
             return False
         
-        # If a refresh is already in progress, WAIT for it to complete (max 120s)
+        # If a refresh is already in progress, WAIT for it to complete (only if no data yet)
         wait_count = 0
-        max_wait_seconds = 120
-        while self._state.refresh_in_progress and wait_count < max_wait_seconds:
+        max_wait_seconds = 300  # Allow 5 minutes for first warm-up
+        while self._state.refresh_in_progress and not self.has_data() and wait_count < max_wait_seconds:
             if wait_count % 10 == 0:  # Log every 10 seconds
                 logger.info("FlowCache: Waiting for prefetch to complete (%ds)...", wait_count)
             await asyncio.sleep(1)
@@ -145,7 +152,7 @@ class FlowCache:
                 logger.info("FlowCache became fresh while waiting (%.1fs old)", self.age_seconds)
                 return False
         
-        if wait_count >= max_wait_seconds:
+        if wait_count >= max_wait_seconds and not self.has_data():
             logger.warning("FlowCache: Timed out waiting for prefetch after %ds", max_wait_seconds)
         
         async with self._lock:
@@ -204,16 +211,16 @@ class FlowCache:
         - Single API call per symbol (get_option_chain_snapshot)
         - Local computation of flow metrics
         """
-        # Reset state
-        self._state.flows_by_symbol = {}
-        self._state.all_flows = []
-        self._state.symbols_scanned = set()
+        # Build new state while keeping previous data available
+        new_flows_by_symbol: Dict[str, List[CachedFlow]] = {}
+        new_all_flows: List[CachedFlow] = []
+        new_symbols_scanned: Set[str] = set()
         
         # Concurrency control - match the config
         max_concurrent = min(Config.MAX_CONCURRENT_REQUESTS, 10)  # Cap at 10 to avoid rate limits
         semaphore = asyncio.Semaphore(max_concurrent)
         
-        async def fetch_symbol_flows(symbol: str) -> List[CachedFlow]:
+        async def fetch_symbol_flows(symbol: str) -> Any:
             """Fetch flows for a single symbol."""
             async with semaphore:
                 try:
@@ -221,32 +228,37 @@ class FlowCache:
                     snapshot = await fetcher.get_option_chain_snapshot(symbol)
                     
                     if not snapshot:
-                        return []
+                        return symbol, []
                     
                     # Process snapshot locally (no API calls)
                     flows = self._process_snapshot_to_flows(symbol, snapshot)
-                    return flows
+                    return symbol, flows
                     
                 except Exception as e:
                     logger.debug("FlowCache: Error fetching %s: %s", symbol, e)
-                    return []
+                    return symbol, []
         
         # Fetch all symbols concurrently
-        tasks = [fetch_symbol_flows(symbol) for symbol in watchlist]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Aggregate results
-        for symbol, result in zip(watchlist, results):
-            self._state.symbols_scanned.add(symbol)
-            
+        tasks = [asyncio.create_task(fetch_symbol_flows(symbol)) for symbol in watchlist]
+        for task in asyncio.as_completed(tasks):
+            result = await task
             if isinstance(result, Exception):
-                logger.debug("FlowCache: Exception for %s: %s", symbol, result)
+                logger.debug("FlowCache: Error during prefetch task: %s", result)
                 continue
             
-            if result:
-                self._state.flows_by_symbol[symbol] = result
-                self._state.all_flows.extend(result)
+            symbol, flows = result
+            new_symbols_scanned.add(symbol)
+            
+            if flows:
+                new_flows_by_symbol[symbol] = flows
+                new_all_flows.extend(flows)
     
+        # Atomically swap in new data
+        self._state.flows_by_symbol = new_flows_by_symbol
+        self._state.all_flows = new_all_flows
+        self._state.symbols_scanned = new_symbols_scanned
+        self._state.has_data = bool(new_all_flows)
+
     def _process_snapshot_to_flows(
         self,
         underlying: str,

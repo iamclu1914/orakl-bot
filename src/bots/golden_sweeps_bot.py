@@ -72,8 +72,8 @@ class GoldenSweepsBot(SweepsBot):
         # Refresh cache if needed (this is the ONLY API call for all bots)
         await cache.refresh_if_needed(self.fetcher, self.watchlist)
         
-        # Check if cache is ready
-        if not cache.is_fresh:
+        # Check if cache has any data yet
+        if not cache.has_data():
             logger.info("%s waiting for FlowCache to be populated (first scan)...", self.name)
             return
         
