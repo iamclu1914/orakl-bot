@@ -1,4 +1,10 @@
-"""Bullseye Bot - Massive institutional block scanner."""
+"""Bullseye Bot - Massive institutional block scanner.
+
+Optimized for efficiency using shared FlowCache:
+- ONE prefetch per cycle for all symbols (shared with other bots)
+- Local filtering on cached data (no per-symbol API calls)
+- All 400+ symbols scanned every 5 minutes
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,7 @@ from src.utils.flow_metrics import OptionTradeMetrics, build_metrics_from_flow
 from src.utils.market_hours import MarketHours
 from src.utils.enhanced_analysis import EnhancedAnalyzer
 from src.utils.event_bus import event_bus
+from src.utils.flow_cache import get_flow_cache, CachedFlow
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +73,12 @@ class BullseyeBot(BaseAutoBot):
         self.trigger_min_volume = getattr(
             Config, "BULLSEYE_TRIGGER_MIN_VOLUME", max(self.min_block_contracts, 750)
         )
-        # Limit per-scan workload to prevent timeouts; rotate batches each scan.
-        self.scan_batch_size = getattr(
-            Config,
-            "BULLSEYE_SCAN_BATCH_SIZE",
-            getattr(Config, "SWEEPS_SCAN_BATCH_SIZE", 120),
-        )
+        # NO BATCHING - scan ALL tickers every cycle using shared FlowCache
+        # This matches Gamma Bot's efficiency pattern
+        self.scan_batch_size = 0
+        
+        # Skip expensive validation API calls (candles, trend) - use local filtering only
+        self.skip_expensive_validation = getattr(Config, 'BULLSEYE_SKIP_EXPENSIVE_VALIDATION', True)
 
     async def start(self):
         await self._ensure_subscription()
@@ -546,9 +553,12 @@ class BullseyeBot(BaseAutoBot):
 
     async def scan_and_post(self):
         """
-        Two-phase scanning approach for speed:
-        Phase 1: Fast flow detection on ALL symbols (1 API call each)
-        Phase 2: Deep validation only on candidates that pass basic filters
+        Optimized scanning using shared FlowCache:
+        - ONE prefetch for all symbols (shared with other bots)
+        - Local filtering on cached data (no per-symbol API calls)
+        - All 400+ symbols processed every 5 minutes
+        
+        This matches Gamma Bot's efficiency pattern.
         """
         await self._ensure_subscription()
         logger.info("%s scanning for institutional block flow", self.name)
@@ -557,57 +567,131 @@ class BullseyeBot(BaseAutoBot):
             logger.debug("%s skipping scan: market closed", self.name)
             return
         
-        # PHASE 1: Fast scan - detect flows on ALL symbols
-        # Only 1 API call per symbol, no heavy validation
-        semaphore = asyncio.Semaphore(max(1, Config.MAX_CONCURRENT_REQUESTS))
-
-        async def fast_scan(symbol: str):
-            async with semaphore:
-                return await self._fast_scan_symbol(symbol)
+        # Get shared flow cache
+        cache = get_flow_cache()
         
-        logger.info("%s Phase 1: Fast scanning %d symbols", self.name, len(self.watchlist))
-        tasks = [fast_scan(symbol) for symbol in self.watchlist]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Collect candidates that passed basic filters
-        candidates: List[Dict[str, Any]] = []
-        for result in results:
-            if isinstance(result, Exception):
-                continue
-            candidates.extend(result)
+        # Refresh cache if needed (this is the ONLY API call for all bots)
+        await cache.refresh_if_needed(self.fetcher, self.watchlist)
         
-        logger.info("%s Phase 1 complete: %d candidates from %d symbols", 
-                   self.name, len(candidates), len(self.watchlist))
-
+        # Filter cached flows locally (NO API calls!)
+        candidates = cache.filter_flows(
+            min_premium=self.min_premium,
+            min_volume=self.min_volume_delta,
+            flow_intensity={'STRONG', 'AGGRESSIVE'},  # Required intensity
+        )
+        
+        logger.info(
+            "%s found %d candidates from cache (%.1fs old)",
+            self.name, len(candidates), cache.age_seconds
+        )
+        
         if not candidates:
-            logger.debug("%s found no candidates in fast scan", self.name)
+            logger.debug("%s no candidates from cache", self.name)
             return
-
-        # PHASE 2: Deep validation only on candidates
-        # This is where we do the expensive API calls
-        logger.info("%s Phase 2: Deep validation on %d candidates", self.name, len(candidates))
         
-        async def deep_validate(candidate: Dict[str, Any]):
-            async with semaphore:
-                return await self._deep_validate_candidate(candidate)
-        
-        validation_tasks = [deep_validate(c) for c in candidates]
-        validated = await asyncio.gather(*validation_tasks, return_exceptions=True)
-
+        # Process candidates locally (all filtering, no API calls)
         signals: List[Dict[str, Any]] = []
-        for result in validated:
-            if isinstance(result, Exception):
-                logger.debug("%s validation error: %s", self.name, result)
+        now = datetime.now()
+        
+        for flow in candidates:
+            try:
+                # Convert cached flow to dict for processing
+                flow_dict = cache.flow_to_dict(flow)
+                
+                # Build metrics from flow
+                metrics = build_metrics_from_flow(flow_dict)
+                if not metrics:
+                    continue
+                
+                # === LOCAL FILTERS (no API calls) ===
+                
+                # Contract price filter
+                contract_price = metrics.price or 0.0
+                if contract_price < self.min_price:
+                    if flow.premium < self.high_conviction_premium or contract_price < self.low_price_floor:
+                        continue
+                
+                # DTE filter
+                dte = 0
+                if flow.expiration:
+                    try:
+                        exp_date = datetime.strptime(flow.expiration, '%Y-%m-%d')
+                        dte = (exp_date - now).days
+                    except ValueError:
+                        continue
+                
+                if dte < self.min_dte or dte > self.max_dte:
+                    # Allow high conviction to bypass DTE limits slightly
+                    if flow.premium < self.high_conviction_premium:
+                        continue
+                
+                # Strike distance filter
+                if flow.underlying_price and flow.underlying_price > 0:
+                    percent_otm = abs(flow.strike - flow.underlying_price) / flow.underlying_price
+                    if percent_otm > self.max_percent_otm:
+                        if flow.premium < self.high_conviction_premium:
+                            continue
+                
+                # VOI ratio filter
+                if flow.vol_oi_ratio < self.min_voi_ratio:
+                    if flow.premium < self.high_conviction_premium:
+                        continue
+                
+                # Volume > OI check (fresh positioning)
+                if flow.open_interest > 0 and flow.volume_delta <= flow.open_interest:
+                    continue
+                
+                # Spread check
+                if flow.bid > 0 and flow.ask > 0:
+                    spread_pct = ((flow.ask - flow.bid) / ((flow.ask + flow.bid) / 2)) * 100
+                    if spread_pct > self.max_spread_pct:
+                        continue
+                else:
+                    spread_pct = None
+                
+                # Cooldown check
+                cooldown_key = self._build_cooldown_key(metrics)
+                if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
+                    continue
+                
+                # Calculate score
+                score = self._calculate_block_score(
+                    metrics=metrics,
+                    voi_ratio=flow.vol_oi_ratio,
+                    block_size=flow.volume_delta,
+                    intensity=flow.flow_intensity,
+                    spread_pct=spread_pct,
+                )
+                
+                min_score = Config.BULLSEYE_MIN_SCORE
+                if score < min_score:
+                    continue
+                
+                # Build signal
+                signal = {
+                    "metrics": metrics,
+                    "flow": flow_dict,
+                    "contract_price": contract_price,
+                    "score": score,
+                    "cooldown_key": cooldown_key,
+                    "spread_pct": spread_pct,
+                    "trend_data": None,  # Skip expensive trend validation
+                }
+                
+                signals.append(signal)
+                
+            except Exception as e:
+                logger.debug("%s error processing flow: %s", self.name, e)
                 continue
-            if result:  # None means validation failed
-                signals.append(result)
-
+        
         if not signals:
-            logger.debug("%s no signals passed deep validation", self.name)
+            logger.debug("%s no signals passed filters", self.name)
             return
-
+        
+        # Sort by score and premium
         signals.sort(key=lambda s: (s["score"], s["metrics"].premium), reverse=True)
-
+        
+        # Post top signals
         posted_symbols = set()
         alerts_posted = 0
         
@@ -622,6 +706,8 @@ class BullseyeBot(BaseAutoBot):
                 alerts_posted += 1
                 if alerts_posted >= self.max_alerts_per_scan:
                     break
+        
+        logger.info("%s posted %d alerts", self.name, alerts_posted)
 
     async def _fast_scan_symbol(self, symbol: str) -> List[Dict[str, Any]]:
         """

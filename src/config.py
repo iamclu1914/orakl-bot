@@ -42,12 +42,13 @@ class Config:
     DISCORD_CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID', '1427156934582079588'))
     ALERT_CHANNEL_ID = int(os.getenv('ALERT_CHANNEL_ID', '1427156934582079588'))
     
-    # Bot Scan Intervals (seconds) - Original intervals restored
-    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '600'))  # 10 minutes
-    SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '180'))  # 3 minutes
-    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '300'))  # 5 minutes (reduced from 15 to close gap)
-    INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '600'))  # 10 minutes REST polling
-    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '600'))  # 10 minutes
+    # Bot Scan Intervals (seconds) - All aligned to 5 minutes for shared FlowCache efficiency
+    # The FlowCache prefetches data once per 5-minute cycle, shared by all bots
+    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
+    SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
+    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
+    INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
+    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
     GAMMA_RATIO_INTERVAL = int(os.getenv('GAMMA_RATIO_INTERVAL', '300'))  # 5 minutes
     
     # Batch sizes for scan workload management (prevents timeouts)

@@ -1,4 +1,10 @@
-"""Sweeps Bot - Large options sweeps tracker"""
+"""Sweeps Bot - Large options sweeps tracker
+
+Optimized for efficiency using shared FlowCache:
+- ONE prefetch per cycle for all symbols (shared with other bots)
+- Local filtering on cached data (no per-symbol API calls)
+- All 400+ symbols scanned every 5 minutes
+"""
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -11,6 +17,7 @@ from src.utils.monitoring import signals_generated, timed
 from src.utils.exceptions import DataException, handle_exception
 from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
 from src.utils.market_hours import MarketHours
+from src.utils.flow_cache import get_flow_cache, CachedFlow
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +38,9 @@ class SweepsBot(BaseAutoBot):
         # Loosen volume gates so medium-size sweeps can alert.
         self.MIN_VOLUME = max(getattr(Config, "SWEEPS_MIN_VOLUME", 0), 100)
         self.MIN_VOLUME_DELTA = max(getattr(Config, "SWEEPS_MIN_VOLUME_DELTA", 0), 50)
-        # Limit per-scan workload to avoid timeouts; rotate batches each scan.
-        self.scan_batch_size = getattr(Config, "SWEEPS_SCAN_BATCH_SIZE", 120)
+        # NO BATCHING - scan ALL tickers every cycle using shared FlowCache
+        # This matches Gamma Bot's efficiency pattern
+        self.scan_batch_size = 0
         self.MAX_STRIKE_DISTANCE = 12  # percent
         # Require a high conviction sweep score before alerting
         self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
@@ -66,20 +74,185 @@ class SweepsBot(BaseAutoBot):
 
     @timed()
     async def scan_and_post(self):
-        """Scan for large options sweeps with enhanced analysis"""
+        """
+        Optimized scanning using shared FlowCache:
+        - ONE prefetch for all symbols (shared with other bots)
+        - Local filtering on cached data (no per-symbol API calls)
+        - All 400+ symbols processed every 5 minutes
+        """
         logger.info(f"{self.name} scanning for large sweeps")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
         if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
-            # Cleanup old signals during downtime
             self.deduplicator.cleanup_old_signals()
             return
         
-        # Use base class concurrent implementation
-        await super().scan_and_post()
+        # Get shared flow cache
+        cache = get_flow_cache()
         
-        # Periodic cleanup (every scan)
+        # Refresh cache if needed (this is the ONLY API call for all bots)
+        await cache.refresh_if_needed(self.fetcher, self.watchlist)
+        
+        # Filter cached flows locally (NO API calls!)
+        candidates = cache.filter_flows(
+            min_premium=self.MIN_SWEEP_PREMIUM,
+            min_volume=self.MIN_VOLUME_DELTA,
+        )
+        
+        logger.info(
+            "%s found %d candidates from cache (%.1fs old)",
+            self.name, len(candidates), cache.age_seconds
+        )
+        
+        # Process candidates locally
+        sweeps = []
+        now = datetime.now()
+        
+        for flow in candidates:
+            try:
+                flow_dict = cache.flow_to_dict(flow)
+                
+                # Skip if qualifies as Golden Sweep (handled by GoldenSweepsBot)
+                if flow.premium >= Config.GOLDEN_MIN_PREMIUM:
+                    if not self._is_golden_bot_healthy():
+                        logger.info(f"{self.name} emitting golden fallback for {flow.underlying}")
+                        flow_dict['_golden_fallback'] = True
+                    else:
+                        continue
+                
+                # DTE calculation
+                days_to_expiry = 0
+                if flow.expiration:
+                    try:
+                        exp_date = datetime.strptime(flow.expiration, '%Y-%m-%d')
+                        days_to_expiry = (exp_date - now).days
+                    except ValueError:
+                        continue
+                
+                # DTE filter (1-90 days)
+                if days_to_expiry <= 0 or days_to_expiry > 90:
+                    continue
+                
+                # Strike distance filter
+                if flow.underlying_price and flow.underlying_price > 0:
+                    strike_distance = ((flow.strike - flow.underlying_price) / flow.underlying_price) * 100
+                    abs_distance = abs(strike_distance)
+                    
+                    # Determine max allowed based on premium tier
+                    max_allowed = self.MAX_STRIKE_DISTANCE
+                    for premium_threshold, allowed_distance in self.STRIKE_DISTANCE_PREMIUM_TIERS:
+                        if flow.premium >= premium_threshold:
+                            max_allowed = allowed_distance
+                            break
+                    
+                    # Short DTE gets wider allowance
+                    if days_to_expiry <= self.SHORT_DTE_THRESHOLD:
+                        max_allowed += self.SHORT_DTE_STRIKE_EXTENSION
+                    
+                    if abs_distance > max_allowed:
+                        continue
+                else:
+                    strike_distance = 0
+                
+                # Calculate moneyness
+                if flow.option_type == 'CALL':
+                    moneyness = 'ITM' if flow.strike < flow.underlying_price else 'OTM' if flow.strike > flow.underlying_price else 'ATM'
+                else:
+                    moneyness = 'ITM' if flow.strike > flow.underlying_price else 'OTM' if flow.strike < flow.underlying_price else 'ATM'
+                
+                # Calculate sweep score
+                num_fills = max(3, int(flow.volume_delta / 50))
+                sweep_score = self._calculate_sweep_score(
+                    flow.premium, flow.total_volume, num_fills, abs(strike_distance) if flow.underlying_price else 0
+                )
+                
+                # Volume ratio filter
+                skip_volume_ratio = getattr(self, 'SKIP_VOLUME_RATIO_CHECK', False)
+                if not skip_volume_ratio and flow.vol_oi_ratio < self.MIN_VOLUME_RATIO:
+                    flex_threshold = self.MIN_VOLUME_RATIO * self.VOLUME_RATIO_FLEX_MULTIPLIER
+                    if not (flow.premium >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM and flow.vol_oi_ratio >= flex_threshold):
+                        continue
+                
+                # Volume boost for score
+                volume_boost = 0
+                if flow.vol_oi_ratio >= 3.0:
+                    volume_boost = 18
+                elif flow.vol_oi_ratio >= 2.0:
+                    volume_boost = 12
+                elif flow.vol_oi_ratio >= 1.5:
+                    volume_boost = 6
+                elif flow.vol_oi_ratio >= 1.2:
+                    volume_boost = 3
+                
+                enhanced_score = min(sweep_score + volume_boost, 100)
+                
+                # Score filter
+                if enhanced_score < self.MIN_SCORE:
+                    continue
+                
+                # Deduplication
+                signal_key = f"{flow.underlying}_{flow.option_type}_{flow.strike}_{flow.expiration}"
+                dedup_result = self.deduplicator.should_alert(signal_key, flow.premium)
+                
+                if not dedup_result['should_alert']:
+                    continue
+                
+                if self._cooldown_active(signal_key):
+                    continue
+                
+                # Build sweep signal
+                sweep = {
+                    'ticker': flow.underlying,
+                    'symbol': flow.underlying,
+                    'type': flow.option_type,
+                    'strike': flow.strike,
+                    'expiration': flow.expiration,
+                    'current_price': flow.underlying_price,
+                    'days_to_expiry': days_to_expiry,
+                    'premium': flow.premium,
+                    'volume': flow.total_volume,
+                    'num_fills': num_fills,
+                    'moneyness': moneyness,
+                    'strike_distance': strike_distance,
+                    'probability_itm': self.analyzer.calculate_probability_itm(
+                        flow.option_type, flow.strike, flow.underlying_price, days_to_expiry
+                    ) if flow.underlying_price else 0,
+                    'sweep_score': sweep_score,
+                    'enhanced_score': enhanced_score,
+                    'volume_delta': flow.volume_delta,
+                    'open_interest': flow.open_interest,
+                    'volume_ratio': flow.vol_oi_ratio,
+                    'delta': flow.delta,
+                    'gamma': flow.gamma,
+                    'vega': flow.vega,
+                    'alert_type': dedup_result['type'],
+                    'alert_reason': dedup_result['reason'],
+                    '_golden_fallback': flow_dict.get('_golden_fallback', False),
+                }
+                
+                sweeps.append(sweep)
+                self._mark_cooldown(signal_key)
+                
+            except Exception as e:
+                logger.debug(f"{self.name} error processing flow: {e}")
+                continue
+        
+        # Sort by enhanced score and post top signals
+        sweeps.sort(key=lambda x: x['enhanced_score'], reverse=True)
+        
+        posted = 0
+        for sweep in sweeps[:self.TOP_SWEEPS_PER_SYMBOL * 5]:  # Allow more through
+            try:
+                success = await self._post_signal(sweep)
+                if success:
+                    posted += 1
+            except Exception as e:
+                logger.error(f"{self.name} error posting signal: {e}")
+        
+        logger.info(f"{self.name} posted {posted} alerts")
+        
+        # Periodic cleanup
         self.deduplicator.cleanup_old_signals()
     
     async def _scan_symbol(self, symbol: str) -> List[Dict]:
