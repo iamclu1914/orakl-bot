@@ -29,7 +29,8 @@ class GammaAlertManager:
     alert spam while catching meaningful market regime shifts.
     
     Alert Tiers:
-    - EXTREME: G > 0.75 (call) or G < 0.25 (put) - first alert
+    - DRIVEN: G > 0.65 (call) or G < 0.35 (put) - medium priority
+    - EXTREME: G > 0.75 (call) or G < 0.25 (put) - high priority
     - ULTRA EXTREME: G > 0.85 (call) or G < 0.15 (put) - escalation alert (bypasses cooldown)
     """
     
@@ -48,7 +49,8 @@ class GammaAlertManager:
         Check if any alerts should be triggered for this symbol.
         
         Alert Tiers:
-        - EXTREME: G > 0.75 (call) or G < 0.25 (put)
+        - DRIVEN: G > 0.65 (call) or G < 0.35 (put) - medium priority
+        - EXTREME: G > 0.75 (call) or G < 0.25 (put) - high priority
         - ULTRA EXTREME: G > 0.85 (call) or G < 0.15 (put) - bypasses cooldown
         
         Args:
@@ -87,7 +89,7 @@ class GammaAlertManager:
                     'regime': 'ULTRA_EXTREME_CALL',
                     'bypass_cooldown': True
                 })
-        # Check for EXTREME CALL (first threshold)
+        # Check for EXTREME CALL (high threshold)
         elif G > thresholds['extreme_call'] and prev_G <= thresholds['extreme_call']:
             alerts.append({
                 'type': 'EXTREME_CALL',
@@ -95,9 +97,20 @@ class GammaAlertManager:
                 'G': G,
                 'data': data,
                 'message': f"🟢 **{symbol} EXTREME CALL-DRIVEN**\nG = {G:.2f}\nUpside convexity dominating",
-                    'priority': 'high',
-                    'regime': current_regime
-                })
+                'priority': 'high',
+                'regime': current_regime
+            })
+        # Check for CALL DRIVEN (medium threshold)
+        elif G > thresholds['call_driven'] and prev_G <= thresholds['call_driven']:
+            alerts.append({
+                'type': 'CALL_DRIVEN',
+                'symbol': symbol,
+                'G': G,
+                'data': data,
+                'message': f"🔵 **{symbol} CALL-DRIVEN**\nG = {G:.2f}\nCall gamma exceeds put gamma",
+                'priority': 'medium',
+                'regime': 'CALL_DRIVEN'
+            })
         
         # === PUT SIDE ===
         # Check for ULTRA EXTREME PUT (escalation - bypasses cooldown)
@@ -114,7 +127,7 @@ class GammaAlertManager:
                     'regime': 'ULTRA_EXTREME_PUT',
                     'bypass_cooldown': True
                 })
-        # Check for EXTREME PUT (first threshold)
+        # Check for EXTREME PUT (high threshold)
         elif G < thresholds['extreme_put'] and prev_G >= thresholds['extreme_put']:
             alerts.append({
                 'type': 'EXTREME_PUT',
@@ -122,9 +135,20 @@ class GammaAlertManager:
                 'G': G,
                 'data': data,
                 'message': f"🔴 **{symbol} EXTREME PUT-DRIVEN**\nG = {G:.2f}\nDownside convexity dominating",
-                    'priority': 'high',
-                    'regime': current_regime
-                })
+                'priority': 'high',
+                'regime': current_regime
+            })
+        # Check for PUT DRIVEN (medium threshold)
+        elif G < thresholds['put_driven'] and prev_G >= thresholds['put_driven']:
+            alerts.append({
+                'type': 'PUT_DRIVEN',
+                'symbol': symbol,
+                'G': G,
+                'data': data,
+                'message': f"🟠 **{symbol} PUT-DRIVEN**\nG = {G:.2f}\nPut gamma exceeds call gamma",
+                'priority': 'medium',
+                'regime': 'PUT_DRIVEN'
+            })
         
         # Apply cooldown filter (unless bypass_cooldown is set)
         filtered_alerts = []
