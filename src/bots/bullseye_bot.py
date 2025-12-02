@@ -545,6 +545,11 @@ class BullseyeBot(BaseAutoBot):
         await self._finalize_candidate(symbol, option_type, best_candidate, event_payload, underlying_price)
 
     async def scan_and_post(self):
+        """
+        Two-phase scanning approach for speed:
+        Phase 1: Fast flow detection on ALL symbols (1 API call each)
+        Phase 2: Deep validation only on candidates that pass basic filters
+        """
         await self._ensure_subscription()
         logger.info("%s scanning for institutional block flow", self.name)
 
@@ -552,39 +557,53 @@ class BullseyeBot(BaseAutoBot):
             logger.debug("%s skipping scan: market closed", self.name)
             return
         
-        # Use batch rotation like base class to prevent timeouts
-        full_watchlist = self.watchlist
-        batch_watchlist = full_watchlist
-        batch_limit = self.scan_batch_size
-        
-        if batch_limit and len(full_watchlist) > batch_limit:
-            batches = (len(full_watchlist) + batch_limit - 1) // batch_limit
-            batch_index = self.metrics.scan_count % batches
-            start = batch_index * batch_limit
-            batch_watchlist = full_watchlist[start:start + batch_limit]
-            logger.info(
-                "%s scanning batch %d/%d: %d of %d symbols",
-                self.name, batch_index + 1, batches, len(batch_watchlist), len(full_watchlist)
-            )
-        
+        # PHASE 1: Fast scan - detect flows on ALL symbols
+        # Only 1 API call per symbol, no heavy validation
         semaphore = asyncio.Semaphore(max(1, Config.MAX_CONCURRENT_REQUESTS))
 
-        async def run_symbol(symbol: str):
+        async def fast_scan(symbol: str):
             async with semaphore:
-                return await self._scan_symbol(symbol)
+                return await self._fast_scan_symbol(symbol)
         
-        tasks = [run_symbol(symbol) for symbol in batch_watchlist]
+        logger.info("%s Phase 1: Fast scanning %d symbols", self.name, len(self.watchlist))
+        tasks = [fast_scan(symbol) for symbol in self.watchlist]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        signals: List[Dict[str, Any]] = []
+        # Collect candidates that passed basic filters
+        candidates: List[Dict[str, Any]] = []
         for result in results:
             if isinstance(result, Exception):
-                logger.error("%s error during scan: %s", self.name, result)
                 continue
-            signals.extend(result)
+            candidates.extend(result)
+        
+        logger.info("%s Phase 1 complete: %d candidates from %d symbols", 
+                   self.name, len(candidates), len(self.watchlist))
+
+        if not candidates:
+            logger.debug("%s found no candidates in fast scan", self.name)
+            return
+
+        # PHASE 2: Deep validation only on candidates
+        # This is where we do the expensive API calls
+        logger.info("%s Phase 2: Deep validation on %d candidates", self.name, len(candidates))
+        
+        async def deep_validate(candidate: Dict[str, Any]):
+            async with semaphore:
+                return await self._deep_validate_candidate(candidate)
+        
+        validation_tasks = [deep_validate(c) for c in candidates]
+        validated = await asyncio.gather(*validation_tasks, return_exceptions=True)
+
+        signals: List[Dict[str, Any]] = []
+        for result in validated:
+            if isinstance(result, Exception):
+                logger.debug("%s validation error: %s", self.name, result)
+                continue
+            if result:  # None means validation failed
+                signals.append(result)
 
         if not signals:
-            logger.debug("%s found no qualifying block trades", self.name)
+            logger.debug("%s no signals passed deep validation", self.name)
             return
 
         signals.sort(key=lambda s: (s["score"], s["metrics"].premium), reverse=True)
@@ -604,8 +623,13 @@ class BullseyeBot(BaseAutoBot):
                 if alerts_posted >= self.max_alerts_per_scan:
                     break
 
-    async def _scan_symbol(self, symbol: str) -> List[Dict[str, Any]]:
-        signals: List[Dict[str, Any]] = []
+    async def _fast_scan_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Phase 1: Fast flow detection with basic filtering only.
+        NO expensive API calls (candles, alignment, trend) - those happen in Phase 2.
+        Returns list of candidates for deep validation.
+        """
+        candidates: List[Dict[str, Any]] = []
 
         try:
             flows = await self.fetcher.detect_unusual_flow(
@@ -615,8 +639,8 @@ class BullseyeBot(BaseAutoBot):
                 min_volume_ratio=0.0,
             )
         except Exception as exc:
-            logger.error("%s failed to load flow for %s: %s", self.name, symbol, exc)
-            return signals
+            logger.debug("%s failed to load flow for %s: %s", self.name, symbol, exc)
+            return candidates
 
         for flow in flows:
             metrics = build_metrics_from_flow(flow)
@@ -639,6 +663,8 @@ class BullseyeBot(BaseAutoBot):
             ask = float(flow.get("ask") or 0.0)
             spread_pct = self._calculate_spread_pct(bid, ask)
 
+            # === BASIC FILTERS (no API calls) ===
+            
             if not metrics.is_single_leg:
                 self._log_skip(symbol, "multi-leg structure (spread)")
                 continue
@@ -732,9 +758,39 @@ class BullseyeBot(BaseAutoBot):
                 self._log_skip(symbol, f"volume {volume_delta} <= OI {oi_value} (no fresh positioning)")
                 continue
 
+            cooldown_key = self._build_cooldown_key(metrics)
+            if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
+                self._log_skip(symbol, f"cooldown active ({cooldown_key})")
+                continue
+
+            # Passed basic filters - add to candidates for deep validation
+            candidates.append({
+                "symbol": symbol,
+                "metrics": metrics,
+                "flow": flow,
+                "contract_price": contract_price,
+                "voi_ratio": voi_ratio,
+                "spread_pct": spread_pct,
+                "flow_intensity": flow_intensity,
+                "volume_delta": volume_delta,
+                "cooldown_key": cooldown_key,
+            })
+
+        return candidates[:5]  # Limit candidates per symbol
+
+    async def _deep_validate_candidate(self, candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Phase 2: Deep validation with expensive API calls.
+        Only called for candidates that passed basic filters.
+        Returns signal dict if validation passes, None otherwise.
+        """
+        symbol = candidate["symbol"]
+        metrics = candidate["metrics"]
+        flow = candidate["flow"]
+        
+        try:
             # 10-minute Candle Verification
             # Ensure the option contract itself traded > $100k in the last 10 minutes
-            # and shows aggressive buying pressure (green candle)
             try:
                 bars_10m = await self.fetcher.get_aggregates(
                     flow['ticker'],
@@ -745,17 +801,13 @@ class BullseyeBot(BaseAutoBot):
                 
                 if not bars_10m.empty:
                     last_bar = bars_10m.iloc[-1]
-                    # Calculate total premium for this 10m candle
                     candle_premium = last_bar['volume'] * last_bar['close'] * 100
                     
                     if candle_premium < 100_000:
                         self._log_skip(symbol, f"10m option candle premium ${candle_premium:,.0f} < $100k")
-                        continue
+                        return None
 
-                # Stock Candle Logic (Proxy for "rising red candle" description)
-                # We need to verify the UNDERLYING direction matches the trade
-                # Calls -> Stock Green Candle
-                # Puts -> Stock Red Candle ("rising red candle" = rising put value on red stock candle)
+                # Stock Candle Logic
                 bars_stock = await self.fetcher.get_aggregates(
                     symbol,
                     timespan='minute',
@@ -768,68 +820,75 @@ class BullseyeBot(BaseAutoBot):
                     is_red = stock_bar['close'] < stock_bar['open']
                     
                     if metrics.option_type == 'CALL' and not is_green:
-                         self._log_skip(symbol, "10m stock candle is not green (Call needs green)")
-                         continue
+                        self._log_skip(symbol, "10m stock candle is not green (Call needs green)")
+                        return None
                     if metrics.option_type == 'PUT' and not is_red:
-                         self._log_skip(symbol, "10m stock candle is not red (Put needs red)")
-                         continue
+                        self._log_skip(symbol, "10m stock candle is not red (Put needs red)")
+                        return None
             except Exception as e:
                 logger.debug(f"{self.name} failed to verify 10m candle for {flow['ticker']}: {e}")
 
             # Trend Alignment Check
+            trend_data = None
             try:
                 alignment = await self.enhanced_analyzer.check_price_action_alignment(symbol, metrics.option_type)
                 if alignment:
-                    # Momentum Check:
-                    # If CALL, want positive momentum. If PUT, want negative.
-                    # momentum_5m and momentum_15m are percentages (e.g., 0.5 for 0.5%)
-                    
                     m5 = alignment.get('momentum_5m', 0)
                     m15 = alignment.get('momentum_15m', 0)
                     
                     if metrics.option_type == 'CALL':
                         if m5 < 0 and m15 < 0:
                             self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
-                            continue
+                            return None
                     elif metrics.option_type == 'PUT':
                         if m5 > 0 and m15 > 0:
                             self._log_skip(symbol, f"fighting trend (5m: {m5:.2f}%, 15m: {m15:.2f}%)")
-                            continue
+                            return None
             except Exception as e:
                 logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
 
-            trend_data = await self.enhanced_analyzer.get_trend_alignment(symbol)
-            if trend_data:
-                desired_trend = "BULLISH" if metrics.option_type.upper() == "CALL" else "BEARISH"
-                if not all(tf_info.get("trend") == desired_trend for tf_info in trend_data.values()):
-                    self._log_skip(symbol, f"trend misaligned ({desired_trend} required)")
-                    continue
-            cooldown_key = self._build_cooldown_key(metrics)
-            if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
-                self._log_skip(symbol, f"cooldown active ({cooldown_key})")
-                continue
+            try:
+                trend_data = await self.enhanced_analyzer.get_trend_alignment(symbol)
+                if trend_data:
+                    desired_trend = "BULLISH" if metrics.option_type.upper() == "CALL" else "BEARISH"
+                    if not all(tf_info.get("trend") == desired_trend for tf_info in trend_data.values()):
+                        self._log_skip(symbol, f"trend misaligned ({desired_trend} required)")
+                        return None
+            except Exception as e:
+                logger.debug(f"{self.name} get_trend_alignment failed for {symbol}: {e}")
 
+            # Calculate score
             score = self._calculate_block_score(
                 metrics=metrics,
-                voi_ratio=voi_ratio,
-                block_size=volume_delta,
-                intensity=flow_intensity,
-                spread_pct=spread_pct,
+                voi_ratio=candidate["voi_ratio"],
+                block_size=candidate["volume_delta"],
+                intensity=candidate["flow_intensity"],
+                spread_pct=candidate["spread_pct"],
             )
 
-            signals.append(
-                {
-                    "metrics": metrics,
-                    "flow": flow,
-                    "contract_price": contract_price,
-                    "score": score,
-                    "cooldown_key": cooldown_key,
-                    "spread_pct": spread_pct,
-                    "trend_data": trend_data,
-                }
-            )
+            return {
+                "metrics": metrics,
+                "flow": flow,
+                "contract_price": candidate["contract_price"],
+                "score": score,
+                "cooldown_key": candidate["cooldown_key"],
+                "spread_pct": candidate["spread_pct"],
+                "trend_data": trend_data,
+            }
 
-        return signals[:5]
+        except Exception as e:
+            logger.error(f"{self.name} deep validation error for {symbol}: {e}")
+            return None
+
+    async def _scan_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+        """Legacy method for event-driven scans - uses both phases."""
+        candidates = await self._fast_scan_symbol(symbol)
+        signals = []
+        for candidate in candidates:
+            result = await self._deep_validate_candidate(candidate)
+            if result:
+                signals.append(result)
+        return signals
 
     def _calculate_block_score(
         self,
