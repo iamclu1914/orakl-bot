@@ -552,13 +552,28 @@ class BullseyeBot(BaseAutoBot):
             logger.debug("%s skipping scan: market closed", self.name)
             return
         
+        # Use batch rotation like base class to prevent timeouts
+        full_watchlist = self.watchlist
+        batch_watchlist = full_watchlist
+        batch_limit = self.scan_batch_size
+        
+        if batch_limit and len(full_watchlist) > batch_limit:
+            batches = (len(full_watchlist) + batch_limit - 1) // batch_limit
+            batch_index = self.metrics.scan_count % batches
+            start = batch_index * batch_limit
+            batch_watchlist = full_watchlist[start:start + batch_limit]
+            logger.info(
+                "%s scanning batch %d/%d: %d of %d symbols",
+                self.name, batch_index + 1, batches, len(batch_watchlist), len(full_watchlist)
+            )
+        
         semaphore = asyncio.Semaphore(max(1, Config.MAX_CONCURRENT_REQUESTS))
 
         async def run_symbol(symbol: str):
             async with semaphore:
                 return await self._scan_symbol(symbol)
         
-        tasks = [run_symbol(symbol) for symbol in self.watchlist]
+        tasks = [run_symbol(symbol) for symbol in batch_watchlist]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         signals: List[Dict[str, Any]] = []
