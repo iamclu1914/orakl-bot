@@ -132,14 +132,22 @@ class FlowCache:
             logger.debug("FlowCache is fresh (%.1fs old), skipping refresh", self.age_seconds)
             return False
         
+        # If a refresh is already in progress, WAIT for it to complete
+        while self._state.refresh_in_progress:
+            logger.debug("FlowCache refresh in progress, waiting for completion...")
+            await asyncio.sleep(1)
+            # Check if it became fresh while waiting
+            if self.is_fresh:
+                logger.debug("FlowCache became fresh while waiting (%.1fs old)", self.age_seconds)
+                return False
+        
         async with self._lock:
             # Double-check after acquiring lock
             if not force and self.is_fresh:
                 return False
             
-            # Prevent concurrent refreshes
+            # Double-check no other refresh started
             if self._state.refresh_in_progress:
-                logger.debug("FlowCache refresh already in progress, waiting...")
                 return False
             
             self._state.refresh_in_progress = True
