@@ -220,12 +220,21 @@ class FlowCache:
         max_concurrent = min(Config.MAX_CONCURRENT_REQUESTS, 10)  # Cap at 10 to avoid rate limits
         semaphore = asyncio.Semaphore(max_concurrent)
         
+        # Progress tracking
+        completed_count = 0
+        total_symbols = len(watchlist)
+        symbols_with_flows = 0
+        PER_SYMBOL_TIMEOUT = 30  # seconds per symbol (allow for pagination)
+        
         async def fetch_symbol_flows(symbol: str) -> Any:
-            """Fetch flows for a single symbol."""
+            """Fetch flows for a single symbol with timeout."""
             async with semaphore:
                 try:
-                    # Single API call - same as Gamma Bot uses
-                    snapshot = await fetcher.get_option_chain_snapshot(symbol)
+                    # Add per-symbol timeout to prevent hanging
+                    snapshot = await asyncio.wait_for(
+                        fetcher.get_option_chain_snapshot(symbol),
+                        timeout=PER_SYMBOL_TIMEOUT
+                    )
                     
                     if not snapshot:
                         return symbol, []
@@ -234,30 +243,56 @@ class FlowCache:
                     flows = self._process_snapshot_to_flows(symbol, snapshot)
                     return symbol, flows
                     
+                except asyncio.TimeoutError:
+                    logger.debug("FlowCache: Timeout fetching %s after %ds", symbol, PER_SYMBOL_TIMEOUT)
+                    return symbol, []
                 except Exception as e:
                     logger.debug("FlowCache: Error fetching %s: %s", symbol, e)
                     return symbol, []
         
         # Fetch all symbols concurrently
+        logger.info("FlowCache: Creating %d fetch tasks (max %d concurrent)...", total_symbols, max_concurrent)
         tasks = [asyncio.create_task(fetch_symbol_flows(symbol)) for symbol in watchlist]
+        logger.info("FlowCache: All %d tasks created, starting execution...", len(tasks))
+        
         for task in asyncio.as_completed(tasks):
-            result = await task
-            if isinstance(result, Exception):
-                logger.debug("FlowCache: Error during prefetch task: %s", result)
-                continue
-            
-            symbol, flows = result
-            new_symbols_scanned.add(symbol)
-            
-            if flows:
-                new_flows_by_symbol[symbol] = flows
-                new_all_flows.extend(flows)
+            try:
+                result = await task
+                if isinstance(result, Exception):
+                    logger.debug("FlowCache: Error during prefetch task: %s", result)
+                    completed_count += 1
+                    continue
+                
+                symbol, flows = result
+                new_symbols_scanned.add(symbol)
+                completed_count += 1
+                
+                if flows:
+                    new_flows_by_symbol[symbol] = flows
+                    new_all_flows.extend(flows)
+                    symbols_with_flows += 1
+                
+                # Progress logging every 50 symbols or 10%
+                if completed_count % 50 == 0 or completed_count == total_symbols:
+                    pct = (completed_count / total_symbols) * 100
+                    logger.info(
+                        "FlowCache: Progress %d/%d (%.0f%%) - %d symbols with flows, %d total flows",
+                        completed_count, total_symbols, pct, symbols_with_flows, len(new_all_flows)
+                    )
+            except Exception as e:
+                logger.warning("FlowCache: Unexpected error processing task: %s", e)
+                completed_count += 1
     
         # Atomically swap in new data
         self._state.flows_by_symbol = new_flows_by_symbol
         self._state.all_flows = new_all_flows
         self._state.symbols_scanned = new_symbols_scanned
         self._state.has_data = bool(new_all_flows)
+        
+        logger.info(
+            "FlowCache: Prefetch finished - %d/%d symbols processed, %d with flows, %d total flows",
+            completed_count, total_symbols, symbols_with_flows, len(new_all_flows)
+        )
 
     def _process_snapshot_to_flows(
         self,
