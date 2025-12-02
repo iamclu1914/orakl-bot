@@ -803,3 +803,93 @@ class ProfessionalCharts:
             logger.error(f"Error calculating S/R levels: {e}")
             return []
 
+    @staticmethod
+    def create_gamma_chart(g_value: float, symbol: str, regime: str) -> Optional[BytesIO]:
+        """
+        Create a professional gamma gauge chart.
+        """
+        try:
+            if g_value is None:
+                return None
+
+            fig = go.Figure()
+
+            # Determine color based on regime
+            if 'PUT' in regime:
+                bar_color = ProfessionalCharts.COLORS['red']
+            elif 'CALL' in regime:
+                bar_color = ProfessionalCharts.COLORS['green']
+            else:
+                bar_color = ProfessionalCharts.COLORS['blue']
+
+            # Background bar
+            fig.add_trace(go.Bar(
+                x=[1],
+                y=['G'],
+                orientation='h',
+                marker=dict(color=ProfessionalCharts.COLORS['panel'], line=dict(width=0)),
+                hoverinfo='none',
+                showlegend=False
+            ))
+            
+            # Foreground bar for G-value
+            fig.add_trace(go.Bar(
+                x=[g_value],
+                y=['G'],
+                orientation='h',
+                marker=dict(color=bar_color, line=dict(width=0)),
+                hoverinfo='none',
+                showlegend=False,
+                text=f"{g_value:.2f}",
+                textposition='outside',
+                textfont=dict(size=22, color='#ffffff', family='Inter, Arial, sans-serif')
+            ))
+
+            # Add zone lines
+            zones = {
+                'EXTREME PUT': 0.25,
+                'PUT-DRIVEN': 0.45,
+                'NEUTRAL': 0.55,
+                'CALL-DRIVEN': 0.75,
+            }
+            for name, val in zones.items():
+                fig.add_vline(
+                    x=val,
+                    line_width=1,
+                    line_dash="dash",
+                    line_color=ProfessionalCharts.COLORS['gray']
+                )
+
+            fig.update_layout(
+                barmode='overlay',
+                title={
+                    'text': f"{symbol} Gamma Exposure",
+                    'x': 0.5, 'xanchor': 'center',
+                    'font': {'size': 24, 'color': '#ffffff', 'family': 'Inter'}
+                },
+                paper_bgcolor=ProfessionalCharts.COLORS['bg'],
+                plot_bgcolor=ProfessionalCharts.COLORS['bg'],
+                height=250,
+                margin=dict(l=50, r=50, t=80, b=50),
+                xaxis=dict(
+                    range=[0, 1],
+                    showgrid=False,
+                    showticklabels=True,
+                    tickvals=[0, 0.25, 0.5, 0.75, 1],
+                    tickfont=dict(size=14, color=ProfessionalCharts.COLORS['gray'])
+                ),
+                yaxis=dict(
+                    showgrid=False,
+                    showticklabels=False
+                ),
+                font=ProfessionalCharts.TEMPLATE['layout']['font']
+            )
+
+            buf = BytesIO()
+            fig.write_image(buf, format='png', width=800, height=250, scale=2)
+            buf.seek(0)
+            return buf
+
+        except Exception as e:
+            logger.error(f"Error creating gamma chart: {e}")
+            return None

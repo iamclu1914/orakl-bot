@@ -6,7 +6,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.watchlist_manager import SmartWatchlistManager
-from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, IndexWhaleBot, SpreadBot
+from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, SpreadBot, GammaRatioBot
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +88,6 @@ class BotManager:
             f" | Watchlist: {len(golden_watchlist)} tickers (same as all bots)"
         )
 
-        # Index Whale Bot (REST polling)
-        self.index_whale_bot = IndexWhaleBot(
-            Config.INDEX_WHALE_WEBHOOK,
-            self.fetcher,
-            Config.INDEX_WHALE_WATCHLIST,
-        )
-        self.bots.append(self.index_whale_bot)
-        self.bot_overrides[self.index_whale_bot] = list(Config.INDEX_WHALE_WATCHLIST)
-        logger.info(
-            "  ✓ Index Whale Bot → REST polling | Symbols: %s",
-            ", ".join(Config.INDEX_WHALE_WATCHLIST),
-        )
-
         # 99 Cent Store Bot (Spread scanner)
         spread_watchlist = list(
             dict.fromkeys(
@@ -119,6 +106,20 @@ class BotManager:
         logger.info(
             "  ✓ 99 Cent Store Bot → Narrow spread scanner | Watchlist: %d tickers",
             len(spread_watchlist),
+        )
+
+        # Gamma Ratio Bot (Call/Put gamma regime tracker)
+        gamma_watchlist = list(Config.GAMMA_RATIO_WATCHLIST)
+        self.gamma_ratio_bot = GammaRatioBot(
+            Config.GAMMA_RATIO_WEBHOOK,
+            gamma_watchlist,
+            self.fetcher,
+        )
+        self.bots.append(self.gamma_ratio_bot)
+        self.bot_overrides[self.gamma_ratio_bot] = gamma_watchlist
+        logger.info(
+            "  ✓ Gamma Ratio Bot → G ratio regime tracker | Watchlist: %d tickers",
+            len(gamma_watchlist),
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")

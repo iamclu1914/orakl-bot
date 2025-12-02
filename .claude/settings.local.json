@@ -20,7 +20,9 @@
       "Bash(taskkill:*)",
       "Bash(powershell:*)",
       "Bash(rm:*)",
-      "Bash(netstat:*)"
+      "Bash(netstat:*)",
+      "Bash(npx @anthropic-ai/claude-code:*)",
+      "Bash(npm search:*)"
     ],
     "deny": [],
     "ask": []

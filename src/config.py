@@ -35,6 +35,7 @@ class Config:
     BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
     SPREAD_WEBHOOK = os.getenv('SPREAD_WEBHOOK', DISCORD_WEBHOOK_URL)
     INDEX_WHALE_WEBHOOK = os.getenv('INDEX_WHALE_WEBHOOK', DISCORD_WEBHOOK_URL)
+    GAMMA_RATIO_WEBHOOK = os.getenv('GAMMA_RATIO_WEBHOOK', DISCORD_WEBHOOK_URL)
     
     # Discord Settings
     DISCORD_COMMAND_PREFIX = os.getenv('DISCORD_COMMAND_PREFIX', 'ok-')
@@ -47,6 +48,7 @@ class Config:
     GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '300'))  # 5 minutes (reduced from 15 to close gap)
     INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '600'))  # 10 minutes REST polling
     SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '600'))  # 10 minutes
+    GAMMA_RATIO_INTERVAL = int(os.getenv('GAMMA_RATIO_INTERVAL', '300'))  # 5 minutes
     
     # Batch sizes for scan workload management (prevents timeouts)
     SPREAD_SCAN_BATCH_SIZE = int(os.getenv('SPREAD_SCAN_BATCH_SIZE', '100'))
@@ -107,6 +109,18 @@ class Config:
     SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '2.0'))  # 2 days minimum for swing trades
     SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '30.0'))  # Up to 4 weeks for swing trades
     SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.15'))  # 15% OTM max for higher probability
+
+    # Gamma Ratio Bot Thresholds (G = call_gamma / total_gamma)
+    # G → 1.0 = call-driven, G → 0.0 = put-driven, G ≈ 0.5 = balanced
+    GAMMA_RATIO_CONSTANT_VOL = float(os.getenv('GAMMA_RATIO_CONSTANT_VOL', '0.20'))  # BSM volatility assumption
+    GAMMA_RATIO_RISK_FREE_RATE = float(os.getenv('GAMMA_RATIO_RISK_FREE_RATE', '0.0'))
+    GAMMA_RATIO_MIN_OI = int(os.getenv('GAMMA_RATIO_MIN_OI', '100'))  # Minimum OI to include
+    GAMMA_RATIO_MAX_OTM_PCT = float(os.getenv('GAMMA_RATIO_MAX_OTM_PCT', '0.20'))  # Max distance from spot
+    GAMMA_RATIO_EXTREME_PUT = float(os.getenv('GAMMA_RATIO_EXTREME_PUT', '0.25'))  # G < 0.25 = extreme put
+    GAMMA_RATIO_PUT_DRIVEN = float(os.getenv('GAMMA_RATIO_PUT_DRIVEN', '0.35'))  # G < 0.35 = put-driven
+    GAMMA_RATIO_CALL_DRIVEN = float(os.getenv('GAMMA_RATIO_CALL_DRIVEN', '0.65'))  # G > 0.65 = call-driven
+    GAMMA_RATIO_EXTREME_CALL = float(os.getenv('GAMMA_RATIO_EXTREME_CALL', '0.75'))  # G > 0.75 = extreme call
+    GAMMA_RATIO_COOLDOWN_MINUTES = int(os.getenv('GAMMA_RATIO_COOLDOWN_MINUTES', '30'))  # Cooldown between alerts
 
     # Score Thresholds
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '85'))
@@ -200,6 +214,10 @@ class Config:
         'WYNN,LVS,PENN,PLTR,AMD,NVDA,TSLA,RIVN,LCID,NIO,F,GM,AMC,GME,COIN,HOOD,SOFI,UBER,LYFT,ABNB,CCL,RCL,SNAP,'
         'ROKU,NET,DDOG,MU,ON,ARM,SMCI,SHOP,CRWD,SNOW'
     ).split(',')
+    GAMMA_RATIO_WATCHLIST = os.getenv(
+        'GAMMA_RATIO_WATCHLIST',
+        ','.join(_UNIFIED_LIST)
+    ).split(',')
 
     SKIP_TICKERS = os.getenv(
         'SKIP_TICKERS',
@@ -214,6 +232,7 @@ class Config:
     INDEX_WHALE_WATCHLIST = [ticker.strip().upper() for ticker in INDEX_WHALE_WATCHLIST if ticker.strip()]
     SPREAD_WATCHLIST = [ticker.strip().upper() for ticker in SPREAD_WATCHLIST if ticker.strip()]
     SPREAD_EXTRA_TICKERS = [ticker.strip().upper() for ticker in SPREAD_EXTRA_TICKERS if ticker.strip()]
+    GAMMA_RATIO_WATCHLIST = [ticker.strip().upper() for ticker in GAMMA_RATIO_WATCHLIST if ticker.strip()]
     
     # Verify all bots have same watchlist count
     logger.info(f"Unified Watchlist: {len(_UNIFIED_LIST)} tickers")
@@ -222,6 +241,7 @@ class Config:
     logger.info(f"  - Index Whale: {len(INDEX_WHALE_WATCHLIST)} tickers")
     logger.info(f"  - Spread Sniper: {len(SPREAD_WATCHLIST)} tickers (+{len(SPREAD_EXTRA_TICKERS)} extras)")
     logger.info(f"  - Bullseye: Uses SWEEPS_WATCHLIST")
+    logger.info(f"  - Gamma Ratio: {len(GAMMA_RATIO_WATCHLIST)} tickers")
 
     # Ensure core index ETFs are always monitored by flow-focused bots
     _REQUIRED_INDEX_ETFS = ['SPY', 'QQQ', 'IWM']
