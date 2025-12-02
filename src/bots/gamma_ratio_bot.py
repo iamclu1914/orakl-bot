@@ -209,8 +209,19 @@ class GammaRatioBot(BaseAutoBot):
         scan_interval = getattr(Config, 'GAMMA_RATIO_INTERVAL', 300)
         super().__init__(webhook_url, "Gamma Ratio Bot", scan_interval=scan_interval)
         
-        self.watchlist = watchlist
         self.fetcher = fetcher
+        
+        # Priority symbols - always scanned every cycle
+        self.priority_symbols = [
+            'SPY', 'QQQ', 'IWM', 'DIA',  # Major indices
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',  # Mega caps
+            'AMD', 'NFLX', 'CRM', 'AVGO', 'COST', 'JPM', 'V', 'MA'  # High volume
+        ]
+        
+        # Put priority symbols first in watchlist
+        priority_set = set(self.priority_symbols)
+        other_symbols = [s for s in watchlist if s not in priority_set]
+        self.watchlist = self.priority_symbols + other_symbols
         
         # Configuration
         self.constant_vol = getattr(Config, 'GAMMA_RATIO_CONSTANT_VOL', 0.20)
@@ -230,10 +241,13 @@ class GammaRatioBot(BaseAutoBot):
         cooldown_minutes = getattr(Config, 'GAMMA_RATIO_COOLDOWN_MINUTES', 30)
         self.alert_manager = GammaAlertManager(cooldown_minutes=cooldown_minutes)
         
-        # No batching - scan ALL tickers every cycle to catch regime changes
-        # The calculation is lightweight (just math on fetched data)
-        # Concurrency handles the API calls efficiently
-        self.scan_batch_size = 0  # 0 = no batching, scan full watchlist
+        # Batch scanning - scan subset each cycle to prevent timeouts
+        # With 396 symbols and ~2s per API call, full scan takes too long
+        # Scan 100 symbols per cycle = ~4 cycles to cover full watchlist
+        self.scan_batch_size = 100
+        
+        # Increase concurrency for faster scanning
+        self.concurrency_limit = 15
         
         logger.info(
             f"{self.name} initialized with {len(watchlist)} symbols, "
