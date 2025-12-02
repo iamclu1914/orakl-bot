@@ -1,10 +1,8 @@
 """
 99 Cent Store Bot - finds swing trade contracts under $1.00 with high conviction whale flow (5-21 DTE).
 
-Optimized for efficiency using shared FlowCache:
-- ONE prefetch per cycle for all symbols (shared with other bots)
-- Local filtering on cached data (no per-symbol API calls)
-- All 400+ symbols scanned every 5 minutes
+Independent scanning - each bot scans its own watchlist directly.
+Uses batching for efficient concurrent API calls.
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import build_metrics_from_flow, OptionTradeMetrics
 from src.utils.enhanced_analysis import EnhancedAnalyzer
 from src.utils.event_bus import event_bus
-from src.utils.flow_cache import get_flow_cache, CachedFlow
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +75,8 @@ class SpreadBot(BaseAutoBot):
 
     async def scan_and_post(self):
         """
-        Optimized scanning using shared FlowCache:
-        - ONE prefetch for all symbols (shared with other bots)
-        - Local filtering for sub-$1 contracts with whale flow
-        - All 400+ symbols processed every 5 minutes
+        Independent scan - scans watchlist directly for sub-$1 whale flows.
+        Uses batching for efficient concurrent API calls.
         """
         await self._ensure_subscription()
 
@@ -96,112 +91,38 @@ class SpreadBot(BaseAutoBot):
         
         logger.info("%s scanning for sub-$1 whale flows", self.name)
         
-        # Get shared flow cache
-        cache = get_flow_cache()
+        # Scan symbols concurrently
+        all_signals: List[Dict] = []
+        max_alerts = 5  # Limit alerts per cycle
         
-        # Refresh cache if needed (this is the ONLY API call for all bots)
-        await cache.refresh_if_needed(self.fetcher, self.watchlist)
+        # Use smaller batch for faster results
+        batch_size = 50
+        for i in range(0, len(self.watchlist), batch_size):
+            batch = self.watchlist[i:i + batch_size]
+            
+            # Scan batch concurrently
+            tasks = [self._scan_symbol(symbol) for symbol in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, list):
+                    all_signals.extend(result)
+            
+            # Early exit if we have enough candidates
+            if len(all_signals) >= max_alerts * 3:
+                break
         
-        # Check if cache has any data yet
-        if not cache.has_data():
-            logger.info("%s waiting for FlowCache to be populated (first scan)...", self.name)
-            return
+        logger.info("%s found %d candidates from scan", self.name, len(all_signals))
         
-        # Filter cached flows for sub-$1 contracts (NO API calls!)
-        candidates = cache.filter_flows(
-            min_premium=self.min_premium,
-            min_volume=self.min_volume_delta,
-        )
-        
-        logger.info(
-            "%s found %d candidates from cache (%.1fs old)",
-            self.name, len(candidates), cache.age_seconds
-        )
-        
-        # Process candidates locally
-        signals: List[Dict] = []
-        now = datetime.now()
-        
-        for flow in candidates:
-            try:
-                flow_dict = cache.flow_to_dict(flow)
-                
-                # Build metrics
-                metrics = build_metrics_from_flow(flow_dict)
-                if not metrics:
-                    continue
-                
-                # === LOCAL FILTERS (no API calls) ===
-                
-                # Single-leg filter
-                if not metrics.is_single_leg:
-                    continue
-                
-                # Contract price filter (must be sub-$1)
-                contract_price = metrics.price
-                if contract_price is None or contract_price <= 0:
-                    continue
-                if contract_price < self.min_price or contract_price > self.max_price:
-                    continue
-                
-                # Premium filter
-                premium = float(metrics.premium or 0.0)
-                if premium < self.min_premium:
-                    continue
-                
-                # OTM filter
-                if not metrics.is_otm:
-                    continue
-                if metrics.percent_otm > self.max_percent_otm:
-                    continue
-                
-                # DTE filter
-                if metrics.dte < self.min_dte or metrics.dte > self.max_dte:
-                    continue
-                
-                # Volume filters
-                total_volume = flow.total_volume
-                if total_volume < self.min_volume:
-                    continue
-                if flow.volume_delta < self.min_volume_delta:
-                    continue
-                
-                # VOI ratio filter
-                voi_ratio = flow.vol_oi_ratio
-                if voi_ratio < self.min_voi_ratio:
-                    # Allow override for high premium
-                    if not (premium >= self.min_premium * 1.4 and flow.volume_delta >= self.min_volume_delta * 2):
-                        continue
-                
-                # Cooldown check
-                cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
-                stats_snapshot = self._update_flow_stats(cooldown_key, premium)
-                if self._cooldown_active(cooldown_key, cooldown_seconds=self.cooldown_seconds):
-                    continue
-                
-                # Mark cooldown
-                self._mark_cooldown(cooldown_key)
-                
-                signals.append({
-                    "metrics": metrics,
-                    "contract_price": contract_price,
-                    "flow": flow_dict,
-                    "stats": stats_snapshot,
-                })
-                
-            except Exception as e:
-                logger.debug("%s error processing flow: %s", self.name, e)
-                continue
-        
-        if not signals:
+        if not all_signals:
             logger.debug("%s no signals passed filters", self.name)
             return
         
         # Sort by premium and post top signals
-        signals.sort(key=lambda s: s["metrics"].premium, reverse=True)
+        all_signals.sort(key=lambda s: s["metrics"].premium if s.get("metrics") else 0, reverse=True)
         
         posted = 0
-        for signal in signals[:5]:  # Top 5 signals
+        for signal in all_signals[:max_alerts]:
             try:
                 success = await self._post_signal(signal)
                 if success:

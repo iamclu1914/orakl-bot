@@ -1,10 +1,9 @@
 """Golden Sweeps Bot - 1 Million+ premium sweeps
 
-Optimized for efficiency using shared FlowCache:
-- ONE prefetch per cycle for all symbols (shared with other bots)
-- Local filtering on cached data (no per-symbol API calls)
-- All 400+ symbols scanned every 5 minutes
+Independent scanning - each bot scans its own watchlist directly.
+Uses base class batching for efficient concurrent API calls.
 """
+import asyncio
 import logging
 from datetime import datetime
 from typing import List, Dict, Any
@@ -16,7 +15,6 @@ from src.config import Config
 from src.utils.monitoring import timed
 from src.utils.event_bus import event_bus
 from src.utils.market_hours import MarketHours
-from src.utils.flow_cache import get_flow_cache
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +52,8 @@ class GoldenSweepsBot(SweepsBot):
     @timed()
     async def scan_and_post(self):
         """
-        Optimized scanning using shared FlowCache:
-        - ONE prefetch for all symbols (shared with other bots)
-        - Local filtering for $1M+ premium flows
-        - All 400+ symbols processed every 5 minutes
+        Independent scan - scans watchlist directly for $1M+ premium flows.
+        Uses batching for efficient concurrent API calls.
         """
         logger.info(f"{self.name} scanning for million dollar sweeps")
 
@@ -66,140 +62,66 @@ class GoldenSweepsBot(SweepsBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        # Get shared flow cache
-        cache = get_flow_cache()
+        # Scan symbols and collect all golden sweeps
+        all_sweeps = []
+        max_alerts = 15  # Allow more golden alerts but still limit
         
-        # Refresh cache if needed (this is the ONLY API call for all bots)
-        await cache.refresh_if_needed(self.fetcher, self.watchlist)
+        # Use smaller batch for faster results
+        batch_size = 50
+        for i in range(0, len(self.watchlist), batch_size):
+            batch = self.watchlist[i:i + batch_size]
+            
+            # Scan batch concurrently - use parent's _scan_sweeps directly
+            async def scan_symbol(symbol: str) -> List[Dict]:
+                try:
+                    sweeps = await self._scan_sweeps(symbol)
+                    # Filter to golden only ($1M+)
+                    return [s for s in sweeps if s.get('premium', 0) >= self.MIN_SWEEP_PREMIUM]
+                except Exception as e:
+                    logger.debug(f"{self.name} error scanning {symbol}: {e}")
+                    return []
+            
+            tasks = [scan_symbol(symbol) for symbol in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, list):
+                    all_sweeps.extend(result)
+            
+            # Early exit if we have enough candidates
+            if len(all_sweeps) >= max_alerts * 2:
+                break
         
-        # Check if cache has any data yet
-        if not cache.has_data():
-            logger.info("%s waiting for FlowCache to be populated (first scan)...", self.name)
-            return
+        logger.info(f"{self.name} found {len(all_sweeps)} golden sweep candidates")
         
-        # Filter cached flows for GOLDEN ($1M+) premium (NO API calls!)
-        candidates = cache.filter_flows(
-            min_premium=self.MIN_SWEEP_PREMIUM,  # $1M+
-            min_volume=self.MIN_VOLUME_DELTA,
-        )
-        
-        logger.info(
-            "%s found %d golden candidates from cache (%.1fs old)",
-            self.name, len(candidates), cache.age_seconds
-        )
-        
-        # Process candidates locally
-        sweeps = []
-        now = datetime.now()
-        
-        for flow in candidates:
-            try:
-                flow_dict = cache.flow_to_dict(flow)
-                
-                # DTE calculation
-                days_to_expiry = 0
-                if flow.expiration:
-                    try:
-                        exp_date = datetime.strptime(flow.expiration, '%Y-%m-%d')
-                        days_to_expiry = (exp_date - now).days
-                    except ValueError:
-                        continue
-                
-                # Allow 0DTE up to 2-year LEAPS for Golden Sweeps
-                if days_to_expiry < 0 or days_to_expiry > 730:
-                    continue
-                
-                # Calculate strike distance (no filter for Golden - premium IS the signal)
-                strike_distance = 0
-                if flow.underlying_price and flow.underlying_price > 0:
-                    strike_distance = ((flow.strike - flow.underlying_price) / flow.underlying_price) * 100
-                
-                # Calculate moneyness
-                if flow.option_type == 'CALL':
-                    moneyness = 'ITM' if flow.strike < flow.underlying_price else 'OTM' if flow.strike > flow.underlying_price else 'ATM'
-                else:
-                    moneyness = 'ITM' if flow.strike > flow.underlying_price else 'OTM' if flow.strike < flow.underlying_price else 'ATM'
-                
-                # Calculate base sweep score
-                num_fills = max(3, int(flow.volume_delta / 50))
-                sweep_score = self._calculate_sweep_score(
-                    flow.premium, flow.total_volume, num_fills, abs(strike_distance)
-                )
-                
-                # Reward outsized premium
-                if flow.premium >= 5_000_000:
-                    sweep_score += 20
-                elif flow.premium >= 3_000_000:
-                    sweep_score += 15
-                elif flow.premium >= 2_000_000:
-                    sweep_score += 10
-                else:
-                    sweep_score += 5
-                sweep_score = min(sweep_score, 100)
-                
-                # Premium-based score floor
-                premium_score_floor = 0
-                if flow.premium >= 5_000_000:
-                    premium_score_floor = 75
-                elif flow.premium >= 3_000_000:
-                    premium_score_floor = 70
-                elif flow.premium >= 1_000_000:
-                    premium_score_floor = 65
-                sweep_score = max(sweep_score, premium_score_floor)
-                
-                # Deduplication
-                signal_key = f"{flow.underlying}_{flow.option_type}_{flow.strike}_{flow.expiration}"
-                dedup_result = self.deduplicator.should_alert(signal_key, flow.premium)
-                
-                if not dedup_result['should_alert']:
-                    continue
-                
-                if self._cooldown_active(signal_key):
-                    continue
-                
-                # Calculate probability ITM
-                prob_itm = self.analyzer.calculate_probability_itm(
-                    flow.option_type, flow.strike, flow.underlying_price, days_to_expiry
-                ) if flow.underlying_price else 0
-                
-                # Build sweep signal
-                sweep = {
-                    'ticker': flow.underlying,
-                    'symbol': flow.underlying,
-                    'type': flow.option_type,
-                    'strike': flow.strike,
-                    'expiration': flow.expiration,
-                    'current_price': flow.underlying_price,
-                    'days_to_expiry': days_to_expiry,
-                    'premium': flow.premium,
-                    'volume': flow.total_volume,
-                    'num_fills': num_fills,
-                    'moneyness': moneyness,
-                    'strike_distance': strike_distance,
-                    'probability_itm': prob_itm,
-                    'sweep_score': sweep_score,
-                    'enhanced_score': sweep_score,
-                    'volume_delta': flow.volume_delta,
-                    'delta': flow.delta,
-                    'gamma': flow.gamma,
-                    'vega': flow.vega,
-                    'avg_price': flow.premium / (max(flow.volume_delta, 1) * 100),
-                    'alert_type': dedup_result['type'],
-                    'alert_reason': dedup_result['reason'],
-                }
-                
-                sweeps.append(sweep)
-                self._mark_cooldown(signal_key)
-                
-            except Exception as e:
-                logger.debug(f"{self.name} error processing flow: {e}")
-                continue
+        # Enhance scores for golden sweeps
+        for sweep in all_sweeps:
+            premium = sweep.get('premium', 0)
+            # Reward outsized premium
+            score_boost = 5
+            if premium >= 5_000_000:
+                score_boost = 20
+            elif premium >= 3_000_000:
+                score_boost = 15
+            elif premium >= 2_000_000:
+                score_boost = 10
+            
+            current_score = sweep.get('enhanced_score', sweep.get('sweep_score', 50))
+            sweep['enhanced_score'] = min(current_score + score_boost, 100)
+            
+            # Premium-based score floor
+            if premium >= 5_000_000:
+                sweep['enhanced_score'] = max(sweep['enhanced_score'], 75)
+            elif premium >= 3_000_000:
+                sweep['enhanced_score'] = max(sweep['enhanced_score'], 70)
+            elif premium >= 1_000_000:
+                sweep['enhanced_score'] = max(sweep['enhanced_score'], 65)
         
         # Sort by premium (highest first) and post
-        sweeps.sort(key=lambda x: x['premium'], reverse=True)
+        all_sweeps.sort(key=lambda x: x['premium'], reverse=True)
         
         posted = 0
-        for sweep in sweeps:
+        for sweep in all_sweeps[:max_alerts]:
             try:
                 success = await self._post_signal(sweep)
                 if success:

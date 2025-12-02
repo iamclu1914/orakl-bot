@@ -1,10 +1,9 @@
 """Sweeps Bot - Large options sweeps tracker
 
-Optimized for efficiency using shared FlowCache:
-- ONE prefetch per cycle for all symbols (shared with other bots)
-- Local filtering on cached data (no per-symbol API calls)
-- All 400+ symbols scanned every 5 minutes
+Independent scanning - each bot scans its own watchlist directly.
+Uses base class batching for efficient concurrent API calls.
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -17,7 +16,7 @@ from src.utils.monitoring import signals_generated, timed
 from src.utils.exceptions import DataException, handle_exception
 from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
 from src.utils.market_hours import MarketHours
-from src.utils.flow_cache import get_flow_cache, CachedFlow
+# Removed FlowCache - each bot scans independently now
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +74,8 @@ class SweepsBot(BaseAutoBot):
     @timed()
     async def scan_and_post(self):
         """
-        Optimized scanning using shared FlowCache:
-        - ONE prefetch for all symbols (shared with other bots)
-        - Local filtering on cached data (no per-symbol API calls)
-        - All 400+ symbols processed every 5 minutes
+        Independent scan - each bot scans its watchlist directly.
+        Uses base class batching for efficiency.
         """
         logger.info(f"{self.name} scanning for large sweeps")
 
@@ -88,166 +85,34 @@ class SweepsBot(BaseAutoBot):
             self.deduplicator.cleanup_old_signals()
             return
         
-        # Get shared flow cache
-        cache = get_flow_cache()
+        # Scan symbols and collect all sweeps
+        all_sweeps = []
+        max_alerts = 10  # Limit alerts per cycle to avoid Discord rate limits
         
-        # Refresh cache if needed (this is the ONLY API call for all bots)
-        await cache.refresh_if_needed(self.fetcher, self.watchlist)
+        # Use smaller batch for faster results
+        batch_size = 50
+        for i in range(0, len(self.watchlist), batch_size):
+            batch = self.watchlist[i:i + batch_size]
+            
+            # Scan batch concurrently
+            tasks = [self._scan_symbol(symbol) for symbol in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, list):
+                    all_sweeps.extend(result)
+            
+            # Early exit if we have enough candidates
+            if len(all_sweeps) >= max_alerts * 3:
+                break
         
-        # Check if cache has any data yet
-        if not cache.has_data():
-            logger.info("%s waiting for FlowCache to be populated (first scan)...", self.name)
-            return
-        
-        # Filter cached flows locally (NO API calls!)
-        candidates = cache.filter_flows(
-            min_premium=self.MIN_SWEEP_PREMIUM,
-            min_volume=self.MIN_VOLUME_DELTA,
-        )
-        
-        logger.info(
-            "%s found %d candidates from cache (%.1fs old)",
-            self.name, len(candidates), cache.age_seconds
-        )
-        
-        # Process candidates locally
-        sweeps = []
-        now = datetime.now()
-        
-        for flow in candidates:
-            try:
-                flow_dict = cache.flow_to_dict(flow)
-                
-                # Skip if qualifies as Golden Sweep (handled by GoldenSweepsBot)
-                if flow.premium >= Config.GOLDEN_MIN_PREMIUM:
-                    if not self._is_golden_bot_healthy():
-                        logger.info(f"{self.name} emitting golden fallback for {flow.underlying}")
-                        flow_dict['_golden_fallback'] = True
-                    else:
-                        continue
-                
-                # DTE calculation
-                days_to_expiry = 0
-                if flow.expiration:
-                    try:
-                        exp_date = datetime.strptime(flow.expiration, '%Y-%m-%d')
-                        days_to_expiry = (exp_date - now).days
-                    except ValueError:
-                        continue
-                
-                # DTE filter (1-90 days)
-                if days_to_expiry <= 0 or days_to_expiry > 90:
-                    continue
-                
-                # Strike distance filter
-                if flow.underlying_price and flow.underlying_price > 0:
-                    strike_distance = ((flow.strike - flow.underlying_price) / flow.underlying_price) * 100
-                    abs_distance = abs(strike_distance)
-                    
-                    # Determine max allowed based on premium tier
-                    max_allowed = self.MAX_STRIKE_DISTANCE
-                    for premium_threshold, allowed_distance in self.STRIKE_DISTANCE_PREMIUM_TIERS:
-                        if flow.premium >= premium_threshold:
-                            max_allowed = allowed_distance
-                            break
-                    
-                    # Short DTE gets wider allowance
-                    if days_to_expiry <= self.SHORT_DTE_THRESHOLD:
-                        max_allowed += self.SHORT_DTE_STRIKE_EXTENSION
-                    
-                    if abs_distance > max_allowed:
-                        continue
-                else:
-                    strike_distance = 0
-                
-                # Calculate moneyness
-                if flow.option_type == 'CALL':
-                    moneyness = 'ITM' if flow.strike < flow.underlying_price else 'OTM' if flow.strike > flow.underlying_price else 'ATM'
-                else:
-                    moneyness = 'ITM' if flow.strike > flow.underlying_price else 'OTM' if flow.strike < flow.underlying_price else 'ATM'
-                
-                # Calculate sweep score
-                num_fills = max(3, int(flow.volume_delta / 50))
-                sweep_score = self._calculate_sweep_score(
-                    flow.premium, flow.total_volume, num_fills, abs(strike_distance) if flow.underlying_price else 0
-                )
-                
-                # Volume ratio filter
-                skip_volume_ratio = getattr(self, 'SKIP_VOLUME_RATIO_CHECK', False)
-                if not skip_volume_ratio and flow.vol_oi_ratio < self.MIN_VOLUME_RATIO:
-                    flex_threshold = self.MIN_VOLUME_RATIO * self.VOLUME_RATIO_FLEX_MULTIPLIER
-                    if not (flow.premium >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM and flow.vol_oi_ratio >= flex_threshold):
-                        continue
-                
-                # Volume boost for score
-                volume_boost = 0
-                if flow.vol_oi_ratio >= 3.0:
-                    volume_boost = 18
-                elif flow.vol_oi_ratio >= 2.0:
-                    volume_boost = 12
-                elif flow.vol_oi_ratio >= 1.5:
-                    volume_boost = 6
-                elif flow.vol_oi_ratio >= 1.2:
-                    volume_boost = 3
-                
-                enhanced_score = min(sweep_score + volume_boost, 100)
-                
-                # Score filter
-                if enhanced_score < self.MIN_SCORE:
-                    continue
-                
-                # Deduplication
-                signal_key = f"{flow.underlying}_{flow.option_type}_{flow.strike}_{flow.expiration}"
-                dedup_result = self.deduplicator.should_alert(signal_key, flow.premium)
-                
-                if not dedup_result['should_alert']:
-                    continue
-                
-                if self._cooldown_active(signal_key):
-                    continue
-                
-                # Build sweep signal
-                sweep = {
-                    'ticker': flow.underlying,
-                    'symbol': flow.underlying,
-                    'type': flow.option_type,
-                    'strike': flow.strike,
-                    'expiration': flow.expiration,
-                    'current_price': flow.underlying_price,
-                    'days_to_expiry': days_to_expiry,
-                    'premium': flow.premium,
-                    'volume': flow.total_volume,
-                    'num_fills': num_fills,
-                    'moneyness': moneyness,
-                    'strike_distance': strike_distance,
-                    'probability_itm': self.analyzer.calculate_probability_itm(
-                        flow.option_type, flow.strike, flow.underlying_price, days_to_expiry
-                    ) if flow.underlying_price else 0,
-                    'sweep_score': sweep_score,
-                    'enhanced_score': enhanced_score,
-                    'volume_delta': flow.volume_delta,
-                    'open_interest': flow.open_interest,
-                    'volume_ratio': flow.vol_oi_ratio,
-                    'delta': flow.delta,
-                    'gamma': flow.gamma,
-                    'vega': flow.vega,
-                    'alert_type': dedup_result['type'],
-                    'alert_reason': dedup_result['reason'],
-                    '_golden_fallback': flow_dict.get('_golden_fallback', False),
-                }
-                
-                sweeps.append(sweep)
-                self._mark_cooldown(signal_key)
-                
-            except Exception as e:
-                logger.debug(f"{self.name} error processing flow: {e}")
-                continue
+        logger.info(f"{self.name} found {len(all_sweeps)} sweep candidates from watchlist")
         
         # Sort by enhanced score and post top signals
-        sweeps.sort(key=lambda x: x['enhanced_score'], reverse=True)
+        all_sweeps.sort(key=lambda x: x.get('enhanced_score', x.get('sweep_score', 0)), reverse=True)
         
         posted = 0
-        for sweep in sweeps[:self.TOP_SWEEPS_PER_SYMBOL * 5]:  # Allow more through
+        for sweep in all_sweeps[:max_alerts]:
             try:
                 success = await self._post_signal(sweep)
                 if success:
