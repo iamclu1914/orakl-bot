@@ -312,6 +312,12 @@ class GammaRatioBot(BaseAutoBot):
             # Check for alerts
             alerts = self.alert_manager.check_alerts(symbol, G, gamma_data)
             
+            # Log when we find alertable conditions
+            if alerts:
+                logger.info(f"{self.name} - {symbol} triggered {len(alerts)} alerts: G={G:.4f}")
+            elif G > 0.75 or G < 0.25:
+                logger.debug(f"{self.name} - {symbol} in extreme zone (G={G:.4f}) but no new alert (prev already crossed)")
+            
             # Add spot price to alert data
             for alert in alerts:
                 alert['spot_price'] = spot_price
@@ -418,13 +424,11 @@ class GammaRatioBot(BaseAutoBot):
             )
             embed['timestamp'] = datetime.now(timezone.utc).isoformat()
             
-            files = None
-            if chart_image:
-                embed['image'] = {'url': 'attachment://gamma_chart.png'}
-                files = {'gamma_chart.png': chart_image}
-
+            # Note: Chart image disabled for now - base_bot doesn't support file uploads
+            # TODO: Add multipart form support to base_bot for chart images
+            
             # Post to Discord
-            success = await self.post_to_discord(embed, files=files)
+            success = await self.post_to_discord(embed)
             
             if success:
                 logger.info(
