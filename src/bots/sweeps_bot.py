@@ -34,6 +34,7 @@ class SweepsBot(BaseAutoBot):
         self.analyzer = analyzer
         self.signal_history = {}
         self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 750000)  # $750K minimum
+        self.MAX_SWEEP_PREMIUM = Config.GOLDEN_MIN_PREMIUM  # Sweeps >= this go to Golden Sweeps
         # Loosen volume gates so medium-size sweeps can alert.
         self.MIN_VOLUME = max(getattr(Config, "SWEEPS_MIN_VOLUME", 0), 100)
         self.MIN_VOLUME_DELTA = max(getattr(Config, "SWEEPS_MIN_VOLUME_DELTA", 0), 50)
@@ -575,13 +576,6 @@ class SweepsBot(BaseAutoBot):
         if sweep.get('volume_ratio'):
             fields.append({"name": "Vol Ratio", "value": f"{sweep['volume_ratio']:.2f}x", "inline": True})
         
-        if execution_type == 'BLOCK':
-            oi_value = sweep.get('open_interest') or sweep.get('flow', {}).get('open_interest')
-            block_context = sweep.get('block_reason') or "Block-sized single print"
-            fields.append({"name": "Block Context", "value": block_context, "inline": False})
-            if oi_value is not None:
-                fields.append({"name": "Open Interest", "value": f"{oi_value:,}", "inline": True})
-
         footer_text = "Golden Sweep Fallback" if is_golden_fallback else "Sweeps Bot"
         embed = self.create_signal_embed_with_disclaimer(
             title=title,

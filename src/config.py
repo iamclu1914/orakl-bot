@@ -72,7 +72,7 @@ class Config:
     SUCCESS_RATE_THRESHOLD = float(os.getenv('SUCCESS_RATE_THRESHOLD', '0.80'))
     
     # Bot-specific Thresholds - OPTIMIZED FOR QUALITY
-    GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1500000'))  # $1.5M (raised for true whale size)
+    GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M (true institutional size)
     SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '750000'))  # $750K (raised for conviction)
     SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('SWEEPS_MIN_VOLUME_RATIO', '1.3'))  # 1.3x (raised)
     SWEEPS_MIN_ALIGNMENT_CONFIDENCE = int(os.getenv('SWEEPS_MIN_ALIGNMENT_CONFIDENCE', '20'))
