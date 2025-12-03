@@ -256,6 +256,18 @@ class GammaRatioBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
+        # Skip first 15 minutes after open to avoid opening noise
+        # Market opens at 9:30 AM ET, so skip until 9:45 AM ET
+        from datetime import datetime
+        import pytz
+        et_tz = pytz.timezone('US/Eastern')
+        now_et = datetime.now(et_tz)
+        market_open_time = now_et.replace(hour=9, minute=45, second=0, microsecond=0)
+        
+        if now_et < market_open_time:
+            logger.info(f"{self.name} - Skipping first 15 min after open (until 9:45 AM ET)")
+            return
+        
         # Use base class concurrent implementation
         await super().scan_and_post()
     
