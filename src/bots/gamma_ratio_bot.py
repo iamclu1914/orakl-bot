@@ -77,6 +77,9 @@ class GammaAlertManager:
         thresholds = GAMMA_THRESHOLDS
         
         # === CALL SIDE ===
+        # MIDDLE GROUND: Only alert on EXTREME+ levels (G > 0.75)
+        # This filters out low-conviction CALL_DRIVEN (0.65-0.75) alerts
+        
         # Check for ULTRA EXTREME CALL (escalation - bypasses cooldown)
         if G > self.ULTRA_EXTREME_CALL:
             # Only alert if we haven't already alerted at ultra level
@@ -91,7 +94,7 @@ class GammaAlertManager:
                     'regime': 'ULTRA_EXTREME_CALL',
                     'bypass_cooldown': True
                 })
-        # Check for EXTREME CALL (high threshold)
+        # Check for EXTREME CALL (high threshold) - G > 0.75
         elif G > thresholds['extreme_call'] and prev_G <= thresholds['extreme_call']:
             alerts.append({
                 'type': 'EXTREME_CALL',
@@ -102,19 +105,12 @@ class GammaAlertManager:
                 'priority': 'high',
                 'regime': current_regime
             })
-        # Check for CALL DRIVEN (medium threshold)
-        elif G > thresholds['call_driven'] and prev_G <= thresholds['call_driven']:
-            alerts.append({
-                'type': 'CALL_DRIVEN',
-                'symbol': symbol,
-                'G': G,
-                'data': data,
-                'message': f"🔵 **{symbol} CALL-DRIVEN**\nG = {G:.2f}\nCall gamma exceeds put gamma",
-                'priority': 'medium',
-                'regime': 'CALL_DRIVEN'
-            })
+        # REMOVED: CALL_DRIVEN (0.65) alerts - too noisy, keep only EXTREME+
         
         # === PUT SIDE ===
+        # MIDDLE GROUND: Only alert on EXTREME+ levels (G < 0.25)
+        # This filters out low-conviction PUT_DRIVEN (0.25-0.35) alerts
+        
         # Check for ULTRA EXTREME PUT (escalation - bypasses cooldown)
         if G < self.ULTRA_EXTREME_PUT:
             # Only alert if we haven't already alerted at ultra level
@@ -129,7 +125,7 @@ class GammaAlertManager:
                     'regime': 'ULTRA_EXTREME_PUT',
                     'bypass_cooldown': True
                 })
-        # Check for EXTREME PUT (high threshold)
+        # Check for EXTREME PUT (high threshold) - G < 0.25
         elif G < thresholds['extreme_put'] and prev_G >= thresholds['extreme_put']:
             alerts.append({
                 'type': 'EXTREME_PUT',
@@ -140,17 +136,7 @@ class GammaAlertManager:
                 'priority': 'high',
                 'regime': current_regime
             })
-        # Check for PUT DRIVEN (medium threshold)
-        elif G < thresholds['put_driven'] and prev_G >= thresholds['put_driven']:
-            alerts.append({
-                'type': 'PUT_DRIVEN',
-                'symbol': symbol,
-                'G': G,
-                'data': data,
-                'message': f"🟠 **{symbol} PUT-DRIVEN**\nG = {G:.2f}\nPut gamma exceeds call gamma",
-                'priority': 'medium',
-                'regime': 'PUT_DRIVEN'
-            })
+        # REMOVED: PUT_DRIVEN (0.35) alerts - too noisy, keep only EXTREME+
         
         # Apply cooldown filter (unless bypass_cooldown is set)
         filtered_alerts = []
@@ -223,6 +209,9 @@ class GammaRatioBot(BaseAutoBot):
         self.risk_free_rate = getattr(Config, 'GAMMA_RATIO_RISK_FREE_RATE', 0.0)
         self.min_open_interest = getattr(Config, 'GAMMA_RATIO_MIN_OI', 100)
         self.max_otm_pct = getattr(Config, 'GAMMA_RATIO_MAX_OTM_PCT', 0.20)
+        # Minimum total gamma to filter out illiquid/low-volume names
+        # 5000 filters out tiny names like CRBU (40), BMBL (159) while keeping AAPL (136K), GOOGL (55K)
+        self.min_total_gamma = getattr(Config, 'GAMMA_RATIO_MIN_TOTAL_GAMMA', 5000)
         
         # Alert thresholds (can be overridden via config)
         self.thresholds = {
@@ -321,11 +310,19 @@ class GammaRatioBot(BaseAutoBot):
             )
             
             G = gamma_data['G']
+            call_gamma = gamma_data.get('call_gamma', 0)
+            put_gamma = gamma_data.get('put_gamma', 0)
+            total_gamma = call_gamma + put_gamma
             
             logger.debug(
                 f"{self.name} - {symbol}: G={G:.3f}, bias={gamma_data['bias']}, "
-                f"contracts={gamma_data['contracts_analyzed']}"
+                f"contracts={gamma_data['contracts_analyzed']}, total_gamma={total_gamma:.0f}"
             )
+            
+            # Filter: Minimum total gamma (filter out illiquid/low-volume names)
+            if total_gamma < self.min_total_gamma:
+                logger.debug(f"{self.name} - {symbol} filtered: total_gamma {total_gamma:.0f} < {self.min_total_gamma}")
+                return []
             
             # Check for alerts
             alerts = self.alert_manager.check_alerts(symbol, G, gamma_data)
