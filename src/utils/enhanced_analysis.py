@@ -320,7 +320,7 @@ class EnhancedAnalyzer:
             logger.error(f"Error computing price trend for {symbol}: {e}")
             return None
 
-    async def compute_volatility_trend(self, symbol: str, period: int = 21) -> Optional[float]:
+    async def compute_volatility_trend(self, symbol: str, period: int = 10) -> Optional[float]:
         """
         Compute volatility trend (V) from the Four Axes framework.
         
@@ -331,7 +331,8 @@ class EnhancedAnalyzer:
         
         Args:
             symbol: Stock symbol
-            period: Lookback period for each window (default 21 = ~1 month)
+            period: Lookback period for each window (default 10 = ~2 weeks)
+                    Reduced from 21 to work with typical API data limits
             
         Returns:
             V value (typically -0.05 to +0.05), or None if data unavailable
@@ -339,10 +340,15 @@ class EnhancedAnalyzer:
             Negative = Volatility contracting (smaller daily moves)
         """
         try:
-            # Need period * 2 + 1 days for two windows
+            # Need period * 2 + 1 days for two windows (10*2+5 = 25 days)
             closes = await self._get_daily_closes(symbol, period * 2 + 5)
             
-            if closes is None or len(closes) < period * 2 + 1:
+            if closes is None:
+                logger.debug(f"No daily closes for {symbol} V calculation")
+                return None
+            
+            if len(closes) < period * 2 + 1:
+                logger.debug(f"Insufficient data for {symbol} V: {len(closes)} bars, need {period * 2 + 1}")
                 return None
             
             # Calculate daily percentage returns
@@ -350,6 +356,7 @@ class EnhancedAnalyzer:
             ccv = np.abs(ccr)
             
             if len(ccv) < period * 2:
+                logger.debug(f"Insufficient returns for {symbol} V: {len(ccv)} < {period * 2}")
                 return None
             
             # Recent volatility (last 'period' days)
@@ -411,8 +418,9 @@ class EnhancedAnalyzer:
                     return ctx
             
             # Compute P and V
+            # V uses shorter period (10 days) to work with typical API data limits
             P = await self.compute_price_trend(symbol, period)
-            V = await self.compute_volatility_trend(symbol, period)
+            V = await self.compute_volatility_trend(symbol, min(period, 10))
             
             if P is None:
                 logger.debug(f"Could not compute P for {symbol}")
