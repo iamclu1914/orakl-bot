@@ -67,8 +67,9 @@ class SpreadBot(BaseAutoBot):
         self._subscription_registered = False
         self._subscription_lock = asyncio.Lock()
         self._golden_scan_lock = asyncio.Lock()
-        # Independent scanning - scan in batches for efficiency
-        self.scan_batch_size = 50
+        # Full scan mode - scan ALL symbols every cycle (no batching)
+        self.scan_batch_size = 0  # 0 = full scan
+        self.concurrency_limit = 30  # High concurrency for speed
 
     async def start(self):
         await self._ensure_subscription()
@@ -76,8 +77,7 @@ class SpreadBot(BaseAutoBot):
 
     async def scan_and_post(self):
         """
-        Independent scan - scans watchlist directly for sub-$1 whale flows.
-        Uses batching for efficient concurrent API calls.
+        Full scan - scans ALL watchlist symbols every cycle for sub-$1 whale flows.
         """
         await self._ensure_subscription()
 
@@ -90,28 +90,24 @@ class SpreadBot(BaseAutoBot):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        logger.info("%s scanning for sub-$1 whale flows", self.name)
+        logger.info("%s starting full scan of %d symbols", self.name, len(self.watchlist))
         
-        # Scan symbols concurrently
+        # Full scan - all symbols at once with concurrency control
         all_signals: List[Dict] = []
         max_alerts = self.max_alerts_per_scan  # Limit alerts per cycle (from config)
         
-        # Use smaller batch for faster results
-        batch_size = 50
-        for i in range(0, len(self.watchlist), batch_size):
-            batch = self.watchlist[i:i + batch_size]
-            
-            # Scan batch concurrently
-            tasks = [self._scan_symbol(symbol) for symbol in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, list):
-                    all_signals.extend(result)
-            
-            # Early exit if we have enough candidates
-            if len(all_signals) >= max_alerts * 3:
-                break
+        semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        async def scan_with_limit(symbol: str):
+            async with semaphore:
+                return await self._scan_symbol(symbol)
+        
+        tasks = [scan_with_limit(symbol) for symbol in self.watchlist]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in results:
+            if isinstance(result, list):
+                all_signals.extend(result)
         
         logger.info("%s found %d candidates from scan", self.name, len(all_signals))
         

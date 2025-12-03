@@ -70,8 +70,9 @@ class BullseyeBot(BaseAutoBot):
         self.trigger_min_volume = getattr(
             Config, "BULLSEYE_TRIGGER_MIN_VOLUME", max(self.min_block_contracts, 750)
         )
-        # Independent scanning - scan in batches for efficiency
-        self.scan_batch_size = 50
+        # Full scan mode - scan ALL symbols every cycle (no batching)
+        self.scan_batch_size = 0  # 0 = full scan
+        self.concurrency_limit = 30  # High concurrency for speed
         
         # Skip expensive validation API calls (candles, trend) - use local filtering only
         self.skip_expensive_validation = getattr(Config, 'BULLSEYE_SKIP_EXPENSIVE_VALIDATION', True)
@@ -569,36 +570,33 @@ class BullseyeBot(BaseAutoBot):
 
     async def scan_and_post(self):
         """
-        Independent scan - scans watchlist directly for institutional block flow.
+        Full scan - scans ALL watchlist symbols every cycle for institutional block flow.
         Uses two-phase approach: fast scan then deep validation.
         """
         await self._ensure_subscription()
-        logger.info("%s scanning for institutional block flow", self.name)
+        logger.info("%s starting full scan of %d symbols", self.name, len(self.watchlist))
 
         if not MarketHours.is_market_open(include_extended=False):
             logger.debug("%s skipping scan: market closed", self.name)
             return
         
-        # Phase 1: Fast scan all symbols concurrently
+        # Phase 1: Fast scan ALL symbols concurrently (with semaphore for rate limiting)
         all_candidates: List[Dict[str, Any]] = []
         max_alerts = 10  # Limit alerts per cycle
         
-        # Use smaller batch for faster results
-        batch_size = 50
-        for i in range(0, len(self.watchlist), batch_size):
-            batch = self.watchlist[i:i + batch_size]
-            
-            # Scan batch concurrently
-            tasks = [self._fast_scan_symbol(symbol) for symbol in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, list):
-                    all_candidates.extend(result)
-            
-            # Early exit if we have enough candidates
-            if len(all_candidates) >= max_alerts * 3:
-                break
+        # Full scan - all symbols at once with concurrency control
+        semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        async def scan_with_limit(symbol: str):
+            async with semaphore:
+                return await self._fast_scan_symbol(symbol)
+        
+        tasks = [scan_with_limit(symbol) for symbol in self.watchlist]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in results:
+            if isinstance(result, list):
+                all_candidates.extend(result)
         
         logger.info("%s found %d candidates from fast scan", self.name, len(all_candidates))
         

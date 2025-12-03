@@ -37,8 +37,9 @@ class SweepsBot(BaseAutoBot):
         # Loosen volume gates so medium-size sweeps can alert.
         self.MIN_VOLUME = max(getattr(Config, "SWEEPS_MIN_VOLUME", 0), 100)
         self.MIN_VOLUME_DELTA = max(getattr(Config, "SWEEPS_MIN_VOLUME_DELTA", 0), 50)
-        # Independent scanning - scan in batches for efficiency
-        self.scan_batch_size = 50
+        # Full scan mode - scan ALL symbols every cycle (no batching)
+        self.scan_batch_size = 0  # 0 = full scan
+        self.concurrency_limit = 30  # High concurrency for speed
         self.MAX_STRIKE_DISTANCE = getattr(Config, 'SWEEPS_MAX_STRIKE_DISTANCE', 0.06) * 100  # 6% from config
         # Require a high conviction sweep score before alerting
         self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
@@ -74,10 +75,9 @@ class SweepsBot(BaseAutoBot):
     @timed()
     async def scan_and_post(self):
         """
-        Independent scan - each bot scans its watchlist directly.
-        Uses base class batching for efficiency.
+        Full scan - scans ALL watchlist symbols every cycle for large sweeps.
         """
-        logger.info(f"{self.name} scanning for large sweeps")
+        logger.info(f"{self.name} starting full scan of {len(self.watchlist)} symbols")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
         if not MarketHours.is_market_open(include_extended=False):
@@ -85,26 +85,22 @@ class SweepsBot(BaseAutoBot):
             self.deduplicator.cleanup_old_signals()
             return
         
-        # Scan symbols and collect all sweeps
+        # Full scan - all symbols at once with concurrency control
         all_sweeps = []
         max_alerts = self.max_alerts_per_scan  # Limit alerts per cycle (from config)
         
-        # Use smaller batch for faster results
-        batch_size = 50
-        for i in range(0, len(self.watchlist), batch_size):
-            batch = self.watchlist[i:i + batch_size]
-            
-            # Scan batch concurrently
-            tasks = [self._scan_symbol(symbol) for symbol in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, list):
-                    all_sweeps.extend(result)
-            
-            # Early exit if we have enough candidates
-            if len(all_sweeps) >= max_alerts * 3:
-                break
+        semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        async def scan_with_limit(symbol: str):
+            async with semaphore:
+                return await self._scan_symbol(symbol)
+        
+        tasks = [scan_with_limit(symbol) for symbol in self.watchlist]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in results:
+            if isinstance(result, list):
+                all_sweeps.extend(result)
         
         logger.info(f"{self.name} found {len(all_sweeps)} sweep candidates from watchlist")
         

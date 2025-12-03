@@ -34,8 +34,9 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_SCORE = min(Config.MIN_GOLDEN_SCORE, 70)
         # Golden sweeps can sit further from the money but still matter
         self.MAX_STRIKE_DISTANCE = Config.GOLDEN_MAX_STRIKE_DISTANCE  # percent
-        # Independent scanning - scan in batches for efficiency
-        self.scan_batch_size = 50
+        # Full scan mode - scan ALL symbols every cycle (no batching)
+        self.scan_batch_size = 0  # 0 = full scan
+        self.concurrency_limit = 30  # High concurrency for speed
         logger.info(
             "Golden Sweeps max strike distance set to %.1f%% (env override ready)",
             self.MAX_STRIKE_DISTANCE,
@@ -52,27 +53,23 @@ class GoldenSweepsBot(SweepsBot):
     @timed()
     async def scan_and_post(self):
         """
-        Independent scan - scans watchlist directly for $1M+ premium flows.
-        Uses batching for efficient concurrent API calls.
+        Full scan - scans ALL watchlist symbols every cycle for $1M+ premium flows.
         """
-        logger.info(f"{self.name} scanning for million dollar sweeps")
+        logger.info(f"{self.name} starting full scan of {len(self.watchlist)} symbols")
 
         # Only scan during market hours (9:30 AM - 4:00 PM EST, Monday-Friday)
         if not MarketHours.is_market_open(include_extended=False):
             logger.debug(f"{self.name} - Market closed, skipping scan")
             return
         
-        # Scan symbols and collect all golden sweeps
+        # Full scan - all symbols at once with concurrency control
         all_sweeps = []
         max_alerts = 5  # Limit alerts per cycle to avoid Discord rate limits
         
-        # Use smaller batch for faster results
-        batch_size = 50
-        for i in range(0, len(self.watchlist), batch_size):
-            batch = self.watchlist[i:i + batch_size]
-            
-            # Scan batch concurrently - use parent's _scan_sweeps directly
-            async def scan_symbol(symbol: str) -> List[Dict]:
+        semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        async def scan_symbol_with_limit(symbol: str) -> List[Dict]:
+            async with semaphore:
                 try:
                     sweeps = await self._scan_sweeps(symbol)
                     # Filter to golden only ($1M+)
@@ -80,17 +77,13 @@ class GoldenSweepsBot(SweepsBot):
                 except Exception as e:
                     logger.debug(f"{self.name} error scanning {symbol}: {e}")
                     return []
-            
-            tasks = [scan_symbol(symbol) for symbol in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, list):
-                    all_sweeps.extend(result)
-            
-            # Early exit if we have enough candidates
-            if len(all_sweeps) >= max_alerts * 2:
-                break
+        
+        tasks = [scan_symbol_with_limit(symbol) for symbol in self.watchlist]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in results:
+            if isinstance(result, list):
+                all_sweeps.extend(result)
         
         logger.info(f"{self.name} found {len(all_sweeps)} golden sweep candidates")
         

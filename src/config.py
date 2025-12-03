@@ -44,11 +44,11 @@ class Config:
     
     # Bot Scan Intervals (seconds) - All aligned to 5 minutes for shared FlowCache efficiency
     # The FlowCache prefetches data once per 5-minute cycle, shared by all bots
-    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
-    SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
-    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
+    BULLSEYE_INTERVAL = int(os.getenv('BULLSEYE_INTERVAL', '600'))  # 10 minutes - full scan
+    SWEEPS_INTERVAL = int(os.getenv('SWEEPS_INTERVAL', '600'))  # 10 minutes - full scan
+    GOLDEN_SWEEPS_INTERVAL = int(os.getenv('GOLDEN_SWEEPS_INTERVAL', '600'))  # 10 minutes - full scan
     INDEX_WHALE_INTERVAL = int(os.getenv('INDEX_WHALE_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
-    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '300'))  # 5 minutes (aligned with FlowCache)
+    SPREAD_INTERVAL = int(os.getenv('SPREAD_INTERVAL', '600'))  # 10 minutes - full scan
     GAMMA_RATIO_INTERVAL = int(os.getenv('GAMMA_RATIO_INTERVAL', '300'))  # 5 minutes
     
     # Batch sizes for scan workload management (prevents timeouts)
