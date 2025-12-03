@@ -33,34 +33,35 @@ class SweepsBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 150000)
+        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 750000)  # $750K minimum
         # Loosen volume gates so medium-size sweeps can alert.
         self.MIN_VOLUME = max(getattr(Config, "SWEEPS_MIN_VOLUME", 0), 100)
         self.MIN_VOLUME_DELTA = max(getattr(Config, "SWEEPS_MIN_VOLUME_DELTA", 0), 50)
         # Independent scanning - scan in batches for efficiency
         self.scan_batch_size = 50
-        self.MAX_STRIKE_DISTANCE = 12  # percent
+        self.MAX_STRIKE_DISTANCE = getattr(Config, 'SWEEPS_MAX_STRIKE_DISTANCE', 0.06) * 100  # 6% from config
         # Require a high conviction sweep score before alerting
         self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
-        self.MIN_VOLUME_RATIO = max(Config.SWEEPS_MIN_VOLUME_RATIO, 1.1)
+        self.MIN_VOLUME_RATIO = max(Config.SWEEPS_MIN_VOLUME_RATIO, 1.3)  # 1.3x minimum
         # Disable price-action alignment for standard sweeps (alignment proved too restrictive)
         self.SKIP_ALIGNMENT_CHECK = True
         self.MIN_ALIGNMENT_CONFIDENCE = max(Config.SWEEPS_MIN_ALIGNMENT_CONFIDENCE, 20)
-        self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 500000
+        self.PRICE_ALIGNMENT_OVERRIDE_PREMIUM = 1000000  # $1M to override alignment
         self.PRICE_ALIGNMENT_OVERRIDE_VOI = 2.5
         self.VOLUME_RATIO_FLEX_MULTIPLIER = 0.85  # allow 15% flexibility when premium is massive
         # Tiered strike distance overrides based on premium size
-        self.STRIKE_DISTANCE_OVERRIDE_PREMIUM = 350000  # Base tier for extension
-        self.STRIKE_DISTANCE_EXTENSION = 6  # percent (increased from 3)
+        self.STRIKE_DISTANCE_OVERRIDE_PREMIUM = 750000  # Base tier for extension (raised)
+        self.STRIKE_DISTANCE_EXTENSION = 4  # percent (reduced from 6)
         self.STRIKE_DISTANCE_PREMIUM_TIERS = [
-            (500000, 20),   # $500K+ allows 20% OTM
-            (350000, 18),   # $350K+ allows 18% OTM
+            (1500000, 15),   # $1.5M+ allows 15% OTM
+            (1000000, 12),   # $1M+ allows 12% OTM
         ]
         # Short DTE gets wider allowance (0-3 DTE allows +5% more)
         self.SHORT_DTE_STRIKE_EXTENSION = 5  # percent
         self.SHORT_DTE_THRESHOLD = 3  # days
         self.TOP_SWEEPS_PER_SYMBOL = 1
-        self.symbol_cooldown_seconds = 300  # prevent symbol-level floods
+        self.symbol_cooldown_seconds = getattr(Config, 'SWEEPS_COOLDOWN_SECONDS', 1800)  # 30 min from config
+        self.max_alerts_per_scan = getattr(Config, 'SWEEPS_MAX_ALERTS_PER_SCAN', 2)  # Max 2 per scan
 
         # Enhanced analysis tools
         self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
@@ -86,7 +87,7 @@ class SweepsBot(BaseAutoBot):
         
         # Scan symbols and collect all sweeps
         all_sweeps = []
-        max_alerts = 10  # Limit alerts per cycle to avoid Discord rate limits
+        max_alerts = self.max_alerts_per_scan  # Limit alerts per cycle (from config)
         
         # Use smaller batch for faster results
         batch_size = 50

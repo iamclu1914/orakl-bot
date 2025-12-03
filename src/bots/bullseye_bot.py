@@ -16,7 +16,7 @@ from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import OptionTradeMetrics, build_metrics_from_flow
 from src.utils.market_hours import MarketHours
-from src.utils.enhanced_analysis import EnhancedAnalyzer
+from src.utils.enhanced_analysis import EnhancedAnalyzer, should_take_signal
 from src.utils.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
@@ -337,6 +337,31 @@ class BullseyeBot(BaseAutoBot):
                 self._log_skip(symbol, f"trend misaligned ({desired} required)")
                 return False
 
+        # Four Axes Framework: Get market context and validate alignment
+        market_context = await self.enhanced_analyzer.get_market_context(symbol)
+        context_data = None
+        
+        if market_context:
+            # Check if signal aligns with market context
+            should_take, reason = should_take_signal(option_type, market_context)
+            
+            if not should_take:
+                self._log_skip(symbol, f"Four Axes rejection: {reason}")
+                return False
+            
+            # Apply conviction multiplier to score
+            original_score = score
+            score = int(score * market_context.conviction_multiplier)
+            
+            if score != original_score:
+                logger.debug(
+                    "%s %s score adjusted %d -> %d (mult=%.2f, regime=%s)",
+                    self.name, symbol, original_score, score,
+                    market_context.conviction_multiplier, market_context.regime
+                )
+            
+            context_data = market_context.to_dict()
+
         payload = {
             "metrics": metrics,
             "flow": flow_payload,
@@ -347,6 +372,7 @@ class BullseyeBot(BaseAutoBot):
             "origin_event": event_payload,
             "triggered_by_golden": candidate.get("origin") != "event",
             "trend_data": trend_data,
+            "market_context": context_data,
         }
 
         posted = await self._post_signal(payload)
@@ -361,12 +387,6 @@ class BullseyeBot(BaseAutoBot):
                 f"{metrics.premium:,.0f}",
             )
         return posted
-
-        try:
-            async with self._golden_scan_lock:
-                await self._scan_golden_triggered(symbol, option_type, payload)
-        except Exception as exc:
-            logger.exception("%s golden sweep processing failed for %s: %s", self.name, symbol, exc)
 
     @staticmethod
     def _extract_numeric(value: Any) -> Optional[float]:
@@ -964,6 +984,7 @@ class BullseyeBot(BaseAutoBot):
             score,
             payload.get("spread_pct"),
             payload.get("trend_data"),
+            payload.get("market_context"),
         )
         success = await self.post_to_discord(embed)
 
@@ -990,6 +1011,7 @@ class BullseyeBot(BaseAutoBot):
         score: int,
         spread_pct: Optional[float],
         trend_data: Optional[Dict[str, Dict[str, Any]]] = None,
+        market_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         dte_days = int(round(metrics.dte))
         expiration_fmt = (
@@ -1115,6 +1137,33 @@ class BullseyeBot(BaseAutoBot):
             else:
                 summary = " | ".join(f"{tf}:{trend}" for tf, trend in trends_only.items())
             fields.append({"name": "Trend Alignment", "value": summary, "inline": True})
+
+        # Four Axes Market Context
+        if market_context:
+            P = market_context.get("P", 0)
+            V = market_context.get("V", 0)
+            G = market_context.get("G", 0.5)
+            regime = market_context.get("regime", "NEUTRAL")
+            mult = market_context.get("conviction_multiplier", 1.0)
+            
+            # Format regime with emoji
+            regime_emojis = {
+                "BULLISH_CALL_DRIVEN": "🟢📈",
+                "BEARISH_PUT_DRIVEN": "🔴📉",
+                "BULLISH_PUT_HEDGED": "🟡⚠️",
+                "BEARISH_CALL_HEDGED": "🟡🔄",
+                "VOLATILITY_EXPANSION": "📊⬆️",
+                "VOLATILITY_CONTRACTION": "📊⬇️",
+                "NEUTRAL": "⚪",
+            }
+            regime_emoji = regime_emojis.get(regime, "⚪")
+            regime_display = regime.replace("_", " ").title()
+            
+            context_value = f"{regime_emoji} {regime_display}\nP={P:+.2f} V={V:+.3f} G={G:.2f}"
+            if mult != 1.0:
+                context_value += f"\nConviction: {mult:.0%}"
+            
+            fields.append({"name": "Market Context", "value": context_value, "inline": True})
 
         if execution_type == "BLOCK":
             fields.append(

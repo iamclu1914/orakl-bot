@@ -16,6 +16,7 @@ from src.utils.gamma_ratio import (
     GAMMA_THRESHOLDS,
 )
 from src.utils.plotly_charts import ProfessionalCharts
+from src.utils.enhanced_analysis import EnhancedAnalyzer
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class GammaAlertManager:
         self.last_alert_time: Dict[str, Dict[str, datetime]] = {}  # symbol -> {alert_type: timestamp}
         self.last_G: Dict[str, float] = {}  # symbol -> last G value
         self.last_alerted_G: Dict[str, float] = {}  # symbol -> G value when last alerted (for escalation)
+        self.last_bias: Dict[str, str] = {}  # symbol -> last bias classification
     
     def check_alerts(self, symbol: str, G: float, data: Dict) -> List[Dict]:
         """
@@ -160,6 +162,7 @@ class GammaAlertManager:
         
         # Update state
         self.last_G[symbol] = G
+        self.last_bias[symbol] = current_regime
         
         return filtered_alerts
     
@@ -211,6 +214,9 @@ class GammaRatioBot(BaseAutoBot):
         
         self.fetcher = fetcher
         self.watchlist = watchlist
+        
+        # Enhanced analyzer for P and V calculations (Four Axes)
+        self.enhanced_analyzer = EnhancedAnalyzer(fetcher)
         
         # Configuration
         self.constant_vol = getattr(Config, 'GAMMA_RATIO_CONSTANT_VOL', 0.20)
@@ -315,14 +321,26 @@ class GammaRatioBot(BaseAutoBot):
             # Log when we find alertable conditions
             if alerts:
                 logger.info(f"{self.name} - {symbol} triggered {len(alerts)} alerts: G={G:.4f}")
+                
+                # Fetch P and V for Four Axes context (only when we have alerts to reduce API calls)
+                market_context = None
+                try:
+                    market_context = await self.enhanced_analyzer.get_market_context(symbol, G=G)
+                except Exception as ctx_err:
+                    logger.debug(f"{self.name} - Could not fetch market context for {symbol}: {ctx_err}")
+                
+                for alert in alerts:
+                    alert['spot_price'] = spot_price
+                    alert['market_context'] = market_context.to_dict() if market_context else None
+                    try:
+                        await self._post_signal(alert)
+                    except Exception as post_err:
+                        logger.error(f"{self.name} - Failed to post alert for {symbol}: {post_err}")
             elif G > 0.75 or G < 0.25:
                 logger.debug(f"{self.name} - {symbol} in extreme zone (G={G:.4f}) but no new alert (prev already crossed)")
             
-            # Add spot price to alert data
-            for alert in alerts:
-                alert['spot_price'] = spot_price
-            
-            return alerts
+            # Alerts already posted (if any)
+            return []
             
         except Exception as e:
             logger.error(f"{self.name} - Error scanning {symbol}: {e}")
@@ -412,6 +430,42 @@ class GammaRatioBot(BaseAutoBot):
                     "inline": True
                 }
             ]
+            
+            # Four Axes: Add P (price trend) and V (volatility trend) context
+            market_context = alert.get('market_context')
+            if market_context:
+                P = market_context.get("P", 0)
+                V = market_context.get("V", 0)
+                ctx_regime = market_context.get("regime", "NEUTRAL")
+                
+                # Determine alignment between G regime and P/V context
+                alignment_note = ""
+                if 'CALL' in regime and P > 0.2:
+                    alignment_note = "✅ Aligned with uptrend"
+                elif 'PUT' in regime and P < -0.2:
+                    alignment_note = "✅ Aligned with downtrend"
+                elif 'CALL' in regime and P < -0.2:
+                    alignment_note = "⚠️ G bullish but P bearish"
+                elif 'PUT' in regime and P > 0.2:
+                    alignment_note = "⚠️ G bearish but P bullish"
+                
+                vol_note = ""
+                if V > 0.015:
+                    vol_note = "📈 Vol expanding"
+                elif V < -0.015:
+                    vol_note = "📉 Vol contracting"
+                
+                context_parts = [f"**P={P:+.2f}** | **V={V:+.3f}**"]
+                if alignment_note:
+                    context_parts.append(alignment_note)
+                if vol_note:
+                    context_parts.append(vol_note)
+                
+                fields.append({
+                    "name": "📐 Four Axes Context",
+                    "value": "\n".join(context_parts),
+                    "inline": False
+                })
             
             # Create embed with timestamp
             from datetime import datetime, timezone

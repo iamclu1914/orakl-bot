@@ -1,14 +1,192 @@
 """
 Enhanced Analysis Utilities
 Critical features for high-probability signal detection
+
+Includes the Four Axes Framework:
+- P (Price Trend): Volatility-adjusted price trend (-1 to +1)
+- V (Volatility Trend): Realized volatility expansion/contraction
+- G (Gamma Ratio): Call/put gamma positioning (0 to 1)
 """
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Four Axes Framework: MarketContext
+# =============================================================================
+
+@dataclass
+class MarketContext:
+    """
+    Complete market context for a symbol using the Four Axes framework.
+    
+    P (Price Trend): Volatility-adjusted trend indicator (-1 to +1)
+        +1 = Strong uptrend (nearly every day up)
+        -1 = Strong downtrend (nearly every day down)
+        0  = Choppy/neutral
+    
+    V (Volatility Trend): Realized volatility expansion/contraction
+        Positive = Volatility expanding (larger moves)
+        Negative = Volatility contracting (smaller moves)
+    
+    G (Gamma Ratio): Options market positioning (0 to 1)
+        1.0 = All call gamma (call-driven)
+        0.5 = Balanced
+        0.0 = All put gamma (put-driven)
+    """
+    symbol: str
+    P: float  # Price trend (-1 to +1)
+    V: float  # Volatility trend
+    G: float  # Gamma ratio (0 to 1)
+    timestamp: datetime = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.utcnow()
+    
+    @property
+    def regime(self) -> str:
+        """
+        Classify overall market regime based on P and G alignment.
+        
+        Returns one of:
+        - BULLISH_CALL_DRIVEN: Price up + call gamma dominant
+        - BEARISH_PUT_DRIVEN: Price down + put gamma dominant
+        - BULLISH_PUT_HEDGED: Price up but put gamma dominant (reversal risk)
+        - BEARISH_CALL_HEDGED: Price down but call gamma dominant (bounce potential)
+        - VOLATILITY_EXPANSION: Neutral trend but vol expanding
+        - VOLATILITY_CONTRACTION: Neutral trend but vol contracting
+        - NEUTRAL: No clear regime
+        """
+        # Strong alignment regimes
+        if self.P > 0.3 and self.G > 0.6:
+            return "BULLISH_CALL_DRIVEN"
+        elif self.P < -0.3 and self.G < 0.4:
+            return "BEARISH_PUT_DRIVEN"
+        
+        # Misaligned regimes (potential reversals)
+        elif self.P > 0.3 and self.G < 0.4:
+            return "BULLISH_PUT_HEDGED"  # Uptrend but puts dominating - caution
+        elif self.P < -0.3 and self.G > 0.6:
+            return "BEARISH_CALL_HEDGED"  # Downtrend but calls dominating - bounce?
+        
+        # Volatility regimes
+        elif abs(self.V) > 0.015:
+            return "VOLATILITY_EXPANSION" if self.V > 0 else "VOLATILITY_CONTRACTION"
+        
+        return "NEUTRAL"
+    
+    @property
+    def conviction_multiplier(self) -> float:
+        """
+        Score multiplier based on alignment of P and G axes.
+        
+        Returns:
+        - 1.0 to 1.3: Aligned (boost conviction)
+        - 1.0: Neutral
+        - 0.7 to 1.0: Misaligned (reduce conviction)
+        """
+        # Bullish alignment: P positive + G call-driven
+        if self.P > 0 and self.G > 0.5:
+            alignment = min(self.P, (self.G - 0.5) * 2)  # 0 to 1
+            return 1.0 + (alignment * 0.3)  # Up to 30% boost
+        
+        # Bearish alignment: P negative + G put-driven
+        if self.P < 0 and self.G < 0.5:
+            alignment = min(abs(self.P), (0.5 - self.G) * 2)
+            return 1.0 + (alignment * 0.3)  # Up to 30% boost
+        
+        # Misaligned = lower conviction (fighting gamma)
+        if (self.P > 0.2 and self.G < 0.4) or (self.P < -0.2 and self.G > 0.6):
+            return 0.7  # 30% penalty for fighting gamma
+        
+        return 1.0
+    
+    @property
+    def regime_emoji(self) -> str:
+        """Get emoji representation for the regime."""
+        emojis = {
+            "BULLISH_CALL_DRIVEN": "🟢📈",
+            "BEARISH_PUT_DRIVEN": "🔴📉",
+            "BULLISH_PUT_HEDGED": "🟡⚠️",
+            "BEARISH_CALL_HEDGED": "🟡🔄",
+            "VOLATILITY_EXPANSION": "📊⬆️",
+            "VOLATILITY_CONTRACTION": "📊⬇️",
+            "NEUTRAL": "⚪",
+        }
+        return emojis.get(self.regime, "⚪")
+    
+    def format_summary(self) -> str:
+        """Format a brief summary string for Discord embeds."""
+        return f"P={self.P:+.2f} | V={self.V:+.3f} | G={self.G:.2f}"
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for serialization."""
+        return {
+            "symbol": self.symbol,
+            "P": round(self.P, 4),
+            "V": round(self.V, 4),
+            "G": round(self.G, 4),
+            "regime": self.regime,
+            "conviction_multiplier": round(self.conviction_multiplier, 2),
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+        }
+
+
+def should_take_signal(
+    signal_type: str,
+    context: MarketContext,
+    strict: bool = False
+) -> Tuple[bool, str]:
+    """
+    Determine if a signal aligns with market context.
+    
+    Args:
+        signal_type: "CALL" or "PUT"
+        context: MarketContext object
+        strict: If True, require strong alignment; if False, allow neutral
+    
+    Returns:
+        Tuple of (should_take, reason)
+    """
+    signal_type = signal_type.upper()
+    
+    if signal_type == "CALL":
+        # CALL signals: Want P positive or G call-driven
+        if context.P < -0.3 and context.G < 0.4:
+            return False, f"Fighting bearish trend (P={context.P:.2f}, G={context.G:.2f})"
+        
+        if context.P > 0.2 and context.G > 0.5:
+            return True, f"Aligned bullish (P={context.P:.2f}, G={context.G:.2f})"
+        
+        if context.G > 0.65:
+            return True, f"Strong call gamma (G={context.G:.2f})"
+        
+        if strict and context.P < 0:
+            return False, f"Strict mode: P negative (P={context.P:.2f})"
+            
+    elif signal_type == "PUT":
+        # PUT signals: Want P negative or G put-driven
+        if context.P > 0.3 and context.G > 0.6:
+            return False, f"Fighting bullish trend (P={context.P:.2f}, G={context.G:.2f})"
+        
+        if context.P < -0.2 and context.G < 0.5:
+            return True, f"Aligned bearish (P={context.P:.2f}, G={context.G:.2f})"
+        
+        if context.G < 0.35:
+            return True, f"Strong put gamma (G={context.G:.2f})"
+        
+        if strict and context.P > 0:
+            return False, f"Strict mode: P positive (P={context.P:.2f})"
+    
+    # Neutral - allow but don't boost
+    return True, "Neutral context"
 
 
 class EnhancedAnalyzer:
@@ -19,6 +197,276 @@ class EnhancedAnalyzer:
         self.volume_cache = {}  # Cache 30-day averages
         self.price_action_cache = {}  # Cache intraday price data for alignment checks
         self.trend_cache: Dict[Tuple[str, str], Dict[str, object]] = {}
+        self.market_context_cache: Dict[str, Dict] = {}  # Cache for Four Axes context
+        self.daily_closes_cache: Dict[str, Dict] = {}  # Cache for daily close prices
+
+    # =========================================================================
+    # Four Axes Framework: P (Price Trend) and V (Volatility Trend)
+    # =========================================================================
+
+    async def _get_daily_closes(self, symbol: str, days: int = 42) -> Optional[np.ndarray]:
+        """
+        Fetch daily closing prices with caching.
+        
+        Args:
+            symbol: Stock symbol
+            days: Number of days to fetch
+            
+        Returns:
+            numpy array of closing prices or None if unavailable
+        """
+        try:
+            # Check cache (refresh every 5 minutes during market hours)
+            cache_key = f"{symbol}_{days}"
+            now = datetime.utcnow()
+            
+            if cache_key in self.daily_closes_cache:
+                cached = self.daily_closes_cache[cache_key]
+                age_sec = (now - cached["timestamp"]).total_seconds()
+                if age_sec < 300:  # 5-minute TTL
+                    return cached["closes"]
+            
+            # Fetch from API
+            from_date = (now - timedelta(days=days + 10)).strftime('%Y-%m-%d')  # Extra buffer
+            to_date = now.strftime('%Y-%m-%d')
+            
+            bars = await self.fetcher.get_aggregates(
+                symbol,
+                timespan='day',
+                multiplier=1,
+                from_date=from_date,
+                to_date=to_date
+            )
+            
+            if bars.empty or len(bars) < days // 2:
+                logger.debug(f"Insufficient daily data for {symbol}: {len(bars)} bars")
+                return None
+            
+            closes = bars['close'].to_numpy(dtype=float)
+            
+            # Cache the result
+            self.daily_closes_cache[cache_key] = {
+                "timestamp": now,
+                "closes": closes
+            }
+            
+            # Cleanup old cache entries
+            if len(self.daily_closes_cache) > 200:
+                cutoff = now - timedelta(minutes=10)
+                self.daily_closes_cache = {
+                    k: v for k, v in self.daily_closes_cache.items()
+                    if v["timestamp"] > cutoff
+                }
+            
+            return closes
+            
+        except Exception as e:
+            logger.error(f"Error fetching daily closes for {symbol}: {e}")
+            return None
+
+    async def compute_price_trend(self, symbol: str, period: int = 21) -> Optional[float]:
+        """
+        Compute volatility-adjusted price trend (P) from the Four Axes framework.
+        
+        Formula: P = mean(daily_returns) / mean(abs(daily_returns))
+        
+        This normalizes trend by realized volatility, making it comparable across
+        time periods and assets. The result oscillates between -1 and +1.
+        
+        Args:
+            symbol: Stock symbol
+            period: Lookback period in trading days (default 21 = ~1 month)
+            
+        Returns:
+            P value between -1 and +1, or None if data unavailable
+            +1 = Nearly every day was up (strong uptrend)
+            -1 = Nearly every day was down (strong downtrend)
+             0 = Choppy/neutral
+        """
+        try:
+            # Need period + 1 days for returns calculation
+            closes = await self._get_daily_closes(symbol, period + 5)
+            
+            if closes is None or len(closes) < period + 1:
+                return None
+            
+            # Calculate daily percentage returns
+            # ccr = (close[t] - close[t-1]) / close[t-1]
+            ccr = np.diff(closes) / closes[:-1]
+            
+            if len(ccr) < period:
+                return None
+            
+            # Use only the most recent 'period' returns
+            ccr_window = ccr[-period:]
+            
+            # Absolute returns (volatility proxy)
+            ccv = np.abs(ccr_window)
+            
+            # Moving averages
+            ma = np.mean(ccr_window)   # Average return
+            mad = np.mean(ccv)          # Average absolute return (mean absolute deviation)
+            
+            if mad == 0 or np.isnan(mad):
+                return 0.0
+            
+            # P = trend / volatility
+            P = ma / mad
+            
+            # Clip to [-1, 1] range
+            return float(np.clip(P, -1.0, 1.0))
+            
+        except Exception as e:
+            logger.error(f"Error computing price trend for {symbol}: {e}")
+            return None
+
+    async def compute_volatility_trend(self, symbol: str, period: int = 21) -> Optional[float]:
+        """
+        Compute volatility trend (V) from the Four Axes framework.
+        
+        Formula: V = mad_recent - mad_prior
+        
+        Where mad = mean absolute deviation of daily returns.
+        Positive V means volatility is expanding, negative means contracting.
+        
+        Args:
+            symbol: Stock symbol
+            period: Lookback period for each window (default 21 = ~1 month)
+            
+        Returns:
+            V value (typically -0.05 to +0.05), or None if data unavailable
+            Positive = Volatility expanding (larger daily moves)
+            Negative = Volatility contracting (smaller daily moves)
+        """
+        try:
+            # Need period * 2 + 1 days for two windows
+            closes = await self._get_daily_closes(symbol, period * 2 + 5)
+            
+            if closes is None or len(closes) < period * 2 + 1:
+                return None
+            
+            # Calculate daily percentage returns
+            ccr = np.diff(closes) / closes[:-1]
+            ccv = np.abs(ccr)
+            
+            if len(ccv) < period * 2:
+                return None
+            
+            # Recent volatility (last 'period' days)
+            mad_recent = np.mean(ccv[-period:])
+            
+            # Prior volatility (previous 'period' days)
+            mad_prior = np.mean(ccv[-period*2:-period])
+            
+            # V = recent - prior
+            V = mad_recent - mad_prior
+            
+            return float(V)
+            
+        except Exception as e:
+            logger.error(f"Error computing volatility trend for {symbol}: {e}")
+            return None
+
+    async def get_market_context(
+        self,
+        symbol: str,
+        G: Optional[float] = None,
+        period: int = 21
+    ) -> Optional[MarketContext]:
+        """
+        Get complete market context for a symbol using the Four Axes framework.
+        
+        Computes P (price trend) and V (volatility trend), and combines with
+        G (gamma ratio) if provided or defaults to 0.5 (neutral).
+        
+        Results are cached with a 5-minute TTL.
+        
+        Args:
+            symbol: Stock symbol
+            G: Gamma ratio if already computed (0 to 1), or None to use 0.5
+            period: Lookback period for P and V calculations
+            
+        Returns:
+            MarketContext object or None if data unavailable
+        """
+        try:
+            now = datetime.utcnow()
+            cache_key = symbol
+            
+            # Check cache
+            if cache_key in self.market_context_cache:
+                cached = self.market_context_cache[cache_key]
+                age_sec = (now - cached["timestamp"]).total_seconds()
+                if age_sec < 300:  # 5-minute TTL
+                    # Update G if provided (gamma may be fresher)
+                    ctx = cached["context"]
+                    if G is not None and G != ctx.G:
+                        ctx = MarketContext(
+                            symbol=ctx.symbol,
+                            P=ctx.P,
+                            V=ctx.V,
+                            G=G,
+                            timestamp=now
+                        )
+                    return ctx
+            
+            # Compute P and V
+            P = await self.compute_price_trend(symbol, period)
+            V = await self.compute_volatility_trend(symbol, period)
+            
+            if P is None:
+                logger.debug(f"Could not compute P for {symbol}")
+                return None
+            
+            if V is None:
+                V = 0.0  # Default to neutral if V unavailable
+            
+            # Use provided G or default to neutral
+            G_value = G if G is not None else 0.5
+            
+            context = MarketContext(
+                symbol=symbol,
+                P=P,
+                V=V,
+                G=G_value,
+                timestamp=now
+            )
+            
+            # Cache the result
+            self.market_context_cache[cache_key] = {
+                "timestamp": now,
+                "context": context
+            }
+            
+            # Cleanup old cache entries
+            if len(self.market_context_cache) > 200:
+                cutoff = now - timedelta(minutes=10)
+                self.market_context_cache = {
+                    k: v for k, v in self.market_context_cache.items()
+                    if v["timestamp"] > cutoff
+                }
+            
+            logger.debug(
+                f"MarketContext for {symbol}: P={P:.3f}, V={V:.4f}, G={G_value:.3f}, "
+                f"regime={context.regime}, mult={context.conviction_multiplier:.2f}"
+            )
+            
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error getting market context for {symbol}: {e}")
+            return None
+
+    def clear_context_cache(self, symbol: Optional[str] = None):
+        """Clear market context cache for a symbol or all symbols."""
+        if symbol:
+            self.market_context_cache.pop(symbol, None)
+            for key in list(self.daily_closes_cache.keys()):
+                if key.startswith(symbol):
+                    del self.daily_closes_cache[key]
+        else:
+            self.market_context_cache.clear()
+            self.daily_closes_cache.clear()
 
     async def calculate_volume_ratio(self, symbol: str, current_volume: int) -> float:
         """

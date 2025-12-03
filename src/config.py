@@ -71,45 +71,50 @@ class Config:
     REPEAT_SIGNAL_THRESHOLD = int(os.getenv('REPEAT_SIGNAL_THRESHOLD', '3'))
     SUCCESS_RATE_THRESHOLD = float(os.getenv('SUCCESS_RATE_THRESHOLD', '0.80'))
     
-    # Bot-specific Thresholds
-    GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M
-    SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '150000'))  # $150k
-    SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('SWEEPS_MIN_VOLUME_RATIO', '1.1'))
+    # Bot-specific Thresholds - OPTIMIZED FOR QUALITY
+    GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1500000'))  # $1.5M (raised for true whale size)
+    SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '750000'))  # $750K (raised for conviction)
+    SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('SWEEPS_MIN_VOLUME_RATIO', '1.3'))  # 1.3x (raised)
     SWEEPS_MIN_ALIGNMENT_CONFIDENCE = int(os.getenv('SWEEPS_MIN_ALIGNMENT_CONFIDENCE', '20'))
+    SWEEPS_MAX_STRIKE_DISTANCE = float(os.getenv('SWEEPS_MAX_STRIKE_DISTANCE', '0.06'))  # 6% max OTM (new)
+    SWEEPS_COOLDOWN_SECONDS = int(os.getenv('SWEEPS_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown (new)
+    SWEEPS_MAX_ALERTS_PER_SCAN = int(os.getenv('SWEEPS_MAX_ALERTS_PER_SCAN', '2'))  # Max 2 per scan (new)
     GOLDEN_SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('GOLDEN_SWEEPS_MIN_VOLUME_RATIO', '1.1'))
     GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE = int(os.getenv('GOLDEN_SWEEPS_MIN_ALIGNMENT_CONFIDENCE', '15'))
     GOLDEN_MAX_STRIKE_DISTANCE = float(os.getenv('GOLDEN_MAX_STRIKE_DISTANCE', '100.0'))  # percent OTM/ITM allowed for golden sweeps (100 = any strike)
     MIN_VOLUME_RATIO = float(os.getenv('MIN_VOLUME_RATIO', '3.0'))  # 3x volume for unusual
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
     
-    # Bullseye Bot Thresholds (institutional swing trades 1-5 DTE)
-    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '500000'))  # lowered to $500K
+    # Bullseye Bot Thresholds (institutional swing trades - OPTIMIZED FOR QUALITY)
+    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '1000000'))  # $1M minimum (institutional size)
     BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2000'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
-    BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '45.0'))
-    BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '400'))
-    BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '200'))
+    BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '30.0'))  # 30 days max (tightened)
+    BULLSEYE_MIN_VOLUME_DELTA = int(os.getenv('BULLSEYE_MIN_VOLUME_DELTA', '600'))  # 600+ contracts (raised)
+    BULLSEYE_MIN_BLOCK_CONTRACTS = int(os.getenv('BULLSEYE_MIN_BLOCK_CONTRACTS', '400'))  # 400+ block size
     BULLSEYE_MIN_VOI_RATIO = float(os.getenv('BULLSEYE_MIN_VOI_RATIO', '1.0'))  # Fresh positioning
-    BULLSEYE_MIN_OPEN_INTEREST = int(os.getenv('BULLSEYE_MIN_OPEN_INTEREST', '500')) # Lowered to allow Vol > OI logic to work
+    BULLSEYE_MIN_OPEN_INTEREST = int(os.getenv('BULLSEYE_MIN_OPEN_INTEREST', '500'))
     BULLSEYE_MIN_PRICE = float(os.getenv('BULLSEYE_MIN_PRICE', '0.25'))
     BULLSEYE_MIN_ITM_PROBABILITY = float(os.getenv('BULLSEYE_MIN_ITM_PROBABILITY', '0.35'))  # 35% minimum
     BULLSEYE_DELTA_MIN = float(os.getenv('BULLSEYE_DELTA_MIN', '0.35'))  # ATM range
     BULLSEYE_DELTA_MAX = float(os.getenv('BULLSEYE_DELTA_MAX', '0.65'))
-    BULLSEYE_MAX_STRIKE_DISTANCE = float(os.getenv('BULLSEYE_MAX_STRIKE_DISTANCE', '0.20'))  # 20% max OTM
+    BULLSEYE_MAX_STRIKE_DISTANCE = float(os.getenv('BULLSEYE_MAX_STRIKE_DISTANCE', '0.12'))  # 12% max OTM (tightened)
     BULLSEYE_MAX_SPREAD_PCT = float(os.getenv('BULLSEYE_MAX_SPREAD_PCT', '8.0'))  # 8% max bid-ask spread
-    BULLSEYE_COOLDOWN_SECONDS = int(os.getenv('BULLSEYE_COOLDOWN_SECONDS', '1800'))  # 30 minutes
-    BULLSEYE_MAX_ALERTS_PER_SCAN = int(os.getenv('BULLSEYE_MAX_ALERTS_PER_SCAN', '3'))
-    BULLSEYE_MIN_SWEEP_SCORE = int(os.getenv('BULLSEYE_MIN_SWEEP_SCORE', '65'))
-    # 99 Cent Store Bot Thresholds (sub-$1 swing trades with high conviction)
-    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '200000'))  # $200K+ for conviction
+    BULLSEYE_COOLDOWN_SECONDS = int(os.getenv('BULLSEYE_COOLDOWN_SECONDS', '2700'))  # 45 minutes (raised)
+    BULLSEYE_MAX_ALERTS_PER_SCAN = int(os.getenv('BULLSEYE_MAX_ALERTS_PER_SCAN', '2'))  # Max 2 per scan (quality)
+    BULLSEYE_MIN_SWEEP_SCORE = int(os.getenv('BULLSEYE_MIN_SWEEP_SCORE', '90'))  # Score 90+ (raised)
+    # 99 Cent Store Bot Thresholds (sub-$1 swing trades - OPTIMIZED FOR QUALITY)
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '400000'))  # $400K+ (raised for conviction)
     SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))  # 1000 contracts for liquidity
     SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '500'))  # Strong new flow
     SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.00'))  # Hard cap: sub-$1.00 contracts only
     SPREAD_MIN_PRICE = float(os.getenv('SPREAD_MIN_PRICE', '0.05'))  # Avoid illiquid penny options
-    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '1.5'))  # High conviction flow
+    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '2.5'))  # 2.5x VOI (raised for quality)
     SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '2.0'))  # 2 days minimum for swing trades
     SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '30.0'))  # Up to 4 weeks for swing trades
-    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.15'))  # 15% OTM max for higher probability
+    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.10'))  # 10% OTM max (tightened)
+    SPREAD_COOLDOWN_SECONDS = int(os.getenv('SPREAD_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown (new)
+    SPREAD_MAX_ALERTS_PER_SCAN = int(os.getenv('SPREAD_MAX_ALERTS_PER_SCAN', '2'))  # Max 2 per scan (new)
 
     # Gamma Ratio Bot Thresholds (G = call_gamma / total_gamma)
     # G → 1.0 = call-driven, G → 0.0 = put-driven, G ≈ 0.5 = balanced
@@ -123,10 +128,10 @@ class Config:
     GAMMA_RATIO_EXTREME_CALL = float(os.getenv('GAMMA_RATIO_EXTREME_CALL', '0.75'))  # G > 0.75 = extreme call
     GAMMA_RATIO_COOLDOWN_MINUTES = int(os.getenv('GAMMA_RATIO_COOLDOWN_MINUTES', '30'))  # Cooldown between alerts
 
-    # Score Thresholds
+    # Score Thresholds - OPTIMIZED FOR QUALITY
     MIN_GOLDEN_SCORE = int(os.getenv('MIN_GOLDEN_SCORE', '85'))
     MIN_SWEEP_SCORE = int(os.getenv('MIN_SWEEP_SCORE', '85'))
-    MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '65'))  # 65+ for institutional swings
+    MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '90'))  # 90+ for highest conviction only
     
     # Watchlist Mode - Dynamic or Static
     WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC

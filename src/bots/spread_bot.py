@@ -16,7 +16,7 @@ from .base_bot import BaseAutoBot
 from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.flow_metrics import build_metrics_from_flow, OptionTradeMetrics
-from src.utils.enhanced_analysis import EnhancedAnalyzer
+from src.utils.enhanced_analysis import EnhancedAnalyzer, should_take_signal
 from src.utils.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,8 @@ class SpreadBot(BaseAutoBot):
         self.min_dte = Config.SPREAD_MIN_DTE
         self.max_dte = Config.SPREAD_MAX_DTE
         self.max_percent_otm = Config.SPREAD_MAX_PERCENT_OTM
-        self.cooldown_seconds = 1800  # 30 minute cooldown to prevent spam
+        self.cooldown_seconds = getattr(Config, 'SPREAD_COOLDOWN_SECONDS', 1800)  # From config
+        self.max_alerts_per_scan = getattr(Config, 'SPREAD_MAX_ALERTS_PER_SCAN', 2)  # From config
         self._flow_stats: Dict[str, Dict[str, Any]] = {}
         self.golden_fallback_hours = getattr(Config, "SPREAD_GOLDEN_FALLBACK_HOURS", 2.0)
         self.trigger_spread_pct_cap = getattr(Config, "SPREAD_TRIGGER_SPREAD_PCT_CAP", 12.5)
@@ -93,7 +94,7 @@ class SpreadBot(BaseAutoBot):
         
         # Scan symbols concurrently
         all_signals: List[Dict] = []
-        max_alerts = 5  # Limit alerts per cycle
+        max_alerts = self.max_alerts_per_scan  # Limit alerts per cycle (from config)
         
         # Use smaller batch for faster results
         batch_size = 50
@@ -565,6 +566,30 @@ class SpreadBot(BaseAutoBot):
                 except Exception as e:
                     logger.debug(f"{self.name} trend check failed for {symbol}: {e}")
 
+                # Four Axes Framework: Validate signal alignment with market context
+                # For swing trades (5-21 DTE), we want strong alignment with the daily trend
+                market_context = None
+                try:
+                    market_context = await self.enhanced_analyzer.get_market_context(symbol)
+                    if market_context:
+                        should_take, reason = should_take_signal(metrics.option_type, market_context)
+                        
+                        if not should_take:
+                            log_once(f"Four Axes rejection: {reason}")
+                            continue
+                        
+                        # For sub-$1 swing trades, apply stricter P (price trend) filter
+                        # CALLs need P > -0.2, PUTs need P < 0.2
+                        P = market_context.P
+                        if metrics.option_type == 'CALL' and P < -0.2:
+                            log_once(f"P trend too bearish for CALL swing (P={P:.2f})")
+                            continue
+                        elif metrics.option_type == 'PUT' and P > 0.2:
+                            log_once(f"P trend too bullish for PUT swing (P={P:.2f})")
+                            continue
+                except Exception as e:
+                    logger.debug(f"{self.name} Four Axes check failed for {symbol}: {e}")
+
                 # Check cooldown BEFORE adding to signals (prevents duplicates)
                 cooldown_key = f"{metrics.underlying}_{metrics.strike}_{metrics.option_type}_{metrics.expiration.strftime('%Y%m%d')}"
                 stats_snapshot = self._update_flow_stats(cooldown_key, float(metrics.premium or 0.0))
@@ -588,6 +613,7 @@ class SpreadBot(BaseAutoBot):
                         "contract_price": contract_price,
                         "flow": flow,
                         "stats": stats_snapshot,
+                        "market_context": market_context.to_dict() if market_context else None,
                     }
                 )
 
@@ -619,7 +645,22 @@ class SpreadBot(BaseAutoBot):
             stats["last_seen"] = now
 
         self._flow_stats[key] = stats
+        
+        # Periodic cleanup: remove entries older than 24 hours
+        self._cleanup_flow_stats()
+        
         return dict(stats)
+
+    def _cleanup_flow_stats(self) -> None:
+        """Remove old flow stats entries to prevent memory growth."""
+        now = datetime.utcnow()
+        cutoff = now - timedelta(hours=24)
+        to_remove = [k for k, v in self._flow_stats.items() 
+                     if v.get('last_seen', now) < cutoff]
+        for k in to_remove:
+            del self._flow_stats[k]
+        if to_remove:
+            logger.debug("%s cleaned up %d old flow stats entries", self.name, len(to_remove))
 
     def _calculate_spread_score(self, metrics: OptionTradeMetrics, voi_ratio: float, contract_price: float) -> int:
         """
@@ -701,8 +742,9 @@ class SpreadBot(BaseAutoBot):
         
         # Post the signal
         stats = payload.get("stats")
+        market_context = payload.get("market_context")
 
-        embed = self._build_embed(metrics, contract_price, flow, stats)
+        embed = self._build_embed(metrics, contract_price, flow, stats, market_context)
         success = await self.post_to_discord(embed)
         
         if success:
@@ -727,6 +769,7 @@ class SpreadBot(BaseAutoBot):
         contract_price: float,
         flow: Dict,
         stats: Optional[Dict[str, Any]] = None,
+        market_context: Optional[Dict[str, Any]] = None,
     ) -> Dict:
         """Build enhanced Discord embed with two-column layout and repeat-flow context."""
         dte_days = int(round(metrics.dte))
@@ -819,6 +862,33 @@ class SpreadBot(BaseAutoBot):
                     "inline": False,
                 }
             )
+
+        # Four Axes Market Context
+        if market_context:
+            P = market_context.get("P", 0)
+            V = market_context.get("V", 0)
+            G = market_context.get("G", 0.5)
+            regime = market_context.get("regime", "NEUTRAL")
+            mult = market_context.get("conviction_multiplier", 1.0)
+            
+            # Format regime with emoji
+            regime_emojis = {
+                "BULLISH_CALL_DRIVEN": "🟢📈",
+                "BEARISH_PUT_DRIVEN": "🔴📉",
+                "BULLISH_PUT_HEDGED": "🟡⚠️",
+                "BEARISH_CALL_HEDGED": "🟡🔄",
+                "VOLATILITY_EXPANSION": "📊⬆️",
+                "VOLATILITY_CONTRACTION": "📊⬇️",
+                "NEUTRAL": "⚪",
+            }
+            regime_emoji = regime_emojis.get(regime, "⚪")
+            regime_display = regime.replace("_", " ").title()
+            
+            context_value = f"{regime_emoji} **{regime_display}**\nP={P:+.2f} | V={V:+.3f} | G={G:.2f}"
+            if mult > 1.0:
+                context_value += f" | Boost: **{mult:.0%}**"
+            
+            fields.append({"name": "📐 Four Axes", "value": context_value, "inline": False})
 
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
