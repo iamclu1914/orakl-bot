@@ -12,6 +12,7 @@ from collections import deque
 import sqlite3
 from pathlib import Path
 import threading
+import math
 
 from src.config import Config
 from src.utils.exceptions import BotException, BotNotRunningException, WebhookException
@@ -62,6 +63,7 @@ class BaseAutoBot(ABC):
         self._cooldowns: Dict[str, datetime] = {}
         self._skip_records: deque = deque(maxlen=200)
         self.concurrency_limit = getattr(Config, 'MAX_CONCURRENT_REQUESTS', 10)
+        self.symbol_scan_timeout = getattr(Config, 'SYMBOL_SCAN_TIMEOUT', 20)
         self._state_lock = threading.Lock()
         self._state_db: Optional[sqlite3.Connection] = None
         self._state_db_path: Optional[Path] = None
@@ -441,19 +443,22 @@ class BaseAutoBot(ABC):
     async def _perform_scan(self):
         """Perform a single scan with generous timeout"""
         try:
-            # Add timeout to prevent hanging - be generous for API calls
-            # Adaptive timeout based on watchlist size and concurrency
+            # Add timeout to prevent hanging - adaptive based on symbol timeout and concurrency
             watchlist_size = len(getattr(self, 'watchlist', [])) if hasattr(self, 'watchlist') else 100
-            # With 20 concurrent requests, timeout can be much shorter
-            chunk_size = 20
-            num_chunks = (watchlist_size + chunk_size - 1) // chunk_size
-            # Allow 30s per chunk plus buffer
-            timeout_duration = max(num_chunks * 30 + 60, 300)  # 5 min minimum
+            concurrency = max(1, self.concurrency_limit)
+            # Estimate batches and total time using per-symbol guardrail
+            num_batches = max(1, math.ceil(watchlist_size / concurrency))
+            timeout_duration = num_batches * (self.symbol_scan_timeout + 2) + 60  # small buffer per batch + global buffer
+            timeout_duration = max(180, min(timeout_duration, 600))  # keep between 3 and 10 minutes
+            scan_start = time.time()
             await asyncio.wait_for(
                 self.scan_and_post(),
                 timeout=timeout_duration
             )
+            duration = time.time() - scan_start
+            logger.info("%s scan completed in %.1fs (timeout %.0fs)", self.name, duration, timeout_duration)
         except asyncio.TimeoutError:
+            logger.error("%s scan hit timeout after %.0fs (limit %.0fs)", self.name, time.time() - scan_start, timeout_duration)
             raise BotException(f"{self.name} scan timeout exceeded after {timeout_duration}s")
     
     async def _handle_scan_error(self, error: Exception):
@@ -581,7 +586,13 @@ class BaseAutoBot(ABC):
     async def _scan_symbol_safe(self, symbol: str):
         """Safely scan a symbol with error handling"""
         try:
-            return await self._scan_symbol(symbol)
+            return await asyncio.wait_for(
+                self._scan_symbol(symbol),
+                timeout=self.symbol_scan_timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"{self.name} - {symbol} scan timed out after {self.symbol_scan_timeout}s; skipping")
+            return []
         except Exception as e:
             logger.error(f"{self.name} error scanning {symbol}: {e}")
             return []

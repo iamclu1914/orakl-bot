@@ -271,6 +271,7 @@ class Config:
     RETRY_ATTEMPTS = int(os.getenv('RETRY_ATTEMPTS', '3'))
     RETRY_DELAY = int(os.getenv('RETRY_DELAY', '5'))
     MAX_CONSECUTIVE_ERRORS = int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
+    SYMBOL_SCAN_TIMEOUT = int(os.getenv('SYMBOL_SCAN_TIMEOUT', '20'))  # Per-symbol scan guardrail (seconds)
     
     # Cache Settings
     CACHE_TTL_API = int(os.getenv('CACHE_TTL_API', '60'))  # 1 minute
