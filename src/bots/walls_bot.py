@@ -5,8 +5,10 @@ Scans the Option Chain to find 'Walls' (Max Open Interest strikes).
 Alerts when price approaches these magnetic levels.
 
 The Logic:
-- Call Wall = Strike with highest Call OI → RESISTANCE (price tends to reject)
-- Put Wall = Strike with highest Put OI → SUPPORT (price tends to bounce)
+- Finds strikes with highest Call OI and highest Put OI
+- Labels based on PRICE POSITION relative to the wall:
+  - Price BELOW wall = RESISTANCE (must break through going up)
+  - Price ABOVE wall = SUPPORT (floor that catches you falling)
 
 These levels act as magnets AND barriers. Price is drawn to them,
 then often reverses when it hits them.
@@ -185,23 +187,29 @@ class WallsBot(BaseAutoBot):
         
         alerts = 0
         
-        # Check proximity to call wall (RESISTANCE)
+        # Check proximity to call wall
         if call_wall_oi >= self.min_wall_oi:
             call_distance_pct = abs(price - call_wall_strike) / price
             if call_distance_pct <= self.proximity_pct:
+                # Determine wall type based on PRICE POSITION, not put/call
+                # Price BELOW wall = RESISTANCE (must break through going up)
+                # Price ABOVE wall = SUPPORT (floor that catches you)
+                wall_type = "RESISTANCE" if price < call_wall_strike else "SUPPORT"
                 success = await self._fire_wall_alert(
-                    symbol, price, "RESISTANCE", 
+                    symbol, price, wall_type, 
                     call_wall_strike, call_wall_oi
                 )
                 if success:
                     alerts += 1
         
-        # Check proximity to put wall (SUPPORT)
+        # Check proximity to put wall
         if put_wall_oi >= self.min_wall_oi:
             put_distance_pct = abs(price - put_wall_strike) / price
             if put_distance_pct <= self.proximity_pct:
+                # Same logic: position relative to wall determines type
+                wall_type = "RESISTANCE" if price < put_wall_strike else "SUPPORT"
                 success = await self._fire_wall_alert(
-                    symbol, price, "SUPPORT",
+                    symbol, price, wall_type,
                     put_wall_strike, put_wall_oi
                 )
                 if success:

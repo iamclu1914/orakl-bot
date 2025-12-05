@@ -144,52 +144,29 @@ class Config:
     MIN_STOCK_PRICE = float(os.getenv('MIN_STOCK_PRICE', '5.0'))  # $5 minimum (avoid penny stocks)
     MAX_STOCK_PRICE = float(os.getenv('MAX_STOCK_PRICE', '10000'))  # $10K max (filter out Berkshire)
 
-    # Unified Watchlist - ALL BOTS (includes small account friendly tickers under $75)
+    # Unified Watchlist - OPTIMIZED FOR SCAN COMPLETION (~150 high-activity symbols)
+    # Reduced from ~400 to prevent scan timeouts while covering most options flow
     _UNIFIED_WATCHLIST = (
-        # Indices & ETFs
-        'SPY,QQQ,IWM,DIA,XLF,XLE,XLK,XLV,XLY,XLC,SMH,ARKK,SOXL,'
-        # Technology (existing + new under $75)
-        'AAPL,MSFT,NVDA,GOOGL,META,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,TXN,PLTR,CRWD,PANW,'
-        'SHOP,SMCI,NET,ROKU,ZS,DDOG,OKTA,SPLK,TEAM,ZM,SNOW,AFRM,RBLX,DELL,AI,BBAI,SOUN,PATH,UPST,MU,ON,MRVL,ARM,'
-        'APLD,APLS,APP,ARWR,ASAN,AXON,BE,BEAM,BILL,BLNK,BLUE,BMBL,BYND,CAVA,CELH,CHPT,CHWY,COHR,COUR,CRBU,CROX,'
-        'CYBR,DAWN,DERM,DKNG,DOCN,DT,DVAX,ENPH,ENVX,ESTC,FATE,FIGS,FOUR,FRSH,FSLR,GLBE,GMAB,GTLB,HALO,HIMS,HLIT,'
-        'ICLR,INMD,INSP,IONS,IOT,LAC,LC,LSCC,MORF,MTCH,NBIX,NU,NVAX,NVEI,ONON,OPFI,PD,PEN,PLL,PLUG,PRAX,PTON,QS,'
-        'RDNA,RDNT,RETA,RKLB,RUN,RVLV,RXRX,S,SGML,SKLZ,SMAR,SMR,SPCE,SWAV,TASK,TDOC,TDUP,TENB,TER,TNYA,TOST,TWLO,'
-        'UCTT,VECO,VIR,VRNS,W,WOLF,YETI,ZETA,'
-        # Consumer Discretionary (existing + new)
-        'AMZN,TSLA,NFLX,HD,NKE,SBUX,MCD,TGT,BKNG,LOW,DIS,CMG,LULU,TSCO,DPZ,DG,DLTR,BJ,EBAY,ASO,'
-        # Financial Services (existing + new under $75)
-        'JPM,BAC,WFC,GS,MS,C,BLK,SCHW,AXP,V,MA,PYPL,COIN,HOOD,SOFI,RKT,'
-        # Healthcare (existing + new)
-        'UNH,JNJ,LLY,ABBV,MRK,PFE,TMO,ABT,DHR,BMY,AMGN,CVS,GILD,MNKD,ISRG,VRTX,REGN,'
-        # Energy (existing)
-        'XOM,CVX,COP,SLB,EOG,MPC,PSX,VLO,OXY,HAL,'
-        # Industrials (existing)
-        'BA,CAT,GE,HON,UPS,RTX,LMT,DE,MMM,UNP,J,'
-        # Communication Services (existing + new under $75)
-        'T,VZ,CMCSA,TMUS,DIS,CHTR,PARA,WBD,EA,TTWO,SNAP,RUM,'
-        # Consumer Staples (existing)
-        'PG,KO,PEP,WMT,COST,PM,MO,CL,MDLZ,CPB,KMB,'
-        # Materials & Commodities (existing + new under $75)
-        'LIN,APD,ECL,DD,NEM,FCX,DOW,AA,CLF,VALE,CCJ,ALB,LTHM,MP,GOLD,'
-        'BHP,RIO,SCCO,TECK,KGC,PAAS,WPM,HMY,HBM,FSM,AGI,SSRM,CIFR,'
-        # Real Estate (existing)
-        'AMT,PLD,CCI,EQIX,PSA,'
-        # Utilities (existing)
-        'NEE,DUK,SO,D,AEP,'
-        # Auto & EV (new small account friendly under $75)
-        'F,GM,RIVN,LCID,NIO,'
-        # Travel & Reopening (new under $75)
-        'UBER,LYFT,ABNB,CCL,RCL,MAR,H,HLT,UAL,DAL,AAL,EXPE,'
-        # Semiconductors (new)
-        'ASML,LRCX,MPWR,NXPI,ADI,KLAC,AMAT,TSM,BRCM,STM,'
-        # Meme & High Beta (new under $75)
-        'AMC,GME'
-        # Additional Requested Symbols
-        ',ADM,BABA,BB,BETZ,BIDU,BILI,BP,BULL,CAKE,CAN,CF,CLNE,CLX,COTY,CRSR,CZR,DQ,DXY,EAT,ENB,ET,FDX,FLUT,'
-        'FSLY,FTNT,FUTU,FXI,GDX,GIS,HEAR,HL,HUT,IAC,ICLN,JBLU,JD,JKS,JMIA,K,KHC,KOS,KOSS,KR,KTOS,LI,LMND,LUV,'
-        'M,MGM,MOS,MX,NCLH,NOK,NTR,NUE,PBR,PCG,PDD,PINS,SAVA,SIRI,SPX,TAN,TCOM,TJX,TNX,TXRH,U,ULCC,USOIL,UUUU,'
-        'UVXY,VFH,VIX,WEN,XLB,XLI,XLP,XLRE,XLU,XME,XPEV,YUM,Z'
+        # Indices & ETFs (15)
+        'SPY,QQQ,IWM,DIA,XLF,XLE,XLK,XLV,XLY,XLC,SMH,ARKK,SOXL,GLD,TLT,'
+        # Mega-Cap Tech (20)
+        'AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,'
+        'TXN,MU,AMAT,LRCX,KLAC,'
+        # High-Options-Volume Growth (30)
+        'PLTR,COIN,HOOD,SOFI,MARA,RIOT,SMCI,ARM,DELL,NET,SNOW,DDOG,CRWD,PANW,ZS,'
+        'SHOP,SQ,PYPL,ROKU,SNAP,RBLX,U,ABNB,UBER,LYFT,DKNG,PENN,DASH,DOCU,OKTA,'
+        # Meme & High-Beta (15)
+        'GME,AMC,RIVN,LCID,NIO,PLUG,CHPT,SPCE,BB,MSTR,UPST,AFRM,SOUN,BBAI,AI,'
+        # Healthcare & Biotech (15)
+        'UNH,LLY,JNJ,PFE,MRNA,BNTX,ABBV,MRK,BMY,GILD,AMGN,REGN,ISRG,VRTX,BIIB,'
+        # Financials (10)
+        'JPM,BAC,GS,MS,WFC,C,V,MA,AXP,BLK,'
+        # Energy & Materials (10)
+        'XOM,CVX,COP,SLB,OXY,FCX,NEM,AA,CLF,CCJ,'
+        # Consumer & Industrial (15)
+        'DIS,NFLX,NKE,SBUX,MCD,HD,LOW,BA,CAT,GE,DE,LMT,RTX,UPS,FDX,'
+        # Small Account Friendly Under $30 (20)
+        'F,GM,T,VZ,PARA,WBD,AAL,DAL,UAL,CCL,RCL,PINS,BABA,ENPH,TEAM,ZM,PATH,ON,MRVL,RKLB'
     )
     
     # Legacy variable for backwards compatibility
@@ -221,9 +198,12 @@ class Config:
         'WYNN,LVS,PENN,PLTR,AMD,NVDA,TSLA,RIVN,LCID,NIO,F,GM,AMC,GME,COIN,HOOD,SOFI,UBER,LYFT,ABNB,CCL,RCL,SNAP,'
         'ROKU,NET,DDOG,MU,ON,ARM,SMCI,SHOP,CRWD,SNOW'
     ).split(',')
+    # Gamma Bot default: Focus on liquid names only (gamma calculation is heavy)
+    # Can override via GAMMA_RATIO_WATCHLIST env var
+    _GAMMA_DEFAULT = 'SPY,QQQ,IWM,DIA,TSLA,AAPL,MSFT,NVDA,AMD,SOFI,HOOD,UPST,SMH,ARKK,RBLX,BABA,WMT,GOOG'
     GAMMA_RATIO_WATCHLIST = os.getenv(
         'GAMMA_RATIO_WATCHLIST',
-        ','.join(_UNIFIED_LIST)
+        _GAMMA_DEFAULT
     ).split(',')
 
     SKIP_TICKERS = os.getenv(
@@ -271,7 +251,7 @@ class Config:
     RETRY_ATTEMPTS = int(os.getenv('RETRY_ATTEMPTS', '3'))
     RETRY_DELAY = int(os.getenv('RETRY_DELAY', '5'))
     MAX_CONSECUTIVE_ERRORS = int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
-    SYMBOL_SCAN_TIMEOUT = int(os.getenv('SYMBOL_SCAN_TIMEOUT', '20'))  # Per-symbol scan guardrail (seconds)
+    SYMBOL_SCAN_TIMEOUT = int(os.getenv('SYMBOL_SCAN_TIMEOUT', '45'))  # Per-symbol scan guardrail (seconds) - increased for large option chains
     
     # Cache Settings
     CACHE_TTL_API = int(os.getenv('CACHE_TTL_API', '60'))  # 1 minute
