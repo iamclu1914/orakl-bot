@@ -352,7 +352,10 @@ class Config:
     # =============================================================================
     # Walls Bot Settings - Support/Resistance Detection
     # =============================================================================
-    WALLS_BOT_WEBHOOK = os.getenv('WALLS_BOT_WEBHOOK', DISCORD_WEBHOOK_URL)  # Add your webhook
+    WALLS_BOT_WEBHOOK = os.getenv(
+        'WALLS_BOT_WEBHOOK',
+        'https://discord.com/api/webhooks/1446398067845632010/VdFunNc3ojx2gnj2uJW1cKeJBA5GWyuSwvLq7Uf5_HHBts5AZu4xNqzGO6ObR09SjAeB'
+    )
     WALLS_BOT_INTERVAL = int(os.getenv('WALLS_BOT_INTERVAL', '300'))  # 5 minutes
     WALLS_MIN_OI = int(os.getenv('WALLS_MIN_OI', '5000'))  # Min OI to qualify as wall
     WALLS_PROXIMITY_PCT = float(os.getenv('WALLS_PROXIMITY_PCT', '0.005'))  # 0.5% from wall
@@ -362,7 +365,10 @@ class Config:
     # =============================================================================
     # Lotto Bot Settings - Unusual OTM Flow Detection
     # =============================================================================
-    LOTTO_BOT_WEBHOOK = os.getenv('LOTTO_BOT_WEBHOOK', DISCORD_WEBHOOK_URL)  # Add your webhook
+    LOTTO_BOT_WEBHOOK = os.getenv(
+        'LOTTO_BOT_WEBHOOK',
+        'https://discord.com/api/webhooks/1446398286570459146/_I5D1A3zRou2EfXP1a5ObwkilJB9PdcovGyvZOThg7FP9mW3012TXMDSXtYjCVDAip4g'
+    )
     LOTTO_BOT_INTERVAL = int(os.getenv('LOTTO_BOT_INTERVAL', '300'))  # 5 minutes
     LOTTO_MAX_PRICE = float(os.getenv('LOTTO_MAX_PRICE', '0.15'))  # Max $0.15 per contract
     LOTTO_MIN_VOL_OI_RATIO = float(os.getenv('LOTTO_MIN_VOL_OI_RATIO', '50.0'))  # 50x volume/OI
