@@ -6,7 +6,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.watchlist_manager import SmartWatchlistManager
-from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, SpreadBot, GammaRatioBot
+from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, SpreadBot, GammaRatioBot, RollingThunderBot
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,21 @@ class BotManager:
         logger.info(
             "  ✓ Gamma Ratio Bot → G ratio regime tracker | Watchlist: %d tickers",
             len(gamma_watchlist),
+        )
+
+        # Rolling Thunder Bot (Whale roll detector)
+        rolling_watchlist = list(unified_watchlist)
+        self.rolling_thunder_bot = RollingThunderBot(
+            Config.ROLLING_THUNDER_WEBHOOK,
+            rolling_watchlist,
+            self.fetcher,
+            hedge_hunter=self.hedge_hunter,
+            context_manager=self.context_manager,
+        )
+        self.bots.append(self.rolling_thunder_bot)
+        self.bot_overrides[self.rolling_thunder_bot] = rolling_watchlist
+        logger.info(
+            f"  ✓ Rolling Thunder Bot 🔄 → Whale roll detector | Watchlist: {len(rolling_watchlist)} tickers"
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")

@@ -334,6 +334,21 @@ class Config:
     HEDGE_THRESHOLD_PCT = float(os.getenv('HEDGE_THRESHOLD_PCT', '0.40'))  # 40% of delta-equivalent shares
     HEDGE_DELTA_ESTIMATE = float(os.getenv('HEDGE_DELTA_ESTIMATE', '0.50'))  # 50 delta baseline
     
+    # =============================================================================
+    # Rolling Thunder Bot Settings - Whale Roll Detection
+    # =============================================================================
+    ROLLING_THUNDER_WEBHOOK = os.getenv(
+        'ROLLING_THUNDER_WEBHOOK',
+        'https://discord.com/api/webhooks/1446381206055682089/BKzehoGbfRkwXcBNbouRFD-d3h38-scemd8RJBRTcFJNpAe9DXt5gsF5V_AgXcKzcyGf'
+    )
+    ROLLING_THUNDER_INTERVAL = int(os.getenv('ROLLING_THUNDER_INTERVAL', '60'))  # 60 seconds
+    ROLL_LOOKBACK_SECONDS = int(os.getenv('ROLL_LOOKBACK_SECONDS', '60'))  # Look back 60s for trades
+    ROLL_MIN_PREMIUM = float(os.getenv('ROLL_MIN_PREMIUM', '150000'))  # $150K min (rolls often split)
+    ROLL_MAX_GAP_SECONDS = float(os.getenv('ROLL_MAX_GAP_SECONDS', '5'))  # Max 5s between legs
+    ROLL_NEAR_DTE = int(os.getenv('ROLL_NEAR_DTE', '14'))  # "Closing" leg max DTE
+    ROLL_FAR_DTE = int(os.getenv('ROLL_FAR_DTE', '21'))  # "Opening" leg min DTE
+    ROLL_COOLDOWN_SECONDS = int(os.getenv('ROLL_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown
+    
     @classmethod
     def validate(cls):
         """Validate required configuration with comprehensive checks"""
