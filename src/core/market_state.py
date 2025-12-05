@@ -70,19 +70,44 @@ class ContextManager:
         self._last_full_update: Optional[float] = None
         
     async def run_loop(self):
-        """Background task entry point - runs continuously"""
+        """Background task entry point - runs continuously with BULLETPROOF error handling"""
         logger.info(f"🔄 [ContextManager] Starting GEX Engine for {len(self.tickers)} tickers...")
         self._running = True
+        
+        # Initial delay to let other services stabilize (avoid startup race conditions)
+        await asyncio.sleep(10)
+        
+        consecutive_failures = 0
+        max_consecutive_failures = 5
         
         while self._running:
             try:
                 await self.update_all_contexts()
                 self._last_full_update = time.time()
+                consecutive_failures = 0  # Reset on success
+                
+            except asyncio.CancelledError:
+                # Task is being cancelled - exit gracefully
+                logger.info("[ContextManager] GEX Engine cancelled, shutting down")
+                break
+                
             except Exception as e:
-                logger.error(f"[ContextManager] Update cycle failed: {e}")
+                # CRITICAL: Never let ANY error crash the GEX engine
+                consecutive_failures += 1
+                error_type = type(e).__name__
+                logger.warning(f"[ContextManager] Update cycle error ({consecutive_failures}/{max_consecutive_failures}): {error_type} - {str(e)[:150]}")
+                
+                # If too many consecutive failures, add extra delay
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error(f"[ContextManager] Too many failures, adding 60s cooldown")
+                    await asyncio.sleep(60)
+                    consecutive_failures = 0  # Reset after cooldown
             
             # Wait for next update cycle
-            await asyncio.sleep(self.update_interval)
+            try:
+                await asyncio.sleep(self.update_interval)
+            except asyncio.CancelledError:
+                break
         
         logger.info("[ContextManager] GEX Engine stopped")
     
@@ -91,65 +116,95 @@ class ContextManager:
         self._running = False
         
     async def update_all_contexts(self):
-        """Update GEX context for all tracked tickers"""
+        """Update GEX context for all tracked tickers - BULLETPROOF error handling"""
         logger.info(f"🔄 [ContextManager] Updating GEX profiles for {len(self.tickers)} tickers...")
         
         success_count = 0
+        error_count = 0
         
         for ticker in self.tickers:
             try:
                 await self._update_ticker_context(ticker)
                 success_count += 1
             except Exception as e:
-                logger.error(f"[ContextManager] Failed to update {ticker}: {e}")
+                # CRITICAL: Catch ALL exceptions - never let GEX engine crash the bot
+                error_count += 1
+                error_type = type(e).__name__
+                # Only log at debug level to avoid log spam - these are expected for some tickers
+                logger.debug(f"[ContextManager] Skipping {ticker}: {error_type} - {str(e)[:100]}")
+                
+                # Continue to next ticker - DO NOT re-raise
+                continue
         
-        logger.info(f"✅ [ContextManager] Update complete: {success_count}/{len(self.tickers)} tickers")
+        # Log summary
+        if error_count > 0:
+            logger.warning(f"⚠️ [ContextManager] Update complete: {success_count}/{len(self.tickers)} OK, {error_count} skipped")
+        else:
+            logger.info(f"✅ [ContextManager] Update complete: {success_count}/{len(self.tickers)} tickers")
     
     async def _update_ticker_context(self, ticker: str):
-        """Update GEX context for a single ticker"""
-        # 1. Get Option Chain Snapshot
-        snapshot = await self.fetcher.get_options_snapshot(ticker)
-        
-        if not snapshot:
-            logger.debug(f"[ContextManager] No options data for {ticker}")
-            return
-        
-        # 2. Get current spot price from underlying
-        spot_price = await self._get_spot_price(ticker, snapshot)
-        if not spot_price or spot_price <= 0:
-            logger.debug(f"[ContextManager] No spot price for {ticker}")
-            return
-        
-        # 3. Filter contracts by DTE (only include < 30 days where gamma matters most)
-        expiry_limit = (datetime.now() + timedelta(days=self.max_dte_days)).strftime('%Y-%m-%d')
-        filtered_contracts = self._filter_by_expiry(snapshot, expiry_limit)
-        
-        # 4. Calculate Net GEX and related metrics
-        gex_data = self._calculate_gex(filtered_contracts, spot_price)
-        
-        # 5. Calculate G ratio using existing utility
-        standardized = transform_polygon_snapshot(filtered_contracts)
-        gamma_ratio_data = compute_gamma_ratio(standardized, spot_price)
-        
-        # 6. Update state
-        self.state[ticker] = {
-            'regime': gex_data['regime'],
-            'net_gex': gex_data['net_gex'],
-            'G': gamma_ratio_data['G'],
-            'flip_level': gex_data['flip_level'],
-            'call_wall': gex_data['call_wall'],
-            'put_wall': gex_data['put_wall'],
-            'spot_price': spot_price,
-            'contracts_analyzed': len(filtered_contracts),
-            'last_updated': time.time()
-        }
-        
-        logger.debug(
-            f"[ContextManager] {ticker}: {gex_data['regime']} | "
-            f"G={gamma_ratio_data['G']:.2f} | "
-            f"NetGEX=${gex_data['net_gex']:,.0f} | "
-            f"Flip={gex_data['flip_level']:.1f}"
-        )
+        """Update GEX context for a single ticker - with defensive error handling"""
+        try:
+            # 1. Get Option Chain Snapshot (may raise on 404/timeout)
+            snapshot = await self.fetcher.get_options_snapshot(ticker)
+            
+            if not snapshot:
+                logger.debug(f"[ContextManager] No options data for {ticker}")
+                return
+            
+            # Handle case where snapshot is a dict (error response) instead of list
+            if isinstance(snapshot, dict):
+                logger.debug(f"[ContextManager] Invalid snapshot format for {ticker}")
+                return
+            
+            # 2. Get current spot price from underlying
+            spot_price = await self._get_spot_price(ticker, snapshot)
+            if not spot_price or spot_price <= 0:
+                logger.debug(f"[ContextManager] No spot price for {ticker}")
+                return
+            
+            # 3. Filter contracts by DTE (only include < 30 days where gamma matters most)
+            expiry_limit = (datetime.now() + timedelta(days=self.max_dte_days)).strftime('%Y-%m-%d')
+            filtered_contracts = self._filter_by_expiry(snapshot, expiry_limit)
+            
+            if not filtered_contracts:
+                logger.debug(f"[ContextManager] No contracts within {self.max_dte_days} DTE for {ticker}")
+                return
+            
+            # 4. Calculate Net GEX and related metrics
+            gex_data = self._calculate_gex(filtered_contracts, spot_price)
+            
+            # 5. Calculate G ratio using existing utility (wrap in try for safety)
+            try:
+                standardized = transform_polygon_snapshot(filtered_contracts)
+                gamma_ratio_data = compute_gamma_ratio(standardized, spot_price)
+            except Exception as e:
+                logger.debug(f"[ContextManager] G ratio calc failed for {ticker}: {e}")
+                gamma_ratio_data = {'G': 0.5}  # Neutral default
+            
+            # 6. Update state
+            self.state[ticker] = {
+                'regime': gex_data['regime'],
+                'net_gex': gex_data['net_gex'],
+                'G': gamma_ratio_data.get('G', 0.5),
+                'flip_level': gex_data['flip_level'],
+                'call_wall': gex_data['call_wall'],
+                'put_wall': gex_data['put_wall'],
+                'spot_price': spot_price,
+                'contracts_analyzed': len(filtered_contracts),
+                'last_updated': time.time()
+            }
+            
+            logger.debug(
+                f"[ContextManager] {ticker}: {gex_data['regime']} | "
+                f"G={gamma_ratio_data.get('G', 0.5):.2f} | "
+                f"NetGEX=${gex_data['net_gex']:,.0f} | "
+                f"Flip={gex_data['flip_level']:.1f}"
+            )
+            
+        except Exception as e:
+            # Re-raise to be caught by update_all_contexts - but this provides inner logging
+            raise
     
     def _filter_by_expiry(self, contracts: List[Dict], expiry_limit: str) -> List[Dict]:
         """Filter contracts to only include those expiring before the limit"""

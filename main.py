@@ -180,12 +180,29 @@ class ORAKLRunner:
                 break
                 
             except Exception as e:
+                error_str = str(e)
                 logger.error(f"Bot encountered error: {e}", exc_info=True)
                 restart_count += 1
                 
-                # Always restart for 24/7 operation
-                wait_time = min(restart_count * 5, 30)  # Max 30 second wait
-                logger.warning(f"Restarting in {wait_time} seconds... (attempt {restart_count})")
+                # CRITICAL: Detect Discord rate limiting and wait MUCH longer
+                is_rate_limited = (
+                    '429' in error_str or 
+                    'rate limit' in error_str.lower() or
+                    'cloudflare' in error_str.lower() or
+                    'being rate limited' in error_str.lower() or
+                    'Error 1015' in error_str
+                )
+                
+                if is_rate_limited:
+                    # Discord rate limit detected - wait 2-5 minutes to let it clear
+                    wait_time = min(120 + (restart_count * 30), 300)  # 2-5 minute wait
+                    logger.warning(f"⚠️ DISCORD RATE LIMIT DETECTED - Waiting {wait_time}s before retry (attempt {restart_count})")
+                    logger.warning("⚠️ If this persists, the Render IP may be temporarily banned by Discord/Cloudflare")
+                else:
+                    # Normal error - standard backoff
+                    wait_time = min(restart_count * 5, 30)  # Max 30 second wait
+                    logger.warning(f"Restarting in {wait_time} seconds... (attempt {restart_count})")
+                
                 await asyncio.sleep(wait_time)
                 
                 # Reset restart count if we've been running for a while
