@@ -28,6 +28,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.utils.cache import cache_manager
 from src.utils.monitoring import metrics
+from src.core import HedgeHunter, ContextManager
 
 # Setup logging
 log_dir = Path(__file__).parent / "logs"
@@ -49,6 +50,7 @@ class ORAKLRunner:
         self.bot = None
         self.bot_manager = None
         self.running = True
+        self.send_test_alert_flag = False
         
     def check_already_running(self):
         """Check if another instance is already running"""
@@ -104,11 +106,23 @@ class ORAKLRunner:
                 await fetcher._init_session()
                 
                 analyzer = OptionsAnalyzer()
+                
+                # Initialize ORAKL v3.0 "Brain" modules (State-Aware Engine)
+                hedge_hunter = HedgeHunter(fetcher) if Config.HEDGE_CHECK_ENABLED else None
+                context_manager = ContextManager(fetcher)
+                
+                # Start Context Manager background loop (GEX Engine)
+                gex_task = asyncio.create_task(context_manager.run_loop())
+                logger.info("✓ GEX Engine started (updates every %ds)", Config.GEX_UPDATE_INTERVAL)
+                if hedge_hunter:
+                    logger.info("✓ Hedge Hunter enabled (checks trades > $%dk)", Config.HEDGE_CHECK_MIN_PREMIUM // 1000)
 
                 self.bot_manager = BotManager(
                     webhook_url=Config.DISCORD_WEBHOOK_URL,
                     fetcher=fetcher,
-                    analyzer=analyzer
+                    analyzer=analyzer,
+                    hedge_hunter=hedge_hunter,
+                    context_manager=context_manager
                 )
 
                 # Log memory before starting bots
@@ -145,6 +159,14 @@ class ORAKLRunner:
                     logger.info("Starting Discord bot...")
                     self.bot = ORAKLBot()
                     await self.bot.start(Config.DISCORD_BOT_TOKEN)
+                    
+                    if self.send_test_alert_flag:
+                        logger.info("Sending test alert and shutting down...")
+                        await self.bot.send_test_alert()
+                        await self.bot.close()
+                        self.running = False
+                        break # Exit the while loop after sending test alert
+                    
                 else:
                     logger.warning("Discord bot token not set, running in webhook-only mode")
                     logger.info("Bot will continue running and posting signals to webhook...")
@@ -317,6 +339,11 @@ class ORAKLRunner:
         else:
             logger.info("Running as Background Worker - no health server needed")
         
+        # Parse command line arguments
+        if "--test-alert" in sys.argv:
+            self.send_test_alert_flag = True
+            logger.info("Test alert flag detected. Bot will send a test alert and then shut down.")
+
         # Run the bot
         await self.run_bot()
         
@@ -330,3 +357,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
         sys.exit(1)
+

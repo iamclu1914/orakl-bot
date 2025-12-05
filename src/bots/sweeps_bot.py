@@ -25,10 +25,26 @@ class SweepsBot(BaseAutoBot):
     Sweeps Bot
     High premium large options sweeps showing conviction buyers
     Tracks aggressive market orders that sweep the order book
+    
+    ORAKL v3.0: Now includes Brain validation (HedgeHunter + ContextManager)
     """
 
-    def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
-        super().__init__(webhook_url, "Sweeps Bot", scan_interval=Config.SWEEPS_INTERVAL)
+    def __init__(
+        self, 
+        webhook_url: str, 
+        watchlist: List[str], 
+        fetcher: DataFetcher, 
+        analyzer: OptionsAnalyzer,
+        hedge_hunter: Optional[object] = None,
+        context_manager: Optional[object] = None
+    ):
+        super().__init__(
+            webhook_url, 
+            "Sweeps Bot", 
+            scan_interval=Config.SWEEPS_INTERVAL,
+            hedge_hunter=hedge_hunter,
+            context_manager=context_manager
+        )
         self.watchlist = watchlist
         self.fetcher = fetcher
         self.analyzer = analyzer
@@ -485,6 +501,21 @@ class SweepsBot(BaseAutoBot):
         color = 0x00FF00 if sweep['type'] == 'CALL' else 0xFF0000
         emoji = "🔥" if sweep['type'] == 'CALL' else "🔥"
         
+        # ORAKL v3.0 Brain Validation - Get market context (skip hedge check for sweeps - too expensive)
+        brain_metadata = {}
+        if self.context_manager:
+            try:
+                context = self.context_manager.get_context(sweep['symbol'])
+                brain_metadata = {
+                    "regime": context.get('regime', 'NEUTRAL'),
+                    "net_gex": context.get('net_gex', 0),
+                    "flip_level": context.get('flip_level', 0),
+                    "G": context.get('G', 0.5),
+                    "brain_validated": True
+                }
+            except Exception as e:
+                logger.debug(f"[{self.name}] ContextManager check failed for {sweep['symbol']}: {e}")
+        
         # Check if golden fallback alert
         is_golden_fallback = sweep.get('_golden_fallback', False)
         if is_golden_fallback:
@@ -575,6 +606,18 @@ class SweepsBot(BaseAutoBot):
         # Add volume ratio if available
         if sweep.get('volume_ratio'):
             fields.append({"name": "Vol Ratio", "value": f"{sweep['volume_ratio']:.2f}x", "inline": True})
+        
+        # ORAKL v3.0 Brain - GEX Regime Context
+        if brain_metadata.get("brain_validated"):
+            gex_regime = brain_metadata.get("regime", "NEUTRAL")
+            if gex_regime != "NEUTRAL":
+                gex_emojis = {"POSITIVE_GAMMA": "🟢", "NEGATIVE_GAMMA": "🔴"}
+                gex_emoji = gex_emojis.get(gex_regime, "⚪")
+                gex_text = f"{gex_emoji} {gex_regime.replace('_', ' ').title()}"
+                flip = brain_metadata.get("flip_level", 0)
+                if flip > 0:
+                    gex_text += f" | Flip: ${flip:.0f}"
+                fields.append({"name": "GEX", "value": gex_text, "inline": True})
         
         footer_text = "Golden Sweep Fallback" if is_golden_fallback else "Sweeps Bot"
         embed = self.create_signal_embed_with_disclaimer(

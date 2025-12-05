@@ -30,10 +30,25 @@ class BullseyeBot(BaseAutoBot):
     - $1M+ premium blocks
     - 400+ contract prints (single leg, ask-side)
     - Fresh positioning (Vol/OI ≥ 1.0)
+    
+    ORAKL v3.0: Now includes Brain validation (HedgeHunter + ContextManager)
     """
 
-    def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher):
-        super().__init__(webhook_url, "Bullseye Bot", scan_interval=Config.BULLSEYE_INTERVAL)
+    def __init__(
+        self, 
+        webhook_url: str, 
+        watchlist: List[str], 
+        fetcher: DataFetcher,
+        hedge_hunter: Optional[Any] = None,
+        context_manager: Optional[Any] = None
+    ):
+        super().__init__(
+            webhook_url, 
+            "Bullseye Bot", 
+            scan_interval=Config.BULLSEYE_INTERVAL,
+            hedge_hunter=hedge_hunter,
+            context_manager=context_manager
+        )
         self.watchlist = watchlist
         self.fetcher = fetcher
         
@@ -974,6 +989,32 @@ class BullseyeBot(BaseAutoBot):
         flow: Dict[str, Any] = payload["flow"]
         contract_price: float = payload["contract_price"]
         score: int = payload["score"]
+        
+        # ORAKL v3.0 Brain Validation - Check if signal is hedged or against market regime
+        brain_metadata = {}
+        if self.hedge_hunter or self.context_manager:
+            sentiment = "bullish" if metrics.option_type.upper() == "CALL" else "bearish"
+            sip_timestamp = flow.get("sip_timestamp")  # nanoseconds if available
+            
+            is_valid, brain_metadata = await self.validate_signal(
+                symbol=metrics.underlying,
+                premium=metrics.premium,
+                option_size=int(flow.get("volume_delta") or flow.get("total_volume") or 0),
+                sentiment=sentiment,
+                sip_timestamp=sip_timestamp
+            )
+            
+            if not is_valid:
+                logger.info(
+                    "🚫 %s filtered %s %s %s premium $%s - %s",
+                    self.name,
+                    metrics.underlying,
+                    metrics.strike,
+                    metrics.option_type,
+                    f"{metrics.premium:,.0f}",
+                    brain_metadata.get("hedge_reason", "Brain validation failed")
+                )
+                return False
 
         embed = self._build_embed(
             metrics,
@@ -983,6 +1024,7 @@ class BullseyeBot(BaseAutoBot):
             payload.get("spread_pct"),
             payload.get("trend_data"),
             payload.get("market_context"),
+            brain_metadata,
         )
         success = await self.post_to_discord(embed)
 
@@ -1010,6 +1052,7 @@ class BullseyeBot(BaseAutoBot):
         spread_pct: Optional[float],
         trend_data: Optional[Dict[str, Dict[str, Any]]] = None,
         market_context: Optional[Dict[str, Any]] = None,
+        brain_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         dte_days = int(round(metrics.dte))
         expiration_fmt = (
@@ -1162,6 +1205,41 @@ class BullseyeBot(BaseAutoBot):
                 context_value += f"\nConviction: {mult:.0%}"
             
             fields.append({"name": "Market Context", "value": context_value, "inline": True})
+
+        # ORAKL v3.0 Brain Validation Status
+        if brain_metadata and brain_metadata.get("brain_validated"):
+            hedge_status = brain_metadata.get("hedge_status", "SKIPPED")
+            gex_regime = brain_metadata.get("regime", "NEUTRAL")
+            net_gex = brain_metadata.get("net_gex", 0)
+            flip_level = brain_metadata.get("flip_level", 0)
+            
+            # Format GEX regime with emoji
+            gex_emojis = {
+                "POSITIVE_GAMMA": "🟢",  # Stabilizing market
+                "NEGATIVE_GAMMA": "🔴",  # Volatile market
+                "NEUTRAL": "⚪"
+            }
+            gex_emoji = gex_emojis.get(gex_regime, "⚪")
+            
+            # Hedge status
+            if "VERIFIED" in hedge_status:
+                inventory_text = "✅ Verified Unhedged"
+            elif hedge_status == "SKIPPED":
+                inventory_text = "⏭️ Not Checked"
+            else:
+                inventory_text = f"⚠️ {hedge_status}"
+            
+            fields.append({"name": "Inventory Check", "value": inventory_text, "inline": True})
+            
+            # GEX Context
+            if gex_regime != "NEUTRAL" and flip_level > 0:
+                gex_value = f"{gex_emoji} {gex_regime.replace('_', ' ').title()}"
+                if net_gex != 0:
+                    gex_fmt = f"${abs(net_gex)/1e9:.1f}B" if abs(net_gex) >= 1e9 else f"${abs(net_gex)/1e6:.0f}M"
+                    gex_value += f"\nNet GEX: {'+' if net_gex > 0 else '-'}{gex_fmt}"
+                if flip_level > 0:
+                    gex_value += f"\nFlip: ${flip_level:.0f}"
+                fields.append({"name": "GEX Regime", "value": gex_value, "inline": True})
 
         if execution_type == "BLOCK":
             fields.append(

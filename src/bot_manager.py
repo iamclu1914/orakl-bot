@@ -1,7 +1,7 @@
 """Bot Manager - Orchestrates all auto-posting bots"""
 import asyncio
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
@@ -13,7 +13,14 @@ logger = logging.getLogger(__name__)
 class BotManager:
     """Manages all auto-posting bots with dynamic watchlist"""
 
-    def __init__(self, webhook_url: str, fetcher: DataFetcher, analyzer: OptionsAnalyzer):
+    def __init__(
+        self, 
+        webhook_url: str, 
+        fetcher: DataFetcher, 
+        analyzer: OptionsAnalyzer,
+        hedge_hunter: Optional[object] = None,
+        context_manager: Optional[object] = None
+    ):
         """
         Initialize Bot Manager
 
@@ -21,10 +28,14 @@ class BotManager:
             webhook_url: Discord webhook URL
             fetcher: Data fetcher instance
             analyzer: Options analyzer instance
+            hedge_hunter: Optional HedgeHunter instance for synthetic trade detection
+            context_manager: Optional ContextManager instance for GEX regime tracking
         """
         self.webhook_url = webhook_url
         self.fetcher = fetcher
         self.analyzer = analyzer
+        self.hedge_hunter = hedge_hunter
+        self.context_manager = context_manager
         self.bots = []
         self.running = False
 
@@ -50,11 +61,14 @@ class BotManager:
             Config.BULLSEYE_WEBHOOK,
             bullseye_watchlist,
             self.fetcher,
+            hedge_hunter=self.hedge_hunter,
+            context_manager=self.context_manager,
         )
         self.bots.append(self.bullseye_bot)
         self.bot_overrides[self.bullseye_bot] = bullseye_watchlist
+        brain_status = "🧠" if (self.hedge_hunter or self.context_manager) else ""
         logger.info(
-            f"  ✓ Bullseye Bot (Institutional) → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}"
+            f"  ✓ Bullseye Bot (Institutional) {brain_status} → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}"
             f" | Watchlist: {len(bullseye_watchlist)} tickers"
         )
 
@@ -64,12 +78,14 @@ class BotManager:
             Config.SWEEPS_WEBHOOK,
             sweeps_watchlist,
             self.fetcher,
-            self.analyzer
+            self.analyzer,
+            hedge_hunter=self.hedge_hunter,
+            context_manager=self.context_manager,
         )
         self.bots.append(self.sweeps_bot)
         self.bot_overrides[self.sweeps_bot] = sweeps_watchlist
         logger.info(
-            f"  ✓ Sweeps Bot → Channel ID: {Config.SWEEPS_WEBHOOK.split('/')[-2]}"
+            f"  ✓ Sweeps Bot {brain_status} → Channel ID: {Config.SWEEPS_WEBHOOK.split('/')[-2]}"
             f" | Watchlist: {len(sweeps_watchlist)} tickers"
         )
 
@@ -79,12 +95,14 @@ class BotManager:
             Config.GOLDEN_SWEEPS_WEBHOOK,
             golden_watchlist,
             self.fetcher,
-            self.analyzer
+            self.analyzer,
+            hedge_hunter=self.hedge_hunter,
+            context_manager=self.context_manager,
         )
         self.bots.append(self.golden_sweeps_bot)
         self.bot_overrides[self.golden_sweeps_bot] = golden_watchlist
         logger.info(
-            f"  ✓ Golden Sweeps Bot → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}"
+            f"  ✓ Golden Sweeps Bot {brain_status} → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}"
             f" | Watchlist: {len(golden_watchlist)} tickers (same as all bots)"
         )
 

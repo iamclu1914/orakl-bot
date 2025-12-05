@@ -535,6 +535,57 @@ class DataFetcher:
             logger.error(f"Error fetching stock trades range for {symbol}: {e}")
             return []
 
+    async def get_stock_trades_nanos(
+        self, 
+        ticker: str, 
+        timestamp_ns: int, 
+        window_ns: int = 50_000_000
+    ) -> List[Dict]:
+        """
+        Fetch stock trades with nanosecond precision for Hedge Detection.
+        
+        This is the "Crime Scene" investigation - checking if stock was traded
+        against an options block within a tight time window.
+        
+        Args:
+            ticker: Stock symbol (e.g., 'AAPL')
+            timestamp_ns: Center timestamp in nanoseconds
+            window_ns: Window size in nanoseconds (default: 50ms = 50,000,000 ns)
+        
+        Returns:
+            List of trade dicts from Polygon v3/trades endpoint
+        
+        Example:
+            trades = await fetcher.get_stock_trades_nanos('AAPL', 1701234567890123456)
+            # Returns trades from 50ms before to 50ms after the timestamp
+        """
+        try:
+            # Translate ticker if needed
+            ticker = translate_ticker(ticker)
+            
+            # Calculate window boundaries
+            ts_start = timestamp_ns - window_ns
+            ts_end = timestamp_ns + window_ns
+            
+            endpoint = f"/v3/trades/{ticker}"
+            params = {
+                'timestamp.gte': ts_start,
+                'timestamp.lte': ts_end,
+                'limit': 500,  # We only need to see if there's VOLUME, not every print
+                'sort': 'timestamp',
+                'order': 'asc'
+            }
+            
+            data = await self._make_request(endpoint, params)
+            
+            if data and 'results' in data:
+                return data['results']
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error fetching nano-trades for {ticker}: {e}")
+            return []
+
     async def get_options_trades(self, symbol: str, date: Optional[str] = None) -> pd.DataFrame:
         """Get options trades for a symbol with concurrent fetching"""
         try:

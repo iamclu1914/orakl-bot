@@ -6,7 +6,7 @@ Uses base class batching for efficient concurrent API calls.
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .sweeps_bot import SweepsBot
 from src.data_fetcher import DataFetcher
@@ -23,10 +23,20 @@ class GoldenSweepsBot(SweepsBot):
     Golden Sweeps Bot
     Tracks unusually large sweeps with premiums worth over 1 million dollars
     These represent massive conviction trades
+    
+    ORAKL v3.0: Now includes Brain validation (HedgeHunter + ContextManager)
     """
 
-    def __init__(self, webhook_url: str, watchlist: List[str], fetcher: DataFetcher, analyzer: OptionsAnalyzer):
-        super().__init__(webhook_url, watchlist, fetcher, analyzer)
+    def __init__(
+        self, 
+        webhook_url: str, 
+        watchlist: List[str], 
+        fetcher: DataFetcher, 
+        analyzer: OptionsAnalyzer,
+        hedge_hunter: Optional[object] = None,
+        context_manager: Optional[object] = None
+    ):
+        super().__init__(webhook_url, watchlist, fetcher, analyzer, hedge_hunter, context_manager)
         self.name = "Golden Sweeps Bot"
         self.scan_interval = Config.GOLDEN_SWEEPS_INTERVAL
         self.MIN_SWEEP_PREMIUM = max(Config.GOLDEN_MIN_PREMIUM, 1_000_000)

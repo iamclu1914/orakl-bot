@@ -315,6 +315,25 @@ class Config:
     HEALTH_CHECK_INTERVAL = int(os.getenv('HEALTH_CHECK_INTERVAL', '60'))  # 1 minute
     HEALTH_CHECK_TIMEOUT = int(os.getenv('HEALTH_CHECK_TIMEOUT', '10'))
     
+    # =============================================================================
+    # ORAKL v3.0 "Brain" Settings - State-Aware Market Engine
+    # =============================================================================
+    
+    # GEX (Gamma Exposure) Engine Settings
+    GEX_UNIVERSE = os.getenv(
+        'GEX_UNIVERSE',
+        'SPY,QQQ,IWM,AAPL,NVDA,TSLA,MSFT,AMZN,META,GOOGL'
+    ).split(',')
+    GEX_UPDATE_INTERVAL = int(os.getenv('GEX_UPDATE_INTERVAL', '300'))  # 5 minutes
+    GEX_MAX_DTE_DAYS = int(os.getenv('GEX_MAX_DTE_DAYS', '30'))  # Only include < 30 DTE
+    
+    # Hedge Hunter Settings
+    HEDGE_CHECK_ENABLED = os.getenv('HEDGE_CHECK_ENABLED', 'true').lower() == 'true'
+    HEDGE_CHECK_MIN_PREMIUM = float(os.getenv('HEDGE_CHECK_MIN_PREMIUM', '500000'))  # Only check trades > $500k
+    HEDGE_WINDOW_NS = int(os.getenv('HEDGE_WINDOW_NS', '50000000'))  # +/- 50ms in nanoseconds
+    HEDGE_THRESHOLD_PCT = float(os.getenv('HEDGE_THRESHOLD_PCT', '0.40'))  # 40% of delta-equivalent shares
+    HEDGE_DELTA_ESTIMATE = float(os.getenv('HEDGE_DELTA_ESTIMATE', '0.50'))  # 50 delta baseline
+    
     @classmethod
     def validate(cls):
         """Validate required configuration with comprehensive checks"""

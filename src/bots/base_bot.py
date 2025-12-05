@@ -40,7 +40,14 @@ class BotMetrics:
 class BaseAutoBot(ABC):
     """Base class for all auto-posting bots with enhanced monitoring"""
 
-    def __init__(self, webhook_url: str, name: str, scan_interval: int = 300):
+    def __init__(
+        self, 
+        webhook_url: str, 
+        name: str, 
+        scan_interval: int = 300,
+        hedge_hunter: Optional[Any] = None,
+        context_manager: Optional[Any] = None
+    ):
         """
         Initialize base bot
 
@@ -48,6 +55,8 @@ class BaseAutoBot(ABC):
             webhook_url: Discord webhook URL
             name: Bot name
             scan_interval: Scan interval in seconds (default: 5 minutes)
+            hedge_hunter: Optional HedgeHunter instance for synthetic trade detection
+            context_manager: Optional ContextManager instance for GEX regime tracking
         """
         self.webhook_url = webhook_url
         self.name = name
@@ -68,6 +77,11 @@ class BaseAutoBot(ABC):
         self._state_db: Optional[sqlite3.Connection] = None
         self._state_db_path: Optional[Path] = None
         self._low_performers: set[str] = set()
+        
+        # ORAKL v3.0 Brain modules
+        self.hedge_hunter = hedge_hunter
+        self.context_manager = context_manager
+        
         self._init_state_store()
 
     def _init_state_store(self) -> None:
@@ -321,6 +335,100 @@ class BaseAutoBot(ABC):
                 f"(win rate {win_rate:.1%} over {total} signals)"
             )
             self._low_performers.add(symbol)
+
+    # =========================================================================
+    # ORAKL v3.0 Brain Validation Methods
+    # =========================================================================
+    
+    async def validate_signal(
+        self,
+        symbol: str,
+        premium: float,
+        option_size: int,
+        sentiment: str,
+        sip_timestamp: Optional[int] = None
+    ) -> tuple[bool, Dict[str, Any]]:
+        """
+        Run the 'Brain' checks on a potential signal before alerting.
+        
+        This validates signals through:
+        1. HedgeHunter - Checks if the trade is hedged with opposing stock
+        2. ContextManager - Gets market regime (Gamma Exposure) context
+        
+        Args:
+            symbol: Ticker symbol (e.g., 'AAPL')
+            premium: Total premium of the trade in dollars
+            option_size: Number of contracts
+            sentiment: 'bullish' or 'bearish' - apparent direction
+            sip_timestamp: Optional SIP timestamp in nanoseconds (for hedge check)
+        
+        Returns:
+            Tuple of (is_valid, metadata_dict)
+            - is_valid: True if signal should be alerted, False if filtered
+            - metadata: Dict with 'hedge_status', 'market_context', etc.
+        """
+        metadata = {
+            "hedge_status": "SKIPPED",
+            "hedge_reason": "",
+            "market_context": {},
+            "regime": "NEUTRAL",
+            "flip_level": 0,
+            "net_gex": 0,
+            "G": 0.5,
+            "brain_validated": False
+        }
+        
+        # 1. Hedge Check (Only for Whale Trades with timestamp)
+        min_premium = getattr(Config, 'HEDGE_CHECK_MIN_PREMIUM', 500000)
+        if self.hedge_hunter and premium >= min_premium and sip_timestamp:
+            try:
+                is_hedged, reason = await self.hedge_hunter.check_hedge(
+                    symbol=symbol,
+                    option_ts_nanos=sip_timestamp,
+                    option_size=option_size,
+                    sentiment=sentiment,
+                    premium=premium
+                )
+                
+                if is_hedged:
+                    logger.info(f"🚫 {self.name} Filtered Synthetic {symbol}: {reason}")
+                    metadata["hedge_status"] = "HEDGED"
+                    metadata["hedge_reason"] = reason
+                    return False, metadata
+                
+                metadata["hedge_status"] = "✅ VERIFIED UNHEDGED"
+                metadata["hedge_reason"] = reason
+                metadata["brain_validated"] = True
+                
+            except Exception as e:
+                logger.warning(f"[{self.name}] HedgeHunter check failed for {symbol}: {e}")
+                metadata["hedge_status"] = "CHECK_FAILED"
+                metadata["hedge_reason"] = str(e)
+        
+        # 2. Context Check (Get market regime)
+        if self.context_manager:
+            try:
+                context = self.context_manager.get_context(symbol)
+                metadata["market_context"] = context
+                metadata["regime"] = context.get('regime', 'NEUTRAL')
+                metadata["flip_level"] = context.get('flip_level', 0)
+                metadata["net_gex"] = context.get('net_gex', 0)
+                metadata["G"] = context.get('G', 0.5)
+                metadata["call_wall"] = context.get('call_wall', 0)
+                metadata["put_wall"] = context.get('put_wall', 0)
+                metadata["brain_validated"] = True
+            except Exception as e:
+                logger.warning(f"[{self.name}] ContextManager check failed for {symbol}: {e}")
+        
+        return True, metadata
+    
+    def get_brain_status(self) -> Dict[str, Any]:
+        """Get status of Brain modules for this bot"""
+        return {
+            "hedge_hunter_enabled": self.hedge_hunter is not None,
+            "context_manager_enabled": self.context_manager is not None,
+            "hedge_check_min_premium": getattr(Config, 'HEDGE_CHECK_MIN_PREMIUM', 500000)
+        }
 
     async def start(self):
         """Start the bot with enhanced error handling and monitoring"""
