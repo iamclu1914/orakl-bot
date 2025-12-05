@@ -6,6 +6,8 @@ from .golden_sweeps_bot import GoldenSweepsBot
 from .spread_bot import SpreadBot
 from .gamma_ratio_bot import GammaRatioBot
 from .rolling_thunder_bot import RollingThunderBot
+from .walls_bot import WallsBot
+from .lotto_bot import LottoBot
 
 __all__ = [
     'BaseAutoBot',
@@ -14,5 +16,7 @@ __all__ = [
     'GoldenSweepsBot',
     'SpreadBot',
     'GammaRatioBot',
-    'RollingThunderBot'
+    'RollingThunderBot',
+    'WallsBot',
+    'LottoBot'
 ]

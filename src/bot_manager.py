@@ -6,7 +6,7 @@ from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
 from src.watchlist_manager import SmartWatchlistManager
-from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, SpreadBot, GammaRatioBot, RollingThunderBot
+from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, SpreadBot, GammaRatioBot, RollingThunderBot, WallsBot, LottoBot
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +153,36 @@ class BotManager:
         self.bot_overrides[self.rolling_thunder_bot] = rolling_watchlist
         logger.info(
             f"  ✓ Rolling Thunder Bot 🔄 → Whale roll detector | Watchlist: {len(rolling_watchlist)} tickers"
+        )
+
+        # Walls Bot (Support/Resistance detector)
+        walls_watchlist = list(Config.GEX_UNIVERSE)  # Use top liquid names for walls
+        self.walls_bot = WallsBot(
+            Config.WALLS_BOT_WEBHOOK,
+            walls_watchlist,
+            self.fetcher,
+            hedge_hunter=self.hedge_hunter,
+            context_manager=self.context_manager,
+        )
+        self.bots.append(self.walls_bot)
+        self.bot_overrides[self.walls_bot] = walls_watchlist
+        logger.info(
+            f"  ✓ Walls Bot 🧱 → Support/Resistance detector | Watchlist: {len(walls_watchlist)} tickers"
+        )
+
+        # Lotto Bot (Unusual OTM flow hunter)
+        lotto_watchlist = list(unified_watchlist)
+        self.lotto_bot = LottoBot(
+            Config.LOTTO_BOT_WEBHOOK,
+            lotto_watchlist,
+            self.fetcher,
+            hedge_hunter=self.hedge_hunter,
+            context_manager=self.context_manager,
+        )
+        self.bots.append(self.lotto_bot)
+        self.bot_overrides[self.lotto_bot] = lotto_watchlist
+        logger.info(
+            f"  ✓ Lotto Bot 🎰 → Unusual OTM flow hunter | Watchlist: {len(lotto_watchlist)} tickers"
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")

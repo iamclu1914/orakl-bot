@@ -349,6 +349,29 @@ class Config:
     ROLL_FAR_DTE = int(os.getenv('ROLL_FAR_DTE', '21'))  # "Opening" leg min DTE
     ROLL_COOLDOWN_SECONDS = int(os.getenv('ROLL_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown
     
+    # =============================================================================
+    # Walls Bot Settings - Support/Resistance Detection
+    # =============================================================================
+    WALLS_BOT_WEBHOOK = os.getenv('WALLS_BOT_WEBHOOK', DISCORD_WEBHOOK_URL)  # Add your webhook
+    WALLS_BOT_INTERVAL = int(os.getenv('WALLS_BOT_INTERVAL', '300'))  # 5 minutes
+    WALLS_MIN_OI = int(os.getenv('WALLS_MIN_OI', '5000'))  # Min OI to qualify as wall
+    WALLS_PROXIMITY_PCT = float(os.getenv('WALLS_PROXIMITY_PCT', '0.005'))  # 0.5% from wall
+    WALLS_MAX_DTE_DAYS = int(os.getenv('WALLS_MAX_DTE_DAYS', '30'))  # Only near-term walls
+    WALLS_COOLDOWN_SECONDS = int(os.getenv('WALLS_COOLDOWN_SECONDS', '3600'))  # 1 hour per level
+    
+    # =============================================================================
+    # Lotto Bot Settings - Unusual OTM Flow Detection
+    # =============================================================================
+    LOTTO_BOT_WEBHOOK = os.getenv('LOTTO_BOT_WEBHOOK', DISCORD_WEBHOOK_URL)  # Add your webhook
+    LOTTO_BOT_INTERVAL = int(os.getenv('LOTTO_BOT_INTERVAL', '300'))  # 5 minutes
+    LOTTO_MAX_PRICE = float(os.getenv('LOTTO_MAX_PRICE', '0.15'))  # Max $0.15 per contract
+    LOTTO_MIN_VOL_OI_RATIO = float(os.getenv('LOTTO_MIN_VOL_OI_RATIO', '50.0'))  # 50x volume/OI
+    LOTTO_MIN_OTM_PCT = float(os.getenv('LOTTO_MIN_OTM_PCT', '0.10'))  # 10% OTM minimum
+    LOTTO_MIN_VOLUME = int(os.getenv('LOTTO_MIN_VOLUME', '500'))  # Min 500 contracts
+    LOTTO_MIN_PREMIUM = float(os.getenv('LOTTO_MIN_PREMIUM', '10000'))  # Min $10K total
+    LOTTO_COOLDOWN_SECONDS = int(os.getenv('LOTTO_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown
+    LOTTO_MAX_ALERTS_PER_SCAN = int(os.getenv('LOTTO_MAX_ALERTS_PER_SCAN', '3'))  # Max 3 per scan
+    
     @classmethod
     def validate(cls):
         """Validate required configuration with comprehensive checks"""
