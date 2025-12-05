@@ -122,8 +122,9 @@ class WallsBot(BaseAutoBot):
         Returns:
             Number of alerts sent
         """
-        # Get options chain snapshot
-        contracts = await self.fetcher.get_options_snapshot(symbol)
+        # Get options chain snapshot (1 API call - efficient)
+        # IMPORTANT: Use get_option_chain_snapshot NOT get_options_snapshot (52+ calls)
+        contracts = await self.fetcher.get_option_chain_snapshot(symbol)
         if not contracts:
             return 0
         

@@ -146,7 +146,8 @@ class ContextManager:
         """Update GEX context for a single ticker - with defensive error handling"""
         try:
             # 1. Get Option Chain Snapshot (may raise on 404/timeout)
-            snapshot = await self.fetcher.get_options_snapshot(ticker)
+            # IMPORTANT: Use get_option_chain_snapshot (1 API call) NOT get_options_snapshot (52+ calls)
+            snapshot = await self.fetcher.get_option_chain_snapshot(ticker)
             
             if not snapshot:
                 logger.debug(f"[ContextManager] No options data for {ticker}")

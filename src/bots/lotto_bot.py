@@ -148,7 +148,8 @@ class LottoBot(BaseAutoBot):
         Returns:
             List of LottoCandidate objects
         """
-        contracts = await self.fetcher.get_options_snapshot(symbol)
+        # IMPORTANT: Use get_option_chain_snapshot (1 API call) NOT get_options_snapshot (52+ calls)
+        contracts = await self.fetcher.get_option_chain_snapshot(symbol)
         if not contracts:
             return []
         
