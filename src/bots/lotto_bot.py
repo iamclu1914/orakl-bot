@@ -149,7 +149,14 @@ class LottoBot(BaseAutoBot):
             List of LottoCandidate objects
         """
         # IMPORTANT: Use get_option_chain_snapshot (1 API call) NOT get_options_snapshot (52+ calls)
-        contracts = await self.fetcher.get_option_chain_snapshot(symbol)
+        # Limit contracts and expiry to keep scan fast
+        from datetime import datetime, timedelta
+        expiry_cutoff = (datetime.now() + timedelta(days=45)).strftime('%Y-%m-%d')
+        contracts = await self.fetcher.get_option_chain_snapshot(
+            symbol,
+            max_contracts=getattr(Config, "LOTTO_MAX_CONTRACTS", 400),
+            expiration_date_lte=expiry_cutoff,
+        )
         if not contracts:
             return []
         

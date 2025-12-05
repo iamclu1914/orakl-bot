@@ -146,9 +146,14 @@ class RollingThunderBot(BaseAutoBot):
         Returns:
             Number of rolls detected and alerted
         """
-        # Get options chain snapshot for this symbol (1 API call - efficient)
-        # IMPORTANT: Use get_option_chain_snapshot NOT get_options_snapshot (52+ calls)
-        contracts = await self.fetcher.get_option_chain_snapshot(symbol)
+        # Get options chain snapshot with limits to avoid heavy pagination
+        from datetime import datetime, timedelta
+        expiry_cutoff = (datetime.now() + timedelta(days=45)).strftime('%Y-%m-%d')
+        contracts = await self.fetcher.get_option_chain_snapshot(
+            symbol,
+            max_contracts=getattr(Config, "ROLLING_MAX_CONTRACTS", 400),
+            expiration_date_lte=expiry_cutoff,
+        )
         if not contracts:
             return 0
         

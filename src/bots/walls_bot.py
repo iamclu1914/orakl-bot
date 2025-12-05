@@ -124,9 +124,14 @@ class WallsBot(BaseAutoBot):
         Returns:
             Number of alerts sent
         """
-        # Get options chain snapshot (1 API call - efficient)
-        # IMPORTANT: Use get_option_chain_snapshot NOT get_options_snapshot (52+ calls)
-        contracts = await self.fetcher.get_option_chain_snapshot(symbol)
+        # Get options chain snapshot (1 API call - efficient) with limits to avoid timeouts
+        from datetime import datetime, timedelta
+        expiry_cutoff = (datetime.now() + timedelta(days=Config.WALLS_MAX_DTE_DAYS)).strftime('%Y-%m-%d')
+        contracts = await self.fetcher.get_option_chain_snapshot(
+            symbol,
+            max_contracts=getattr(Config, "WALLS_MAX_CONTRACTS", 400),
+            expiration_date_lte=expiry_cutoff,
+        )
         if not contracts:
             return 0
         

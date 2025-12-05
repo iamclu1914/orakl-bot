@@ -123,8 +123,8 @@ class Config:
     GAMMA_RATIO_MIN_OI = int(os.getenv('GAMMA_RATIO_MIN_OI', '100'))  # Minimum OI to include
     GAMMA_RATIO_MAX_OTM_PCT = float(os.getenv('GAMMA_RATIO_MAX_OTM_PCT', '0.20'))  # Max distance from spot
     GAMMA_RATIO_MIN_TOTAL_GAMMA = float(os.getenv('GAMMA_RATIO_MIN_TOTAL_GAMMA', '5000'))  # Min gamma to filter illiquid names
-    GAMMA_RATIO_MAX_CONTRACTS = int(os.getenv('GAMMA_RATIO_MAX_CONTRACTS', '750'))  # Max contracts to fetch (3 pages)
-    GAMMA_RATIO_EXPIRY_DAYS = int(os.getenv('GAMMA_RATIO_EXPIRY_DAYS', '45'))  # Only near-term contracts
+    GAMMA_RATIO_MAX_CONTRACTS = int(os.getenv('GAMMA_RATIO_MAX_CONTRACTS', '300'))  # Max contracts to fetch
+    GAMMA_RATIO_EXPIRY_DAYS = int(os.getenv('GAMMA_RATIO_EXPIRY_DAYS', '30'))  # Only near-term contracts
     GAMMA_RATIO_EXTREME_PUT = float(os.getenv('GAMMA_RATIO_EXTREME_PUT', '0.25'))  # G < 0.25 = extreme put
     GAMMA_RATIO_PUT_DRIVEN = float(os.getenv('GAMMA_RATIO_PUT_DRIVEN', '0.35'))  # G < 0.35 = put-driven (not used anymore)
     GAMMA_RATIO_CALL_DRIVEN = float(os.getenv('GAMMA_RATIO_CALL_DRIVEN', '0.65'))  # G > 0.65 = call-driven (not used anymore)
@@ -137,7 +137,8 @@ class Config:
     MIN_BULLSEYE_SCORE = int(os.getenv('MIN_BULLSEYE_SCORE', '90'))  # 90+ for highest conviction only
     
     # Watchlist Mode - Dynamic or Static
-    WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'ALL_MARKET')  # ALL_MARKET or STATIC
+    # Default to STATIC with a small, liquid set to ensure scans finish
+    WATCHLIST_MODE = os.getenv('WATCHLIST_MODE', 'STATIC')  # ALL_MARKET or STATIC
     WATCHLIST_REFRESH_INTERVAL = int(os.getenv('WATCHLIST_REFRESH_INTERVAL', '86400'))  # 24 hours in seconds
 
     # Minimum liquidity filters for ALL_MARKET mode
@@ -146,29 +147,10 @@ class Config:
     MIN_STOCK_PRICE = float(os.getenv('MIN_STOCK_PRICE', '5.0'))  # $5 minimum (avoid penny stocks)
     MAX_STOCK_PRICE = float(os.getenv('MAX_STOCK_PRICE', '10000'))  # $10K max (filter out Berkshire)
 
-    # Unified Watchlist - OPTIMIZED FOR SCAN COMPLETION (~150 high-activity symbols)
-    # Reduced from ~400 to prevent scan timeouts while covering most options flow
+    # Small, liquid default universe to ensure scans complete quickly
     _UNIFIED_WATCHLIST = (
-        # Indices & ETFs (15)
-        'SPY,QQQ,IWM,DIA,XLF,XLE,XLK,XLV,XLY,XLC,SMH,ARKK,SOXL,GLD,TLT,'
-        # Mega-Cap Tech (20)
-        'AAPL,MSFT,NVDA,GOOGL,META,AMZN,TSLA,AMD,AVGO,ADBE,CRM,ORCL,CSCO,INTC,QCOM,'
-        'TXN,MU,AMAT,LRCX,KLAC,'
-        # High-Options-Volume Growth (30)
-        'PLTR,COIN,HOOD,SOFI,MARA,RIOT,SMCI,ARM,DELL,NET,SNOW,DDOG,CRWD,PANW,ZS,'
-        'SHOP,SQ,PYPL,ROKU,SNAP,RBLX,U,ABNB,UBER,LYFT,DKNG,PENN,DASH,DOCU,OKTA,'
-        # Meme & High-Beta (15)
-        'GME,AMC,RIVN,LCID,NIO,PLUG,CHPT,SPCE,BB,MSTR,UPST,AFRM,SOUN,BBAI,AI,'
-        # Healthcare & Biotech (15)
-        'UNH,LLY,JNJ,PFE,MRNA,BNTX,ABBV,MRK,BMY,GILD,AMGN,REGN,ISRG,VRTX,BIIB,'
-        # Financials (10)
-        'JPM,BAC,GS,MS,WFC,C,V,MA,AXP,BLK,'
-        # Energy & Materials (10)
-        'XOM,CVX,COP,SLB,OXY,FCX,NEM,AA,CLF,CCJ,'
-        # Consumer & Industrial (15)
-        'DIS,NFLX,NKE,SBUX,MCD,HD,LOW,BA,CAT,GE,DE,LMT,RTX,UPS,FDX,'
-        # Small Account Friendly Under $30 (20)
-        'F,GM,T,VZ,PARA,WBD,AAL,DAL,UAL,CCL,RCL,PINS,BABA,ENPH,TEAM,ZM,PATH,ON,MRVL,RKLB'
+        'SPY,QQQ,DIA,IWM,TSLA,AAPL,MSFT,NVDA,AMD,AVGO,GOOGL,META,AMZN,SMH,'
+        'XLF,XLE,XLK,XLV,XLY'
     )
     
     # Legacy variable for backwards compatibility
@@ -190,20 +172,17 @@ class Config:
         'INDEX_WHALE_WATCHLIST',
         'SPY,QQQ,IWM'
     ).split(',')
+    # 99c Store: keep small by default; extras empty to avoid 160+ symbols
     SPREAD_WATCHLIST = os.getenv(
         'SPREAD_WATCHLIST',
         ','.join(_UNIFIED_LIST)
     ).split(',')
     SPREAD_EXTRA_TICKERS = os.getenv(
         'SPREAD_EXTRA_TICKERS',
-        'BBBY,SNDL,TLRY,CLOV,MARA,RIOT,MSTR,SQ,BNTX,MRNA,TQQQ,SQQQ,UPRO,GLD,SLV,USO,COF,USB,PNC,MRO,DVN,FANG,'
-        'WYNN,LVS,PENN,PLTR,AMD,NVDA,TSLA,RIVN,LCID,NIO,F,GM,AMC,GME,COIN,HOOD,SOFI,UBER,LYFT,ABNB,CCL,RCL,SNAP,'
-        'ROKU,NET,DDOG,MU,ON,ARM,SMCI,SHOP,CRWD,SNOW'
+        ''
     ).split(',')
-    # Gamma Bot default: Focus on index ETFs + mega caps only (gamma calculation is heavy)
-    # Reduced from 18 to 9 to ensure scans complete within timeout
-    # Can override via GAMMA_RATIO_WATCHLIST env var
-    _GAMMA_DEFAULT = 'SPY,QQQ,IWM,DIA,TSLA,AAPL,NVDA,AMD,MSFT'
+    # Gamma Bot default: Focus on very small, liquid set to finish scans
+    _GAMMA_DEFAULT = 'SPY,QQQ,DIA,TSLA,AAPL'
     GAMMA_RATIO_WATCHLIST = os.getenv(
         'GAMMA_RATIO_WATCHLIST',
         _GAMMA_DEFAULT
@@ -254,7 +233,7 @@ class Config:
     RETRY_ATTEMPTS = int(os.getenv('RETRY_ATTEMPTS', '3'))
     RETRY_DELAY = int(os.getenv('RETRY_DELAY', '5'))
     MAX_CONSECUTIVE_ERRORS = int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
-    SYMBOL_SCAN_TIMEOUT = int(os.getenv('SYMBOL_SCAN_TIMEOUT', '45'))  # Per-symbol scan guardrail (seconds) - increased for large option chains
+    SYMBOL_SCAN_TIMEOUT = int(os.getenv('SYMBOL_SCAN_TIMEOUT', '60'))  # Per-symbol scan guardrail (seconds)
     
     # Cache Settings
     CACHE_TTL_API = int(os.getenv('CACHE_TTL_API', '60'))  # 1 minute
@@ -331,6 +310,7 @@ class Config:
     ROLL_NEAR_DTE = int(os.getenv('ROLL_NEAR_DTE', '14'))  # "Closing" leg max DTE
     ROLL_FAR_DTE = int(os.getenv('ROLL_FAR_DTE', '21'))  # "Opening" leg min DTE
     ROLL_COOLDOWN_SECONDS = int(os.getenv('ROLL_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown
+    ROLLING_MAX_CONTRACTS = int(os.getenv('ROLLING_MAX_CONTRACTS', '400'))  # Limit chain size per symbol
     
     # =============================================================================
     # Walls Bot Settings - Support/Resistance Detection
@@ -344,6 +324,7 @@ class Config:
     WALLS_PROXIMITY_PCT = float(os.getenv('WALLS_PROXIMITY_PCT', '0.005'))  # 0.5% from wall
     WALLS_MAX_DTE_DAYS = int(os.getenv('WALLS_MAX_DTE_DAYS', '30'))  # Only near-term walls
     WALLS_COOLDOWN_SECONDS = int(os.getenv('WALLS_COOLDOWN_SECONDS', '3600'))  # 1 hour per level
+    WALLS_MAX_CONTRACTS = int(os.getenv('WALLS_MAX_CONTRACTS', '400'))  # Limit chain size for walls
     
     # =============================================================================
     # Lotto Bot Settings - Unusual OTM Flow Detection
@@ -360,6 +341,7 @@ class Config:
     LOTTO_MIN_PREMIUM = float(os.getenv('LOTTO_MIN_PREMIUM', '10000'))  # Min $10K total
     LOTTO_COOLDOWN_SECONDS = int(os.getenv('LOTTO_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown
     LOTTO_MAX_ALERTS_PER_SCAN = int(os.getenv('LOTTO_MAX_ALERTS_PER_SCAN', '3'))  # Max 3 per scan
+    LOTTO_MAX_CONTRACTS = int(os.getenv('LOTTO_MAX_CONTRACTS', '400'))  # Limit chain size per symbol
     
     @classmethod
     def validate(cls):
