@@ -267,8 +267,19 @@ class GammaRatioBot(BaseAutoBot):
         Returns list of alert signals to post.
         """
         try:
-            # Get options chain snapshot
-            contracts = await self.fetcher.get_option_chain_snapshot(symbol)
+            # Get options chain snapshot - OPTIMIZED for gamma calculation:
+            # 1. Limit contracts (default 750, ~3 pages) - enough for accurate G ratio
+            # 2. Only near-term expiries (default 45 days) - where gamma impact is highest
+            from datetime import datetime, timedelta
+            max_contracts = getattr(Config, 'GAMMA_RATIO_MAX_CONTRACTS', 750)
+            expiry_days = getattr(Config, 'GAMMA_RATIO_EXPIRY_DAYS', 45)
+            expiry_cutoff = (datetime.now() + timedelta(days=expiry_days)).strftime('%Y-%m-%d')
+            
+            contracts = await self.fetcher.get_option_chain_snapshot(
+                symbol,
+                max_contracts=max_contracts,
+                expiration_date_lte=expiry_cutoff
+            )
             if not contracts:
                 logger.debug(f"{self.name} - No options data for {symbol}")
                 return []

@@ -803,7 +803,9 @@ class DataFetcher:
     async def get_option_chain_snapshot(
         self,
         underlying: str,
-        contract_type: Optional[str] = None
+        contract_type: Optional[str] = None,
+        max_contracts: Optional[int] = None,
+        expiration_date_lte: Optional[str] = None
     ) -> List[Dict]:
         """
         Get complete snapshot of all options contracts for an underlying ticker.
@@ -820,6 +822,8 @@ class DataFetcher:
         Args:
             underlying: Underlying ticker symbol (e.g., 'AAPL', 'SPY')
             contract_type: Filter by 'call' or 'put', None for both
+            max_contracts: Maximum number of contracts to fetch (stops pagination early)
+            expiration_date_lte: Only fetch contracts expiring on or before this date (YYYY-MM-DD)
 
         Returns:
             List of contract dictionaries with complete market data
@@ -848,6 +852,10 @@ class DataFetcher:
             if contract_type:
                 # Filter by contract type if specified
                 params['contract_type'] = contract_type.lower()
+            
+            # Add expiration filter if specified (reduces API response size)
+            if expiration_date_lte:
+                params['expiration_date.lte'] = expiration_date_lte
 
             all_results = []
             while True:
@@ -858,6 +866,12 @@ class DataFetcher:
                     
                 if 'results' in data:
                     all_results.extend(data['results'])
+                
+                # Early exit if we have enough contracts
+                if max_contracts and len(all_results) >= max_contracts:
+                    logger.debug(f"{underlying}: Hit max_contracts limit ({max_contracts}), stopping pagination")
+                    all_results = all_results[:max_contracts]
+                    break
                     
                 # Check for next page
                 next_url = data.get('next_url')

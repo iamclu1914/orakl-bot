@@ -123,6 +123,8 @@ class Config:
     GAMMA_RATIO_MIN_OI = int(os.getenv('GAMMA_RATIO_MIN_OI', '100'))  # Minimum OI to include
     GAMMA_RATIO_MAX_OTM_PCT = float(os.getenv('GAMMA_RATIO_MAX_OTM_PCT', '0.20'))  # Max distance from spot
     GAMMA_RATIO_MIN_TOTAL_GAMMA = float(os.getenv('GAMMA_RATIO_MIN_TOTAL_GAMMA', '5000'))  # Min gamma to filter illiquid names
+    GAMMA_RATIO_MAX_CONTRACTS = int(os.getenv('GAMMA_RATIO_MAX_CONTRACTS', '750'))  # Max contracts to fetch (3 pages)
+    GAMMA_RATIO_EXPIRY_DAYS = int(os.getenv('GAMMA_RATIO_EXPIRY_DAYS', '45'))  # Only near-term contracts
     GAMMA_RATIO_EXTREME_PUT = float(os.getenv('GAMMA_RATIO_EXTREME_PUT', '0.25'))  # G < 0.25 = extreme put
     GAMMA_RATIO_PUT_DRIVEN = float(os.getenv('GAMMA_RATIO_PUT_DRIVEN', '0.35'))  # G < 0.35 = put-driven (not used anymore)
     GAMMA_RATIO_CALL_DRIVEN = float(os.getenv('GAMMA_RATIO_CALL_DRIVEN', '0.65'))  # G > 0.65 = call-driven (not used anymore)
@@ -198,9 +200,10 @@ class Config:
         'WYNN,LVS,PENN,PLTR,AMD,NVDA,TSLA,RIVN,LCID,NIO,F,GM,AMC,GME,COIN,HOOD,SOFI,UBER,LYFT,ABNB,CCL,RCL,SNAP,'
         'ROKU,NET,DDOG,MU,ON,ARM,SMCI,SHOP,CRWD,SNOW'
     ).split(',')
-    # Gamma Bot default: Focus on liquid names only (gamma calculation is heavy)
+    # Gamma Bot default: Focus on index ETFs + mega caps only (gamma calculation is heavy)
+    # Reduced from 18 to 9 to ensure scans complete within timeout
     # Can override via GAMMA_RATIO_WATCHLIST env var
-    _GAMMA_DEFAULT = 'SPY,QQQ,IWM,DIA,TSLA,AAPL,MSFT,NVDA,AMD,SOFI,HOOD,UPST,SMH,ARKK,RBLX,BABA,WMT,GOOG'
+    _GAMMA_DEFAULT = 'SPY,QQQ,IWM,DIA,TSLA,AAPL,NVDA,AMD,MSFT'
     GAMMA_RATIO_WATCHLIST = os.getenv(
         'GAMMA_RATIO_WATCHLIST',
         _GAMMA_DEFAULT
