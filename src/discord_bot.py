@@ -186,4 +186,29 @@ class ORAKLBot(commands.Bot):
         
         embed.set_footer(text="ORAKL Options Flow Bot | Not Financial Advice")
         return embed
+
+    async def send_test_alert(self):
+        """Sends a test alert to the configured ALERT_CHANNEL_ID."""
+        logger.info("Attempting to send test alert...")
+        try:
+            channel = self.get_channel(Config.ALERT_CHANNEL_ID)
+            if not channel:
+                logger.error(f"Alert channel with ID {Config.ALERT_CHANNEL_ID} not found.")
+                return
+
+            embed = discord.Embed(
+                title="🧪 ORAKL Test Alert",
+                description="This is a test alert from the ORAKL Bot! All systems nominal.",
+                color=0x3498DB,  # Blue color for test alerts
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="Status", value="Operational", inline=True)
+            embed.add_field(name="Bot Version", value="2.0 Enhanced", inline=True)
+            embed.set_footer(text="ORAKL Options Flow Bot")
+
+            await channel.send(embed=embed)
+            logger.info("Test alert sent successfully to Discord.")
+        except Exception as e:
+            logger.error(f"Error sending test alert: {e}", exc_info=True)
+
     

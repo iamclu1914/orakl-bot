@@ -29,6 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import Config
 from src.data_fetcher import DataFetcher
+# Import live bots to mirror filters
+from src.bots.bullseye_bot import BullseyeBot
+from src.bots.sweeps_bot import SweepsBot
+from src.bots.spread_bot import SpreadBot
 from src.utils.enhanced_analysis import (
     MarketContext,
     should_take_signal,
@@ -352,6 +356,127 @@ def identify_spread_candidates(df: pd.DataFrame) -> List[Dict]:
     return candidates
 
 
+# Live-like candidate builders using current Config thresholds.
+def identify_bullseye_candidates_live(df: pd.DataFrame, ref_date: datetime) -> List[Dict]:
+    candidates = []
+    min_premium = getattr(Config, "BULLSEYE_MIN_PREMIUM", 1_000_000)
+    min_volume = getattr(Config, "BULLSEYE_MIN_VOLUME_DELTA", 600)
+    max_dte = getattr(Config, "BULLSEYE_MAX_DTE", 30)
+    min_dte = getattr(Config, "BULLSEYE_MIN_DTE", 0)
+
+    for _, row in df.iterrows():
+        parsed = parse_option_ticker(row["ticker"])
+        if not parsed:
+            continue
+        price = row.get("vwap", 0) or row.get("close", 0) or 0
+        if price <= 0:
+            continue
+        volume = row["volume"]
+        premium = volume * price * 100
+        try:
+            exp_date = datetime.strptime(parsed["expiration"], "%Y-%m-%d")
+            dte = (exp_date - ref_date).days
+        except Exception:
+            dte = 999
+        if (
+            premium >= min_premium
+            and volume >= min_volume
+            and min_dte <= dte <= max_dte
+        ):
+            candidates.append(
+                {
+                    "ticker": row["ticker"],
+                    "underlying": parsed["underlying"],
+                    "option_type": parsed["option_type"],
+                    "strike": parsed["strike"],
+                    "expiration": parsed["expiration"],
+                    "dte": dte,
+                    "volume": volume,
+                    "price": price,
+                    "premium": premium,
+                }
+            )
+    return candidates
+
+
+def identify_sweeps_candidates_live(df: pd.DataFrame, ref_date: datetime) -> List[Dict]:
+    candidates = []
+    min_premium = getattr(Config, "SWEEPS_MIN_PREMIUM", 250_000)
+    min_volume = getattr(Config, "SWEEPS_MIN_VOLUME_DELTA", 0)
+    max_dte = 60  # heuristic; live scans near-term
+    for _, row in df.iterrows():
+        parsed = parse_option_ticker(row["ticker"])
+        if not parsed:
+            continue
+        price = row.get("vwap", 0) or row.get("close", 0) or 0
+        if price <= 0:
+            continue
+        volume = row["volume"]
+        premium = volume * price * 100
+        try:
+            exp_date = datetime.strptime(parsed["expiration"], "%Y-%m-%d")
+            dte = (exp_date - ref_date).days
+        except Exception:
+            dte = 999
+        if premium >= min_premium and volume >= min_volume and 0 <= dte <= max_dte:
+            candidates.append(
+                {
+                    "ticker": row["ticker"],
+                    "underlying": parsed["underlying"],
+                    "option_type": parsed["option_type"],
+                    "strike": parsed["strike"],
+                    "expiration": parsed["expiration"],
+                    "dte": dte,
+                    "volume": volume,
+                    "price": price,
+                    "premium": premium,
+                }
+            )
+    return candidates
+
+
+def identify_spread_candidates_live(df: pd.DataFrame, ref_date: datetime) -> List[Dict]:
+    candidates = []
+    min_premium = getattr(Config, "SPREAD_MIN_PREMIUM", 400_000)
+    min_volume = getattr(Config, "SPREAD_MIN_VOLUME_DELTA", 750)
+    max_price = min(getattr(Config, "SPREAD_MAX_PRICE", 1.0), 1.0)
+    min_dte = getattr(Config, "SPREAD_MIN_DTE", 5)
+    max_dte = getattr(Config, "SPREAD_MAX_DTE", 21)
+    for _, row in df.iterrows():
+        parsed = parse_option_ticker(row["ticker"])
+        if not parsed:
+            continue
+        price = row.get("vwap", 0) or row.get("close", 0) or 0
+        if price <= 0 or price > max_price:
+            continue
+        volume = row["volume"]
+        premium = volume * price * 100
+        try:
+            exp_date = datetime.strptime(parsed["expiration"], "%Y-%m-%d")
+            dte = (exp_date - ref_date).days
+        except Exception:
+            dte = 999
+        if (
+            premium >= min_premium
+            and volume >= min_volume
+            and min_dte <= dte <= max_dte
+        ):
+            candidates.append(
+                {
+                    "ticker": row["ticker"],
+                    "underlying": parsed["underlying"],
+                    "option_type": parsed["option_type"],
+                    "strike": parsed["strike"],
+                    "expiration": parsed["expiration"],
+                    "dte": dte,
+                    "volume": volume,
+                    "price": price,
+                    "premium": premium,
+                }
+            )
+    return candidates
+
+
 def identify_gamma_candidates(df: pd.DataFrame) -> List[Dict]:
     """
     Identify Gamma Ratio Bot candidates.
@@ -497,10 +622,12 @@ async def run_opra_backtest(dates: List[str]) -> Dict[str, BotResults]:
             high_activity = filter_high_activity_options(df, min_volume=100)
             print(f"  High-activity contracts: {len(high_activity):,}")
             
-            # Identify candidates for each bot
-            bullseye_candidates = identify_bullseye_candidates(high_activity)
-            sweeps_candidates = identify_sweeps_candidates(high_activity)
-            spread_candidates = identify_spread_candidates(high_activity)
+            ref_date = datetime.strptime(date_str, "%Y-%m-%d")
+
+            # Identify candidates for each bot using live-like filters
+            bullseye_candidates = identify_bullseye_candidates_live(high_activity, ref_date)
+            sweeps_candidates = identify_sweeps_candidates_live(high_activity, ref_date)
+            spread_candidates = identify_spread_candidates_live(high_activity, ref_date)
             gamma_candidates = identify_gamma_candidates(high_activity)
             
             print(f"  Candidates: Bullseye={len(bullseye_candidates)}, Sweeps={len(sweeps_candidates)}, "

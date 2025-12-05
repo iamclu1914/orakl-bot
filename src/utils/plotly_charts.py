@@ -886,7 +886,9 @@ class ProfessionalCharts:
             )
 
             buf = BytesIO()
+            logger.info("Generating gamma chart image...")
             fig.write_image(buf, format='png', width=800, height=250, scale=2)
+            logger.info("Gamma chart image generated.")
             buf.seek(0)
             return buf
 
