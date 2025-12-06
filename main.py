@@ -50,6 +50,7 @@ if Config.KAFKA_ENABLED:
     try:
         from src.kafka_listener import KafkaFlowListener
         from src.trade_enricher import TradeEnricher
+        from src.bots.uoa_bot import UOABot
         KAFKA_AVAILABLE = True
         logger.info("Kafka modules loaded successfully")
     except ImportError as e:
@@ -68,6 +69,7 @@ class ORAKLRunner:
         # Kafka event-driven architecture (ORAKL v2.0)
         self.kafka_listener = None
         self.trade_enricher = None
+        self.uoa_bot = None  # Unusual Options Activity detector
         self.kafka_mode_active = False
         self.fallback_active = False
         
@@ -214,6 +216,13 @@ class ORAKLRunner:
                 # Initialize Trade Enricher
                 self.trade_enricher = TradeEnricher(fetcher)
                 logger.info("✓ Trade Enricher initialized")
+                
+                # Initialize UOA Bot (stream filter - no watchlist)
+                if Config.UOA_ENABLED and Config.UOA_WEBHOOK:
+                    self.uoa_bot = UOABot(Config.UOA_WEBHOOK)
+                    logger.info("✓ UOA Bot initialized (stream filter for unusual activity)")
+                else:
+                    logger.info("UOA Bot disabled (UOA_ENABLED=false or no webhook)")
                 
                 # Start State Bots (League B) on scheduled polling
                 state_bot_task = asyncio.create_task(self.bot_manager.start_state_bots())
@@ -464,8 +473,9 @@ class ORAKLRunner:
         
         Flow:
         1. Enrich with Polygon snapshot (Greeks, OI, Bid/Ask)
-        2. Dispatch to all flow bots
-        3. Log any alerts generated
+        2. Dispatch to UOA Bot (stream filter - any ticker)
+        3. Dispatch to flow bots (watchlist-based)
+        4. Log any alerts generated
         """
         try:
             symbol = trade_data.get('symbol', 'UNKNOWN')
@@ -482,7 +492,12 @@ class ORAKLRunner:
             else:
                 enriched = trade_data
             
-            # Dispatch to flow bots
+            # UOA Bot: Stream filter for unusual activity (ANY ticker)
+            # Runs BEFORE watchlist-based bots to catch everything
+            if self.uoa_bot:
+                asyncio.create_task(self.uoa_bot.process_event(enriched))
+            
+            # Dispatch to flow bots (watchlist-based)
             if self.bot_manager:
                 alerts = await self.bot_manager.process_single_event(enriched)
                 

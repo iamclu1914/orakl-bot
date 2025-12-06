@@ -418,6 +418,45 @@ class Config:
     KAFKA_FALLBACK_TIMEOUT = int(os.getenv('KAFKA_FALLBACK_TIMEOUT', '120'))  # 2 min before REST fallback
     KAFKA_ENRICHMENT_TIMEOUT = float(os.getenv('KAFKA_ENRICHMENT_TIMEOUT', '5.0'))  # Polygon fetch timeout
     
+    # =============================================================================
+    # Unusual Options Activity (UOA) Bot - Stream Filter on Kafka
+    # =============================================================================
+    # Detects unusual flow patterns on ANY ticker from the stream (no watchlist)
+    # Fires when trades show anomalous volume, Vol/OI, or premium characteristics
+    
+    UOA_ENABLED = os.getenv('UOA_ENABLED', 'true').lower() == 'true'
+    UOA_WEBHOOK = os.getenv(
+        'UOA_WEBHOOK',
+        'https://discord.com/api/webhooks/1446739441572905085/nlp-a8_UZ_UO83drsD-qvCMelK1qVltCwGGUYf4Bc8q5DiKFbp_Hzv_tj89HimslOw8b'
+    )
+    
+    # Premium thresholds (tiered)
+    UOA_MIN_PREMIUM = float(os.getenv('UOA_MIN_PREMIUM', '100000'))  # $100K floor
+    UOA_SIGNIFICANT_PREMIUM = float(os.getenv('UOA_SIGNIFICANT_PREMIUM', '250000'))  # $250K = notable
+    UOA_WHALE_PREMIUM = float(os.getenv('UOA_WHALE_PREMIUM', '500000'))  # $500K = whale
+    
+    # Volume vs Open Interest (core UOA signal)
+    UOA_MIN_VOL_OI_RATIO = float(os.getenv('UOA_MIN_VOL_OI_RATIO', '2.0'))  # Vol >= 2x OI
+    UOA_HIGH_VOL_OI_RATIO = float(os.getenv('UOA_HIGH_VOL_OI_RATIO', '5.0'))  # Vol >= 5x OI = very unusual
+    UOA_EXTREME_VOL_OI_RATIO = float(os.getenv('UOA_EXTREME_VOL_OI_RATIO', '10.0'))  # Vol >= 10x OI = extreme
+    
+    # Volume thresholds
+    UOA_MIN_VOLUME = int(os.getenv('UOA_MIN_VOLUME', '500'))  # Min 500 contracts
+    UOA_MIN_TRADE_SIZE = int(os.getenv('UOA_MIN_TRADE_SIZE', '100'))  # Min single print size
+    
+    # DTE and OTM filters
+    UOA_MAX_DTE = int(os.getenv('UOA_MAX_DTE', '45'))  # Max 45 DTE (focus on near-term)
+    UOA_MIN_OTM_PCT = float(os.getenv('UOA_MIN_OTM_PCT', '0.0'))  # 0% = include ATM/ITM
+    UOA_MAX_OTM_PCT = float(os.getenv('UOA_MAX_OTM_PCT', '0.30'))  # 30% max OTM
+    
+    # Spam prevention
+    UOA_COOLDOWN_SECONDS = int(os.getenv('UOA_COOLDOWN_SECONDS', '300'))  # 5 min per symbol
+    UOA_MAX_ALERTS_PER_SYMBOL = int(os.getenv('UOA_MAX_ALERTS_PER_SYMBOL', '3'))  # Max 3 per symbol per hour
+    UOA_ALERT_WINDOW_SECONDS = int(os.getenv('UOA_ALERT_WINDOW_SECONDS', '3600'))  # 1 hour window
+    
+    # Minimum reasons required to trigger (prevents weak signals)
+    UOA_MIN_REASONS = int(os.getenv('UOA_MIN_REASONS', '2'))  # Need at least 2 unusual factors
+    
     @classmethod
     def validate(cls):
         """Validate required configuration with comprehensive checks"""
