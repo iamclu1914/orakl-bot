@@ -100,13 +100,14 @@ class BotManager:
         """Initialize all auto-posting bots with dedicated webhooks"""
         logger.info("Initializing auto-posting bots with dedicated channels...")
         self.bot_overrides: Dict[object, List[str]] = {}
+        brain_status = "🧠" if (self.hedge_hunter or self.context_manager) else ""
 
-        # UNIFIED WATCHLIST - All bots now use the same comprehensive watchlist
-        # Includes mega-caps + small account friendly tickers (under $75)
-        unified_watchlist = list(Config.SWEEPS_WATCHLIST)
+        # =======================================================================
+        # Bot-Specific Watchlists (Tier 1 + selective Tier 2 expansions)
+        # =======================================================================
 
-        # Bullseye Bot (Institutional Swing Scanner)
-        bullseye_watchlist = list(unified_watchlist)
+        # Bullseye Bot: Tier 1 + institutionals (23 tickers)
+        bullseye_watchlist = list(Config.BULLSEYE_WATCHLIST)
         self.bullseye_bot = BullseyeBot(
             Config.BULLSEYE_WEBHOOK,
             bullseye_watchlist,
@@ -116,14 +117,12 @@ class BotManager:
         )
         self.bots.append(self.bullseye_bot)
         self.bot_overrides[self.bullseye_bot] = bullseye_watchlist
-        brain_status = "🧠" if (self.hedge_hunter or self.context_manager) else ""
         logger.info(
-            f"  ✓ Bullseye Bot (Institutional) {brain_status} → Channel ID: {Config.BULLSEYE_WEBHOOK.split('/')[-2]}"
-            f" | Watchlist: {len(bullseye_watchlist)} tickers"
+            f"  ✓ Bullseye Bot (Institutional) {brain_status} | Watchlist: {len(bullseye_watchlist)} tickers"
         )
 
-        # Sweeps Bot (Large Options Sweeps)
-        sweeps_watchlist = list(unified_watchlist)
+        # Sweeps Bot: Tier 1 + growth/beta (26 tickers)
+        sweeps_watchlist = list(Config.SWEEPS_WATCHLIST)
         self.sweeps_bot = SweepsBot(
             Config.SWEEPS_WEBHOOK,
             sweeps_watchlist,
@@ -135,12 +134,11 @@ class BotManager:
         self.bots.append(self.sweeps_bot)
         self.bot_overrides[self.sweeps_bot] = sweeps_watchlist
         logger.info(
-            f"  ✓ Sweeps Bot {brain_status} → Channel ID: {Config.SWEEPS_WEBHOOK.split('/')[-2]}"
-            f" | Watchlist: {len(sweeps_watchlist)} tickers"
+            f"  ✓ Sweeps Bot {brain_status} | Watchlist: {len(sweeps_watchlist)} tickers"
         )
 
-        # Golden Sweeps Bot (1M+ Sweeps)
-        golden_watchlist = list(unified_watchlist)
+        # Golden Sweeps Bot: Tier 1 + whale magnets (24 tickers)
+        golden_watchlist = list(Config.GOLDEN_SWEEPS_WATCHLIST)
         self.golden_sweeps_bot = GoldenSweepsBot(
             Config.GOLDEN_SWEEPS_WEBHOOK,
             golden_watchlist,
@@ -152,18 +150,11 @@ class BotManager:
         self.bots.append(self.golden_sweeps_bot)
         self.bot_overrides[self.golden_sweeps_bot] = golden_watchlist
         logger.info(
-            f"  ✓ Golden Sweeps Bot {brain_status} → Channel ID: {Config.GOLDEN_SWEEPS_WEBHOOK.split('/')[-2]}"
-            f" | Watchlist: {len(golden_watchlist)} tickers (same as all bots)"
+            f"  ✓ Golden Sweeps Bot {brain_status} | Watchlist: {len(golden_watchlist)} tickers"
         )
 
-        # 99 Cent Store Bot (Spread scanner)
-        spread_watchlist = list(
-            dict.fromkeys(
-                Config.SWEEPS_WATCHLIST
-                + Config.SPREAD_WATCHLIST
-                + Config.SPREAD_EXTRA_TICKERS
-            )
-        )
+        # 99 Cent Store Bot: Tier 1 only, CAPPED (19 tickers)
+        spread_watchlist = list(Config.SPREAD_WATCHLIST)
         self.spread_bot = SpreadBot(
             Config.SPREAD_WEBHOOK,
             spread_watchlist,
@@ -172,11 +163,10 @@ class BotManager:
         self.bots.append(self.spread_bot)
         self.bot_overrides[self.spread_bot] = spread_watchlist
         logger.info(
-            "  ✓ 99 Cent Store Bot → Narrow spread scanner | Watchlist: %d tickers",
-            len(spread_watchlist),
+            f"  ✓ 99 Cent Store Bot → Capped at Tier1 | Watchlist: {len(spread_watchlist)} tickers"
         )
 
-        # Gamma Ratio Bot (Call/Put gamma regime tracker)
+        # Gamma Ratio Bot: Focused liquid set (5 tickers)
         gamma_watchlist = list(Config.GAMMA_RATIO_WATCHLIST)
         self.gamma_ratio_bot = GammaRatioBot(
             Config.GAMMA_RATIO_WEBHOOK,
@@ -186,12 +176,11 @@ class BotManager:
         self.bots.append(self.gamma_ratio_bot)
         self.bot_overrides[self.gamma_ratio_bot] = gamma_watchlist
         logger.info(
-            "  ✓ Gamma Ratio Bot → G ratio regime tracker | Watchlist: %d tickers",
-            len(gamma_watchlist),
+            f"  ✓ Gamma Ratio Bot → G ratio regime tracker | Watchlist: {len(gamma_watchlist)} tickers"
         )
 
-        # Rolling Thunder Bot (Whale roll detector)
-        rolling_watchlist = list(unified_watchlist)
+        # Rolling Thunder Bot: Tier 1 + roll-prone (23 tickers)
+        rolling_watchlist = list(Config.ROLLING_WATCHLIST)
         self.rolling_thunder_bot = RollingThunderBot(
             Config.ROLLING_THUNDER_WEBHOOK,
             rolling_watchlist,
@@ -205,8 +194,8 @@ class BotManager:
             f"  ✓ Rolling Thunder Bot 🔄 → Whale roll detector | Watchlist: {len(rolling_watchlist)} tickers"
         )
 
-        # Walls Bot (Support/Resistance detector)
-        walls_watchlist = list(Config.GEX_UNIVERSE)  # Use top liquid names for walls
+        # Walls Bot: GEX Universe (10 tickers)
+        walls_watchlist = list(Config.GEX_UNIVERSE)
         self.walls_bot = WallsBot(
             Config.WALLS_BOT_WEBHOOK,
             walls_watchlist,
@@ -220,8 +209,8 @@ class BotManager:
             f"  ✓ Walls Bot 🧱 → Support/Resistance detector | Watchlist: {len(walls_watchlist)} tickers"
         )
 
-        # Lotto Bot (Unusual OTM flow hunter)
-        lotto_watchlist = list(unified_watchlist)
+        # Lotto Bot: Tier 1 + story/beta (25 tickers)
+        lotto_watchlist = list(Config.LOTTO_WATCHLIST)
         self.lotto_bot = LottoBot(
             Config.LOTTO_BOT_WEBHOOK,
             lotto_watchlist,

@@ -147,35 +147,88 @@ class Config:
     MIN_STOCK_PRICE = float(os.getenv('MIN_STOCK_PRICE', '5.0'))  # $5 minimum (avoid penny stocks)
     MAX_STOCK_PRICE = float(os.getenv('MAX_STOCK_PRICE', '10000'))  # $10K max (filter out Berkshire)
 
-    # Small, liquid default universe to ensure scans complete quickly
-    _UNIFIED_WATCHLIST = (
+    # =============================================================================
+    # Watchlist Tiers
+    # =============================================================================
+    
+    # Tier 1: Core liquid universe (19 symbols) - indices, mega-caps, sector ETFs
+    _TIER1_UNIVERSE = (
         'SPY,QQQ,DIA,IWM,TSLA,AAPL,MSFT,NVDA,AMD,AVGO,GOOGL,META,AMZN,SMH,'
         'XLF,XLE,XLK,XLV,XLY'
     )
     
-    # Legacy variable for backwards compatibility
-    _DEFAULT_WATCHLIST = _UNIFIED_WATCHLIST
+    # Tier 2: High-value expansion names (10 symbols) - institutionals, growth, beta
+    _TIER2_UNIVERSE = 'NFLX,CRM,COIN,JPM,WMT,SMCI,MRVL,MU,UBER,GLD'
+    
+    # Parse into lists
+    _TIER1_LIST = [t.strip().upper() for t in _TIER1_UNIVERSE.split(',') if t.strip()]
+    _TIER2_LIST = [t.strip().upper() for t in _TIER2_UNIVERSE.split(',') if t.strip()]
+    
+    # Legacy aliases
+    _UNIFIED_WATCHLIST = _TIER1_UNIVERSE
+    _DEFAULT_WATCHLIST = _TIER1_UNIVERSE
+    _UNIFIED_LIST = _TIER1_LIST
 
-    STATIC_WATCHLIST = os.getenv('WATCHLIST', _UNIFIED_WATCHLIST).split(',')
-    _UNIFIED_LIST = [ticker.strip().upper() for ticker in _UNIFIED_WATCHLIST.split(',') if ticker.strip()]
+    STATIC_WATCHLIST = os.getenv('WATCHLIST', _TIER1_UNIVERSE).split(',')
 
+    # =============================================================================
+    # Bot-Specific Watchlists (Tier 1 + selective Tier 2 additions)
+    # =============================================================================
+    
+    # Sweeps Bot: Tier 1 + growth/beta names (26 total)
+    # Add: NFLX, CRM, COIN, SMCI, MRVL, MU, UBER
+    _SWEEPS_TIER2 = ['NFLX', 'CRM', 'COIN', 'SMCI', 'MRVL', 'MU', 'UBER']
+    _SWEEPS_DEFAULT = _TIER1_LIST + _SWEEPS_TIER2
     SWEEPS_WATCHLIST = os.getenv(
         'SWEEPS_WATCHLIST',
-        ','.join(_UNIFIED_LIST)
+        ','.join(_SWEEPS_DEFAULT)
     ).split(',')
 
+    # Golden Sweeps Bot: Tier 1 + big-whale magnets (24 total)
+    # Add: NFLX, COIN, JPM, WMT, GLD
+    _GOLDEN_TIER2 = ['NFLX', 'COIN', 'JPM', 'WMT', 'GLD']
+    _GOLDEN_DEFAULT = _TIER1_LIST + _GOLDEN_TIER2
     GOLDEN_SWEEPS_WATCHLIST = os.getenv(
         'GOLDEN_SWEEPS_WATCHLIST',
-        ','.join(_UNIFIED_LIST)
+        ','.join(_GOLDEN_DEFAULT)
     ).split(',')
+    
+    # Bullseye Bot: Tier 1 + institutionals (23 total)
+    # Add: NFLX, JPM, WMT, GLD
+    _BULLSEYE_TIER2 = ['NFLX', 'JPM', 'WMT', 'GLD']
+    _BULLSEYE_DEFAULT = _TIER1_LIST + _BULLSEYE_TIER2
+    BULLSEYE_WATCHLIST = os.getenv(
+        'BULLSEYE_WATCHLIST',
+        ','.join(_BULLSEYE_DEFAULT)
+    ).split(',')
+    
+    # Rolling Thunder Bot: Tier 1 + roll-prone names (23 total)
+    # Add: NFLX, COIN, WMT, SMCI
+    _ROLLING_TIER2 = ['NFLX', 'COIN', 'WMT', 'SMCI']
+    _ROLLING_DEFAULT = _TIER1_LIST + _ROLLING_TIER2
+    ROLLING_WATCHLIST = os.getenv(
+        'ROLLING_WATCHLIST',
+        ','.join(_ROLLING_DEFAULT)
+    ).split(',')
+    
+    # Lotto Bot: Tier 1 + story/beta names (25 total)
+    # Add: NFLX, COIN, UBER, SMCI, MRVL, MU
+    _LOTTO_TIER2 = ['NFLX', 'COIN', 'UBER', 'SMCI', 'MRVL', 'MU']
+    _LOTTO_DEFAULT = _TIER1_LIST + _LOTTO_TIER2
+    LOTTO_WATCHLIST = os.getenv(
+        'LOTTO_WATCHLIST',
+        ','.join(_LOTTO_DEFAULT)
+    ).split(',')
+    
     INDEX_WHALE_WATCHLIST = os.getenv(
         'INDEX_WHALE_WATCHLIST',
         'SPY,QQQ,IWM'
     ).split(',')
-    # 99c Store: keep small by default; extras empty to avoid 160+ symbols
+    
+    # 99 Cent Store: Capped at Tier 1 only (19 total) - widest scanner, no expansion
     SPREAD_WATCHLIST = os.getenv(
         'SPREAD_WATCHLIST',
-        ','.join(_UNIFIED_LIST)
+        ','.join(_TIER1_LIST)
     ).split(',')
     SPREAD_EXTRA_TICKERS = os.getenv(
         'SPREAD_EXTRA_TICKERS',
@@ -194,22 +247,28 @@ class Config:
     ).split(',')
 
     # Initialize WATCHLIST (will be populated dynamically by WatchlistManager)
-    # All watchlists now use the unified list
+    # Normalize all watchlists to uppercase
     WATCHLIST = [ticker.strip().upper() for ticker in STATIC_WATCHLIST if ticker.strip()]
     SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in SWEEPS_WATCHLIST if ticker.strip()]
     GOLDEN_SWEEPS_WATCHLIST = [ticker.strip().upper() for ticker in GOLDEN_SWEEPS_WATCHLIST if ticker.strip()]
+    BULLSEYE_WATCHLIST = [ticker.strip().upper() for ticker in BULLSEYE_WATCHLIST if ticker.strip()]
+    ROLLING_WATCHLIST = [ticker.strip().upper() for ticker in ROLLING_WATCHLIST if ticker.strip()]
+    LOTTO_WATCHLIST = [ticker.strip().upper() for ticker in LOTTO_WATCHLIST if ticker.strip()]
     INDEX_WHALE_WATCHLIST = [ticker.strip().upper() for ticker in INDEX_WHALE_WATCHLIST if ticker.strip()]
     SPREAD_WATCHLIST = [ticker.strip().upper() for ticker in SPREAD_WATCHLIST if ticker.strip()]
     SPREAD_EXTRA_TICKERS = [ticker.strip().upper() for ticker in SPREAD_EXTRA_TICKERS if ticker.strip()]
     GAMMA_RATIO_WATCHLIST = [ticker.strip().upper() for ticker in GAMMA_RATIO_WATCHLIST if ticker.strip()]
     
-    # Verify all bots have same watchlist count
-    logger.info(f"Unified Watchlist: {len(_UNIFIED_LIST)} tickers")
-    logger.info(f"  - Sweeps: {len(SWEEPS_WATCHLIST)} tickers")
-    logger.info(f"  - Golden Sweeps: {len(GOLDEN_SWEEPS_WATCHLIST)} tickers")
-    logger.info(f"  - Index Whale: {len(INDEX_WHALE_WATCHLIST)} tickers")
-    logger.info(f"  - Spread Sniper: {len(SPREAD_WATCHLIST)} tickers (+{len(SPREAD_EXTRA_TICKERS)} extras)")
-    logger.info(f"  - Bullseye: Uses SWEEPS_WATCHLIST")
+    # Log watchlist configuration
+    logger.info(f"Watchlist Tiers: Tier1={len(_TIER1_LIST)}, Tier2={len(_TIER2_LIST)}")
+    logger.info(f"Bot Watchlists:")
+    logger.info(f"  - Sweeps: {len(SWEEPS_WATCHLIST)} tickers (Tier1 + growth/beta)")
+    logger.info(f"  - Golden Sweeps: {len(GOLDEN_SWEEPS_WATCHLIST)} tickers (Tier1 + whale magnets)")
+    logger.info(f"  - Bullseye: {len(BULLSEYE_WATCHLIST)} tickers (Tier1 + institutionals)")
+    logger.info(f"  - Rolling Thunder: {len(ROLLING_WATCHLIST)} tickers (Tier1 + roll-prone)")
+    logger.info(f"  - Lotto: {len(LOTTO_WATCHLIST)} tickers (Tier1 + story/beta)")
+    logger.info(f"  - 99 Cent Store: {len(SPREAD_WATCHLIST)} tickers (Tier1 only, capped)")
+    logger.info(f"  - Walls: 10 tickers (GEX Universe)")
     logger.info(f"  - Gamma Ratio: {len(GAMMA_RATIO_WATCHLIST)} tickers")
 
     # Ensure core index ETFs are always monitored by flow-focused bots
