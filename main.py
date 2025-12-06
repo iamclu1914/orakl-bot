@@ -30,20 +30,7 @@ from src.utils.cache import cache_manager
 from src.utils.monitoring import metrics
 from src.core import HedgeHunter, ContextManager
 
-# Kafka event-driven architecture imports (ORAKL v2.0)
-if Config.KAFKA_ENABLED:
-    try:
-        from src.kafka_listener import KafkaFlowListener
-        from src.trade_enricher import TradeEnricher
-        KAFKA_AVAILABLE = True
-        logger.info("Kafka modules loaded successfully")
-    except ImportError as e:
-        KAFKA_AVAILABLE = False
-        logger.warning(f"Kafka modules not available: {e}")
-else:
-    KAFKA_AVAILABLE = False
-
-# Setup logging
+# Setup logging FIRST (before any logger calls)
 log_dir = Path(__file__).parent / "logs"
 log_dir.mkdir(exist_ok=True)
 
@@ -57,6 +44,19 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Kafka event-driven architecture imports (ORAKL v2.0)
+if Config.KAFKA_ENABLED:
+    try:
+        from src.kafka_listener import KafkaFlowListener
+        from src.trade_enricher import TradeEnricher
+        KAFKA_AVAILABLE = True
+        logger.info("Kafka modules loaded successfully")
+    except ImportError as e:
+        KAFKA_AVAILABLE = False
+        logger.warning(f"Kafka modules not available: {e}")
+else:
+    KAFKA_AVAILABLE = False
 
 class ORAKLRunner:
     def __init__(self):
