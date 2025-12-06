@@ -238,7 +238,8 @@ class ORAKLRunner:
                 # Start Kafka consumer
                 kafka_task = asyncio.create_task(self._run_kafka_consumer())
                 logger.info(f"✓ Kafka listener started on topic: {Config.KAFKA_TOPIC}")
-                logger.info(f"✓ Flow bots will receive events: {self.bot_manager.get_flow_bot_names()}")
+                logger.info(f"✓ Flow bots (watchlist): {self.bot_manager.get_flow_bot_names()}")
+                logger.info(f"✓ Stream filters (any ticker): {self.bot_manager.get_stream_filter_bot_names()}")
                 
                 # Use kafka_task as the main bot_task
                 bot_task = state_bot_task
@@ -492,10 +493,16 @@ class ORAKLRunner:
             else:
                 enriched = trade_data
             
-            # UOA Bot: Stream filter for unusual activity (ANY ticker)
-            # Runs BEFORE watchlist-based bots to catch everything
+            # Stream Filters: Process EVERY event (no watchlist restriction)
+            # UOA Bot: Unusual activity detector
             if self.uoa_bot:
                 asyncio.create_task(self.uoa_bot.process_event(enriched))
+            
+            # 99 Cent Store + other stream filters: sub-$1 plays on any ticker
+            if self.bot_manager:
+                for stream_bot in self.bot_manager.get_stream_filter_bots():
+                    if stream_bot.running and hasattr(stream_bot, 'process_event'):
+                        asyncio.create_task(stream_bot.process_event(enriched))
             
             # Dispatch to flow bots (watchlist-based)
             if self.bot_manager:

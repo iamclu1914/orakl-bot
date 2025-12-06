@@ -26,11 +26,17 @@ logger = logging.getLogger(__name__)
 # Bot categorization for event-driven architecture
 FLOW_BOT_NAMES = {
     'Sweeps Bot',
-    'Golden Sweeps Bot', 
+    'Golden Sweeps Bot',
     'Bullseye Bot',
     'Lotto Bot',
     'Rolling Thunder Bot',
-    '99 Cent Store',
+    # Note: 99 Cent Store removed - now a stream filter (no watchlist)
+}
+
+# Stream Filter Bots: Process EVERY Kafka event (no watchlist restriction)
+# These bots are called directly from main.py for every trade
+STREAM_FILTER_BOTS = {
+    '99 Cent Store',  # Sub-$1 swing trades on any ticker
 }
 
 STATE_BOT_NAMES = {
@@ -81,8 +87,9 @@ class BotManager:
         self.running = False
         
         # Segregated bot lists for event-driven architecture
-        self.flow_bots: List[Any] = []  # League A: Kafka event consumers
+        self.flow_bots: List[Any] = []  # League A: Kafka event consumers (watchlist-based)
         self.state_bots: List[Any] = []  # League B: Scheduled pollers
+        self.stream_filter_bots: List[Any] = []  # Stream filters: process ALL events
         
         # Event processing stats
         self.events_processed = 0
@@ -153,8 +160,10 @@ class BotManager:
             f"  ✓ Golden Sweeps Bot {brain_status} | Watchlist: {len(golden_watchlist)} tickers"
         )
 
-        # 99 Cent Store Bot: Tier 1 only, CAPPED (19 tickers)
-        spread_watchlist = list(Config.SPREAD_WATCHLIST)
+        # 99 Cent Store Bot: STREAM FILTER (no watchlist restriction)
+        # Processes EVERY Kafka event and applies its own filters:
+        # - Price < $1.00, Premium >= $250K, DTE 5-21, Vol/OI >= 2.0
+        spread_watchlist = list(Config.SPREAD_WATCHLIST)  # For REST fallback only
         self.spread_bot = SpreadBot(
             Config.SPREAD_WEBHOOK,
             spread_watchlist,
@@ -163,7 +172,7 @@ class BotManager:
         self.bots.append(self.spread_bot)
         self.bot_overrides[self.spread_bot] = spread_watchlist
         logger.info(
-            f"  ✓ 99 Cent Store Bot → Capped at Tier1 | Watchlist: {len(spread_watchlist)} tickers"
+            f"  ✓ 99 Cent Store Bot → STREAM FILTER (any ticker) | REST fallback: {len(spread_watchlist)} tickers"
         )
 
         # Gamma Ratio Bot: Focused liquid set (5 tickers)
@@ -334,6 +343,7 @@ class BotManager:
             'running': self.running,
             'total_bots': len(self.bots),
             'flow_bots': len(self.flow_bots),
+            'stream_filter_bots': len(self.stream_filter_bots),
             'state_bots': len(self.state_bots),
             'events_processed': self.events_processed,
             'events_alerted': self.events_alerted,
@@ -341,7 +351,12 @@ class BotManager:
         }
 
         for bot in self.bots:
-            league = 'A (Flow)' if bot in self.flow_bots else 'B (State)'
+            if bot in self.stream_filter_bots:
+                league = 'Stream Filter'
+            elif bot in self.flow_bots:
+                league = 'A (Flow)'
+            else:
+                league = 'B (State)'
             status['bots'].append({
                 'name': bot.name,
                 'running': bot.running,
@@ -369,9 +384,12 @@ class BotManager:
         """
         self.flow_bots = []
         self.state_bots = []
+        self.stream_filter_bots = []
         
         for bot in self.bots:
-            if bot.name in FLOW_BOT_NAMES:
+            if bot.name in STREAM_FILTER_BOTS:
+                self.stream_filter_bots.append(bot)
+            elif bot.name in FLOW_BOT_NAMES:
                 self.flow_bots.append(bot)
             elif bot.name in STATE_BOT_NAMES:
                 self.state_bots.append(bot)
@@ -382,6 +400,7 @@ class BotManager:
         
         logger.info(f"Bot categorization complete:")
         logger.info(f"  League A (Flow): {len(self.flow_bots)} bots - {[b.name for b in self.flow_bots]}")
+        logger.info(f"  Stream Filters: {len(self.stream_filter_bots)} bots - {[b.name for b in self.stream_filter_bots]}")
         logger.info(f"  League B (State): {len(self.state_bots)} bots - {[b.name for b in self.state_bots]}")
 
     # =========================================================================
@@ -544,6 +563,14 @@ class BotManager:
     def get_state_bot_names(self) -> List[str]:
         """Get names of all state bots"""
         return [bot.name for bot in self.state_bots]
+    
+    def get_stream_filter_bots(self) -> List:
+        """Get stream filter bots for direct event dispatch (no watchlist)"""
+        return self.stream_filter_bots
+    
+    def get_stream_filter_bot_names(self) -> List[str]:
+        """Get names of all stream filter bots"""
+        return [bot.name for bot in self.stream_filter_bots]
     
     def get_event_stats(self) -> Dict:
         """Get event processing statistics"""
