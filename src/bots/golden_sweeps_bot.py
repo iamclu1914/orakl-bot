@@ -59,6 +59,29 @@ class GoldenSweepsBot(SweepsBot):
         self.MIN_VOLUME = max(self.MIN_VOLUME // 2, 50)
         # Allow smaller contract bursts to qualify as golden sweeps
         self.MIN_VOLUME_DELTA = max(self.MIN_VOLUME_DELTA // 2, 20)
+        # No upper bound for Golden Sweeps
+        self.MAX_SWEEP_PREMIUM = float('inf')
+
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event Processing (Override for Golden threshold)
+    # =========================================================================
+    
+    async def process_event(self, enriched_trade: Dict) -> Optional[Dict]:
+        """
+        Process a single enriched trade event from Kafka for Golden Sweeps.
+        
+        Only processes trades with premium >= $1M (GOLDEN_MIN_PREMIUM).
+        Uses parent class logic but with Golden-specific thresholds.
+        """
+        premium = float(enriched_trade.get('premium', 0))
+        
+        # Only process $1M+ trades
+        if premium < self.MIN_SWEEP_PREMIUM:
+            return None
+        
+        # Use parent process_event but it will respect our MIN_SWEEP_PREMIUM
+        # Since we set MAX_SWEEP_PREMIUM to infinity, it won't skip
+        return await super().process_event(enriched_trade)
 
     @timed()
     async def scan_and_post(self):

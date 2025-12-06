@@ -1,7 +1,19 @@
-"""Bot Manager - Orchestrates all auto-posting bots"""
+"""Bot Manager - Orchestrates all auto-posting bots
+
+ORAKL v2.0 Event-Driven Architecture:
+- League A (flow_bots): Real-time Kafka consumers for trade events
+- League B (state_bots): Scheduled REST pollers for market state
+
+When KAFKA_ENABLED=true:
+  - Flow bots receive events via process_single_event()
+  - State bots run on scheduled polling intervals
+  
+When KAFKA_ENABLED=false (fallback):
+  - All bots run on scheduled REST polling
+"""
 import asyncio
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
 from src.config import Config
@@ -10,8 +22,37 @@ from src.bots import BullseyeBot, SweepsBot, GoldenSweepsBot, SpreadBot, GammaRa
 
 logger = logging.getLogger(__name__)
 
+
+# Bot categorization for event-driven architecture
+FLOW_BOT_NAMES = {
+    'Sweeps Bot',
+    'Golden Sweeps Bot', 
+    'Bullseye Bot',
+    'Lotto Bot',
+    'Rolling Thunder Bot',
+    '99 Cent Store',
+}
+
+STATE_BOT_NAMES = {
+    'Gamma Ratio Bot',
+    'Walls Bot',
+}
+
+
 class BotManager:
-    """Manages all auto-posting bots with dynamic watchlist"""
+    """
+    Manages all auto-posting bots with hybrid Kafka/REST architecture.
+    
+    Bot Leagues:
+    - League A (Flow Bots): React to individual trade events in real-time
+      - Sweeps, Golden Sweeps, Bullseye, Lotto, Rolling Thunder, 99 Cent Store
+    - League B (State Bots): Analyze aggregate market state on schedule
+      - Gamma Ratio, Walls
+    
+    Modes:
+    - Kafka Mode: Flow bots via process_single_event(), State bots scheduled
+    - REST Mode: All bots on scheduled polling (fallback)
+    """
 
     def __init__(
         self, 
@@ -38,6 +79,15 @@ class BotManager:
         self.context_manager = context_manager
         self.bots = []
         self.running = False
+        
+        # Segregated bot lists for event-driven architecture
+        self.flow_bots: List[Any] = []  # League A: Kafka event consumers
+        self.state_bots: List[Any] = []  # League B: Scheduled pollers
+        
+        # Event processing stats
+        self.events_processed = 0
+        self.events_dispatched = 0
+        self.events_alerted = 0
 
         # Initialize watchlist manager
         self.watchlist_manager = SmartWatchlistManager(fetcher)
@@ -186,6 +236,9 @@ class BotManager:
         )
 
         logger.info(f"Initialized {len(self.bots)} auto-posting bots with dedicated webhooks")
+        
+        # Categorize bots into Flow (League A) and State (League B)
+        self._categorize_bots()
 
     async def start_all(self):
         """Start all bots with dynamic watchlist"""
@@ -291,14 +344,223 @@ class BotManager:
         status = {
             'running': self.running,
             'total_bots': len(self.bots),
+            'flow_bots': len(self.flow_bots),
+            'state_bots': len(self.state_bots),
+            'events_processed': self.events_processed,
+            'events_alerted': self.events_alerted,
             'bots': []
         }
 
         for bot in self.bots:
+            league = 'A (Flow)' if bot in self.flow_bots else 'B (State)'
             status['bots'].append({
                 'name': bot.name,
                 'running': bot.running,
-                'scan_interval': bot.scan_interval
+                'scan_interval': bot.scan_interval,
+                'league': league
             })
 
         return status
+
+    # =========================================================================
+    # Bot Categorization for Event-Driven Architecture
+    # =========================================================================
+    
+    def _categorize_bots(self):
+        """
+        Categorize bots into League A (Flow) and League B (State).
+        
+        League A (Flow Bots): Process individual trade events from Kafka
+        - Need to react to specific trade characteristics
+        - Have process_event() method
+        
+        League B (State Bots): Analyze aggregate market state
+        - Calculate metrics across many contracts/strikes
+        - Run on scheduled intervals regardless of mode
+        """
+        self.flow_bots = []
+        self.state_bots = []
+        
+        for bot in self.bots:
+            if bot.name in FLOW_BOT_NAMES:
+                self.flow_bots.append(bot)
+            elif bot.name in STATE_BOT_NAMES:
+                self.state_bots.append(bot)
+            else:
+                # Default to flow bot if not explicitly categorized
+                logger.warning(f"Bot '{bot.name}' not categorized, defaulting to Flow")
+                self.flow_bots.append(bot)
+        
+        logger.info(f"Bot categorization complete:")
+        logger.info(f"  League A (Flow): {len(self.flow_bots)} bots - {[b.name for b in self.flow_bots]}")
+        logger.info(f"  League B (State): {len(self.state_bots)} bots - {[b.name for b in self.state_bots]}")
+
+    # =========================================================================
+    # Kafka Mode: Event-Driven Methods
+    # =========================================================================
+    
+    async def process_single_event(self, enriched_trade: Dict) -> List[Dict]:
+        """
+        Process a single enriched trade event from Kafka.
+        
+        Dispatches the event to all League A (Flow) bots that have a
+        process_event() method. Each bot applies its own filters and
+        may or may not generate an alert.
+        
+        Args:
+            enriched_trade: Trade data enriched with Greeks, OI, etc.
+            
+        Returns:
+            List of alert payloads generated by bots
+        """
+        self.events_processed += 1
+        alerts = []
+        
+        symbol = enriched_trade.get('symbol', 'UNKNOWN')
+        premium = enriched_trade.get('premium', 0)
+        
+        logger.debug(
+            f"Processing event: {symbol} premium=${premium:,.0f} "
+            f"dispatching to {len(self.flow_bots)} flow bots"
+        )
+        
+        # Dispatch to all flow bots
+        for bot in self.flow_bots:
+            if not bot.running:
+                continue
+            
+            # Check if bot has process_event method
+            if not hasattr(bot, 'process_event'):
+                logger.debug(f"{bot.name} has no process_event method, skipping")
+                continue
+            
+            try:
+                self.events_dispatched += 1
+                result = await bot.process_event(enriched_trade)
+                
+                if result:
+                    alerts.append(result)
+                    self.events_alerted += 1
+                    logger.info(f"Alert generated by {bot.name} for {symbol}")
+                    
+            except Exception as e:
+                logger.error(f"Error dispatching to {bot.name}: {e}")
+        
+        return alerts
+    
+    async def start_state_bots(self):
+        """
+        Start only League B (State) bots on scheduled polling.
+        
+        Used in Kafka mode where Flow bots receive events directly
+        but State bots still need scheduled updates.
+        """
+        if not self.state_bots:
+            logger.warning("No state bots to start")
+            return
+        
+        logger.info(f"Starting {len(self.state_bots)} state bots (League B)...")
+        
+        # Load watchlist for state bots
+        if Config.WATCHLIST_MODE == 'STATIC':
+            self.watchlist = list(Config.STATIC_WATCHLIST)
+        else:
+            self.watchlist = await self.watchlist_manager.get_watchlist()
+        
+        self._update_bot_watchlists()
+        
+        # Start state bots with staggered timing
+        tasks = []
+        for i, bot in enumerate(self.state_bots):
+            if i > 0:
+                await asyncio.sleep(3)
+            logger.info(f"Starting state bot: {bot.name}")
+            task = asyncio.create_task(bot.start())
+            tasks.append(task)
+        
+        # Also start watchlist refresh for state bots
+        tasks.append(asyncio.create_task(self._watchlist_refresh_loop()))
+        
+        logger.info(f"All {len(self.state_bots)} state bots started")
+        
+        # Wait for tasks
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            logger.error(f"State bot error: {e}")
+    
+    async def start_flow_bots_polling(self):
+        """
+        Start League A (Flow) bots on scheduled REST polling.
+        
+        Used as fallback when Kafka is unavailable or during REST mode.
+        """
+        if not self.flow_bots:
+            logger.warning("No flow bots to start")
+            return
+        
+        logger.info(f"Starting {len(self.flow_bots)} flow bots in REST polling mode...")
+        
+        # Load watchlist
+        if Config.WATCHLIST_MODE == 'STATIC':
+            self.watchlist = list(Config.STATIC_WATCHLIST)
+        else:
+            self.watchlist = await self.watchlist_manager.get_watchlist()
+        
+        self._update_bot_watchlists()
+        
+        # Start flow bots with staggered timing
+        tasks = []
+        for i, bot in enumerate(self.flow_bots):
+            if i > 0:
+                await asyncio.sleep(5)
+            logger.info(f"Starting flow bot (REST mode): {bot.name}")
+            task = asyncio.create_task(bot.start())
+            tasks.append(task)
+        
+        logger.info(f"All {len(self.flow_bots)} flow bots started in REST mode")
+        
+        # Wait for tasks
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            logger.error(f"Flow bot (REST) error: {e}")
+    
+    async def trigger_gamma_update(self, symbol: str):
+        """
+        Trigger an out-of-cycle Gamma Bot update for a specific symbol.
+        
+        Called by Flow bots when they detect massive flow that warrants
+        an immediate GEX recalculation (the "Bridge" pattern).
+        
+        Args:
+            symbol: Ticker to update (e.g., "NVDA")
+        """
+        if not self.gamma_ratio_bot:
+            return
+        
+        if not hasattr(self.gamma_ratio_bot, '_scan_symbol'):
+            return
+        
+        try:
+            logger.info(f"Triggering out-of-cycle Gamma update for {symbol}")
+            await self.gamma_ratio_bot._scan_symbol(symbol)
+        except Exception as e:
+            logger.error(f"Error in triggered Gamma update for {symbol}: {e}")
+    
+    def get_flow_bot_names(self) -> List[str]:
+        """Get names of all flow bots"""
+        return [bot.name for bot in self.flow_bots]
+    
+    def get_state_bot_names(self) -> List[str]:
+        """Get names of all state bots"""
+        return [bot.name for bot in self.state_bots]
+    
+    def get_event_stats(self) -> Dict:
+        """Get event processing statistics"""
+        return {
+            'events_processed': self.events_processed,
+            'events_dispatched': self.events_dispatched,
+            'events_alerted': self.events_alerted,
+            'alert_rate': self.events_alerted / max(1, self.events_processed)
+        }

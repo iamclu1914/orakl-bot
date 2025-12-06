@@ -24,7 +24,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from .base_bot import BaseAutoBot
@@ -94,12 +94,216 @@ class RollingThunderBot(BaseAutoBot):
         self.scan_batch_size = 0
         self.concurrency_limit = 20
         
+        # ORAKL v2.0: Sliding window buffer for Kafka event sequence matching
+        # Stores recent trades to match Sell + Buy sequences across events
+        self.trade_history: deque = deque(maxlen=1000)  # Last 1000 trades
+        
         logger.info(
             f"Rolling Thunder Bot initialized: "
             f"min_premium=${self.min_roll_premium:,}, "
             f"near_dte<{self.near_term_dte}, "
             f"far_dte>{self.far_term_dte}"
         )
+
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event Processing with Sliding Window Buffer
+    # =========================================================================
+    
+    async def process_event(self, enriched_trade: Dict) -> Optional[Dict]:
+        """
+        Process a single enriched trade event from Kafka for roll detection.
+        
+        CRITICAL: Rolling Thunder needs to match Sell + Buy sequences.
+        Since Kafka delivers events one at a time, we use a sliding window
+        buffer (deque) to track recent trades and look for matches.
+        
+        Flow:
+        1. Add current trade to history
+        2. If this is a BUY (far-term), look back for matching SELLs (near-term)
+        3. If found, create roll alert
+        
+        Args:
+            enriched_trade: Trade data enriched with Greeks, OI, Bid/Ask
+            
+        Returns:
+            Alert payload dict if roll detected, None otherwise
+        """
+        try:
+            symbol = enriched_trade.get('symbol', '')
+            premium = float(enriched_trade.get('premium', 0))
+            
+            # Skip if below minimum premium
+            if premium < self.min_roll_premium:
+                return None
+            
+            # Extract key fields
+            strike = float(enriched_trade.get('strike_price', 0))
+            contract_type = enriched_trade.get('contract_type', '').lower()
+            dte = int(enriched_trade.get('dte', 0))
+            trade_size = int(enriched_trade.get('trade_size', 0))
+            contract_price = float(enriched_trade.get('trade_price', 0))
+            
+            # Determine trade side from enriched data
+            # 'side' = 'ask' means aggressive buy, 'side' = 'bid' means aggressive sell
+            side = enriched_trade.get('side', '').lower()
+            if side == 'ask':
+                trade_side = 'buy'
+            elif side == 'bid':
+                trade_side = 'sell'
+            else:
+                # Try to infer from bid/ask proximity
+                bid = float(enriched_trade.get('current_bid', 0))
+                ask = float(enriched_trade.get('current_ask', 0))
+                if contract_price > 0 and bid > 0 and ask > 0:
+                    mid = (bid + ask) / 2
+                    trade_side = 'buy' if contract_price >= mid else 'sell'
+                else:
+                    return None  # Can't determine side
+            
+            # Get timestamp (use event timestamp or current time in nanoseconds)
+            event_ts = enriched_trade.get('event_timestamp') or enriched_trade.get('timestamp')
+            if isinstance(event_ts, str):
+                try:
+                    dt = datetime.fromisoformat(event_ts.replace('Z', '+00:00'))
+                    timestamp_ns = int(dt.timestamp() * 1e9)
+                except:
+                    timestamp_ns = int(time.time() * 1e9)
+            elif isinstance(event_ts, (int, float)):
+                timestamp_ns = int(event_ts * 1e9) if event_ts < 1e12 else int(event_ts)
+            else:
+                timestamp_ns = int(time.time() * 1e9)
+            
+            # Create trade record
+            trade_record = {
+                'symbol': symbol,
+                'option_ticker': enriched_trade.get('contract_ticker', ''),
+                'strike': strike,
+                'expiration': enriched_trade.get('expiration_date', ''),
+                'contract_type': contract_type,
+                'dte': dte,
+                'price': contract_price,
+                'size': trade_size,
+                'premium': premium,
+                'timestamp': timestamp_ns,
+                'side': trade_side
+            }
+            
+            # Add to sliding window buffer
+            self.trade_history.append(trade_record)
+            
+            # ROLL DETECTION: If this is a BUY (far-term), look back for matching SELLs
+            if trade_side == 'buy' and dte > self.far_term_dte:
+                # Look for matching SELL in the buffer
+                max_age_ns = self.max_gap_seconds * 1e9
+                
+                for past_trade in self.trade_history:
+                    # Must be same symbol
+                    if past_trade['symbol'] != symbol:
+                        continue
+                    
+                    # Must be same contract type
+                    if past_trade['contract_type'] != contract_type:
+                        continue
+                    
+                    # Must be a SELL (near-term position closing)
+                    if past_trade['side'] != 'sell':
+                        continue
+                    
+                    # Must be near-term DTE (closing leg)
+                    if past_trade['dte'] > self.near_term_dte:
+                        continue
+                    
+                    # Must be within time window
+                    time_diff = timestamp_ns - past_trade['timestamp']
+                    if time_diff < 0 or time_diff > max_age_ns:
+                        continue
+                    
+                    # Found a match! Create roll alert
+                    roll_alert = await self._create_roll_alert_from_kafka(
+                        past_trade,  # Sell leg (closing)
+                        trade_record  # Buy leg (opening)
+                    )
+                    
+                    if roll_alert:
+                        return roll_alert
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"{self.name} error processing event: {e}")
+            return None
+    
+    async def _create_roll_alert_from_kafka(
+        self,
+        sell_leg: Dict,
+        buy_leg: Dict
+    ) -> Optional[Dict]:
+        """
+        Create a roll alert from matched Kafka events.
+        
+        Args:
+            sell_leg: The closing (sell) trade
+            buy_leg: The opening (buy) trade
+            
+        Returns:
+            Alert dict if successful, None if cooldown active
+        """
+        symbol = buy_leg['symbol']
+        
+        # Check cooldown
+        cooldown_key = f"roll_{symbol}_{sell_leg['strike']}_{buy_leg['strike']}"
+        if self._is_in_cooldown(cooldown_key):
+            return None
+        
+        # Mark cooldown
+        self._mark_cooldown_roll(cooldown_key)
+        
+        # Calculate combined premium
+        total_premium = sell_leg['premium'] + buy_leg['premium']
+        
+        # Build roll data
+        roll = {
+            'symbol': symbol,
+            'contract_type': buy_leg['contract_type'].upper(),
+            'sell_strike': sell_leg['strike'],
+            'sell_exp': sell_leg['expiration'],
+            'sell_dte': sell_leg['dte'],
+            'sell_premium': sell_leg['premium'],
+            'sell_size': sell_leg['size'],
+            'buy_strike': buy_leg['strike'],
+            'buy_exp': buy_leg['expiration'],
+            'buy_dte': buy_leg['dte'],
+            'buy_premium': buy_leg['premium'],
+            'buy_size': buy_leg['size'],
+            'total_premium': total_premium,
+            'dte_extension': buy_leg['dte'] - sell_leg['dte'],
+            'time_gap_seconds': (buy_leg['timestamp'] - sell_leg['timestamp']) / 1e9,
+            'kafka_event': True
+        }
+        
+        # Post the alert
+        await self._post_roll_alert(roll)
+        
+        logger.info(
+            f"{self.name} ROLL ALERT: {symbol} "
+            f"${sell_leg['strike']:.0f}→${buy_leg['strike']:.0f} "
+            f"DTE {sell_leg['dte']}→{buy_leg['dte']} "
+            f"premium=${total_premium:,.0f}"
+        )
+        
+        return roll
+    
+    def _is_in_cooldown(self, key: str) -> bool:
+        """Check if a roll pattern is in cooldown."""
+        if key not in self._recent_rolls:
+            return False
+        
+        last_time = self._recent_rolls[key]
+        return (time.time() - last_time) < self.cooldown_seconds
+    
+    def _mark_cooldown_roll(self, key: str):
+        """Mark a roll pattern as recently alerted."""
+        self._recent_rolls[key] = time.time()
     
     async def scan_and_post(self):
         """

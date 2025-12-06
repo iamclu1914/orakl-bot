@@ -71,6 +71,194 @@ class SpreadBot(BaseAutoBot):
         self.scan_batch_size = 0  # 0 = full scan
         self.concurrency_limit = 30  # High concurrency for speed
 
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event Processing
+    # =========================================================================
+    
+    async def process_event(self, enriched_trade: Dict) -> Optional[Dict]:
+        """
+        Process a single enriched trade event from Kafka for 99 Cent Store plays.
+        
+        Evaluates if the trade qualifies as a sub-$1 swing trade alert based on:
+        - Price < $1.00 (cheap speculative play)
+        - Premium >= $250K (whale conviction)
+        - DTE 5-21 days (swing trade window)
+        - Vol/OI >= 2.0 (fresh positioning)
+        
+        Args:
+            enriched_trade: Trade data enriched with Greeks, OI, Bid/Ask
+            
+        Returns:
+            Alert payload dict if trade qualifies, None otherwise
+        """
+        try:
+            symbol = enriched_trade.get('symbol', '')
+            premium = float(enriched_trade.get('premium', 0))
+            
+            # Skip if below minimum premium
+            if premium < self.min_premium:
+                return None
+            
+            # Extract key fields
+            contract_price = float(enriched_trade.get('trade_price', 0))
+            strike = float(enriched_trade.get('strike_price', 0))
+            underlying_price = float(enriched_trade.get('underlying_price', 0))
+            contract_type = enriched_trade.get('contract_type', '').upper()
+            open_interest = int(enriched_trade.get('open_interest', 0))
+            day_volume = int(enriched_trade.get('day_volume', 0))
+            trade_size = int(enriched_trade.get('trade_size', 0))
+            dte = int(enriched_trade.get('dte', 0))
+            
+            # Use mid price if trade_price not available
+            if contract_price <= 0:
+                bid = float(enriched_trade.get('current_bid', 0))
+                ask = float(enriched_trade.get('current_ask', 0))
+                if bid > 0 and ask > 0:
+                    contract_price = (bid + ask) / 2
+                else:
+                    return None
+            
+            # Validate required fields
+            if not all([symbol, strike, underlying_price, contract_type]):
+                return None
+            
+            # Check price threshold (must be under $1)
+            if contract_price < self.min_price or contract_price > self.max_price:
+                return None
+            
+            # Check DTE range (swing trade window)
+            if dte < self.min_dte or dte > self.max_dte:
+                return None
+            
+            # Calculate OTM percentage
+            if underlying_price > 0:
+                if contract_type == 'CALL':
+                    otm_pct = max(0, (strike - underlying_price) / underlying_price)
+                else:
+                    otm_pct = max(0, (underlying_price - strike) / underlying_price)
+            else:
+                return None
+            
+            # Check OTM distance
+            if otm_pct > self.max_percent_otm:
+                return None
+            
+            # Check minimum volume
+            if day_volume < self.min_volume:
+                return None
+            
+            # Calculate Vol/OI ratio
+            if open_interest > 0:
+                vol_oi_ratio = day_volume / open_interest
+            else:
+                vol_oi_ratio = float(day_volume)  # No OI = fresh positioning
+            
+            # Check Vol/OI ratio (fresh positioning signal)
+            if vol_oi_ratio < self.min_voi_ratio:
+                return None
+            
+            # Check cooldown
+            cooldown_key = f"{symbol}_{contract_type}_{strike}"
+            if self._cooldown_active(cooldown_key, self.cooldown_seconds):
+                return None
+            
+            # Calculate score
+            score = self._calculate_spread_score(enriched_trade, vol_oi_ratio, otm_pct, contract_price)
+            
+            # Build alert data
+            alert = {
+                'symbol': symbol,
+                'ticker': symbol,
+                'type': contract_type if contract_type in ['CALL', 'PUT'] else 'CALL',
+                'strike': strike,
+                'expiration': enriched_trade.get('expiration_date', ''),
+                'premium': premium,
+                'volume': day_volume,
+                'volume_delta': trade_size,
+                'open_interest': open_interest,
+                'vol_oi_ratio': vol_oi_ratio,
+                'underlying_price': underlying_price,
+                'current_price': underlying_price,
+                'otm_pct': otm_pct * 100,
+                'dte': dte,
+                'days_to_expiry': dte,
+                'score': score,
+                'contract_price': contract_price,
+                'moneyness': 'ITM' if otm_pct == 0 else ('ATM' if otm_pct < 0.02 else 'OTM'),
+                'kafka_event': True,
+                'event_timestamp': enriched_trade.get('event_timestamp'),
+            }
+            
+            # Mark cooldown
+            self._mark_cooldown(cooldown_key)
+            
+            # Post the signal
+            await self._post_signal(alert)
+            
+            logger.info(
+                f"{self.name} ALERT: {symbol} {contract_type} "
+                f"${contract_price:.2f} premium=${premium:,.0f} vol/OI={vol_oi_ratio:.1f}x"
+            )
+            
+            return alert
+            
+        except Exception as e:
+            logger.error(f"{self.name} error processing event: {e}")
+            return None
+    
+    def _calculate_spread_score(
+        self, 
+        trade: Dict, 
+        vol_oi_ratio: float, 
+        otm_pct: float, 
+        contract_price: float
+    ) -> int:
+        """Calculate conviction score for a sub-$1 swing trade."""
+        score = 50  # Base score
+        
+        premium = float(trade.get('premium', 0))
+        dte = int(trade.get('dte', 0))
+        
+        # Premium tiers
+        if premium >= 500000:
+            score += 20
+        elif premium >= 350000:
+            score += 15
+        elif premium >= 250000:
+            score += 10
+        
+        # Vol/OI ratio (fresh positioning)
+        if vol_oi_ratio >= 5.0:
+            score += 15
+        elif vol_oi_ratio >= 3.0:
+            score += 10
+        elif vol_oi_ratio >= 2.0:
+            score += 5
+        
+        # Contract price (cheaper = more speculative upside)
+        if contract_price < 0.25:
+            score += 10
+        elif contract_price < 0.50:
+            score += 7
+        elif contract_price < 0.75:
+            score += 5
+        
+        # OTM distance (closer to money = safer)
+        if otm_pct < 0.03:
+            score += 10
+        elif otm_pct < 0.05:
+            score += 7
+        elif otm_pct < 0.08:
+            score += 5
+        
+        # DTE sweet spot (7-14 days)
+        if 7 <= dte <= 14:
+            score += 10
+        elif 5 <= dte <= 21:
+            score += 5
+        
+        return min(score, 100)
+
     async def start(self):
         await self._ensure_subscription()
         await super().start()

@@ -343,6 +343,22 @@ class Config:
     LOTTO_MAX_ALERTS_PER_SCAN = int(os.getenv('LOTTO_MAX_ALERTS_PER_SCAN', '3'))  # Max 3 per scan
     LOTTO_MAX_CONTRACTS = int(os.getenv('LOTTO_MAX_CONTRACTS', '400'))  # Limit chain size per symbol
     
+    # =============================================================================
+    # ORAKL v2.0 Event-Driven Architecture - Kafka Settings
+    # =============================================================================
+    # Primary Mode: Kafka consumer on 'processed-flows' topic (real-time)
+    # Fallback Mode: REST polling (auto-activates after KAFKA_FALLBACK_TIMEOUT)
+    
+    KAFKA_ENABLED = os.getenv('KAFKA_ENABLED', 'false').lower() == 'true'
+    KAFKA_BROKERS = os.getenv('KAFKA_BROKERS', '')  # Confluent Cloud bootstrap servers
+    KAFKA_API_KEY = os.getenv('KAFKA_API_KEY', '')  # SASL username
+    KAFKA_API_SECRET = os.getenv('KAFKA_API_SECRET', '')  # SASL password
+    KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'processed-flows')  # Dashboard's processed flow topic
+    KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'orakl-bot-v2-logic-engine')  # MUST be unique
+    KAFKA_MIN_PREMIUM_FILTER = float(os.getenv('KAFKA_MIN_PREMIUM_FILTER', '100000'))  # Pre-filter threshold
+    KAFKA_FALLBACK_TIMEOUT = int(os.getenv('KAFKA_FALLBACK_TIMEOUT', '120'))  # 2 min before REST fallback
+    KAFKA_ENRICHMENT_TIMEOUT = float(os.getenv('KAFKA_ENRICHMENT_TIMEOUT', '5.0'))  # Polygon fetch timeout
+    
     @classmethod
     def validate(cls):
         """Validate required configuration with comprehensive checks"""
@@ -358,6 +374,21 @@ class Config:
             
         if not cls.DISCORD_WEBHOOK_URL or 'your_webhook_here' in cls.DISCORD_WEBHOOK_URL:
             errors.append("DISCORD_WEBHOOK_URL is not set")
+        
+        # Kafka validation (only when enabled)
+        if cls.KAFKA_ENABLED:
+            if not cls.KAFKA_BROKERS:
+                errors.append("KAFKA_BROKERS is required when KAFKA_ENABLED=true")
+            if not cls.KAFKA_API_KEY:
+                errors.append("KAFKA_API_KEY is required when KAFKA_ENABLED=true")
+            if not cls.KAFKA_API_SECRET:
+                errors.append("KAFKA_API_SECRET is required when KAFKA_ENABLED=true")
+            logger.info("Kafka Mode: ENABLED (real-time event-driven)")
+            logger.info(f"  Topic: {cls.KAFKA_TOPIC}")
+            logger.info(f"  Group ID: {cls.KAFKA_GROUP_ID}")
+            logger.info(f"  Min Premium Filter: ${cls.KAFKA_MIN_PREMIUM_FILTER:,.0f}")
+        else:
+            logger.info("Kafka Mode: DISABLED (using REST polling fallback)")
             
         # Watchlist validation
         if not cls.WATCHLIST:

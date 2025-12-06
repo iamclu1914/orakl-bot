@@ -30,6 +30,19 @@ from src.utils.cache import cache_manager
 from src.utils.monitoring import metrics
 from src.core import HedgeHunter, ContextManager
 
+# Kafka event-driven architecture imports (ORAKL v2.0)
+if Config.KAFKA_ENABLED:
+    try:
+        from src.kafka_listener import KafkaFlowListener
+        from src.trade_enricher import TradeEnricher
+        KAFKA_AVAILABLE = True
+        logger.info("Kafka modules loaded successfully")
+    except ImportError as e:
+        KAFKA_AVAILABLE = False
+        logger.warning(f"Kafka modules not available: {e}")
+else:
+    KAFKA_AVAILABLE = False
+
 # Setup logging
 log_dir = Path(__file__).parent / "logs"
 log_dir.mkdir(exist_ok=True)
@@ -51,6 +64,12 @@ class ORAKLRunner:
         self.bot_manager = None
         self.running = True
         self.send_test_alert_flag = False
+        
+        # Kafka event-driven architecture (ORAKL v2.0)
+        self.kafka_listener = None
+        self.trade_enricher = None
+        self.kafka_mode_active = False
+        self.fallback_active = False
         
     def check_already_running(self):
         """Check if another instance is already running"""
@@ -77,12 +96,13 @@ class ORAKLRunner:
             memory_mb = process.memory_info().rss / 1024 / 1024
             uptime = int(time.time() - self.start_time) if hasattr(self, 'start_time') else 0
             logger.info(f"Shutdown stats - Memory: {memory_mb:.1f}MB, Uptime: {uptime}s")
-        except:
+        except Exception:
+            # Ignore stats collection errors during shutdown
             pass
             
         self.running = False
-        if self.bot:
-            asyncio.create_task(self.bot.close())
+        # Note: Bot cleanup is handled in the finally block of run_bot()
+        # Setting self.running = False triggers graceful shutdown through the main loop
     
     async def _discord_login_loop(self):
         """Background task to handle Discord bot login with retries - DOES NOT affect webhook bots"""
@@ -176,9 +196,57 @@ class ORAKLRunner:
             memory_mb = process.memory_info().rss / 1024 / 1024
             logger.info(f"Memory usage before bot start: {memory_mb:.1f}MB")
             
-            # Start auto-posting bots in background
-            bot_task = asyncio.create_task(self.bot_manager.start_all())
-            logger.info("✓ Enhanced auto-posting bots started successfully")
+            # =========================================================================
+            # ORAKL v2.0: Choose Kafka Mode or REST Polling Mode
+            # =========================================================================
+            kafka_task = None
+            flow_bot_task = None
+            state_bot_task = None
+            
+            if Config.KAFKA_ENABLED and KAFKA_AVAILABLE:
+                # KAFKA MODE: Real-time event-driven architecture
+                logger.info("=" * 60)
+                logger.info("KAFKA MODE ENABLED - Real-time Event-Driven Architecture")
+                logger.info("=" * 60)
+                
+                self.kafka_mode_active = True
+                
+                # Initialize Trade Enricher
+                self.trade_enricher = TradeEnricher(fetcher)
+                logger.info("✓ Trade Enricher initialized")
+                
+                # Start State Bots (League B) on scheduled polling
+                state_bot_task = asyncio.create_task(self.bot_manager.start_state_bots())
+                logger.info(f"✓ State bots started: {self.bot_manager.get_state_bot_names()}")
+                
+                # Initialize Kafka listener (Flow bots triggered by events)
+                self.kafka_listener = KafkaFlowListener(
+                    callback=self._handle_kafka_event,
+                    on_disconnect=self._on_kafka_disconnect,
+                    on_reconnect=self._on_kafka_reconnect
+                )
+                
+                # Start Kafka consumer
+                kafka_task = asyncio.create_task(self._run_kafka_consumer())
+                logger.info(f"✓ Kafka listener started on topic: {Config.KAFKA_TOPIC}")
+                logger.info(f"✓ Flow bots will receive events: {self.bot_manager.get_flow_bot_names()}")
+                
+                # Use kafka_task as the main bot_task
+                bot_task = state_bot_task
+                
+            else:
+                # REST POLLING MODE: Legacy scheduled scanning
+                logger.info("=" * 60)
+                logger.info("REST POLLING MODE - Scheduled Scanning Architecture")
+                if Config.KAFKA_ENABLED and not KAFKA_AVAILABLE:
+                    logger.warning("Kafka enabled but modules not available - falling back to REST")
+                logger.info("=" * 60)
+                
+                self.kafka_mode_active = False
+                
+                # Start all bots in REST polling mode
+                bot_task = asyncio.create_task(self.bot_manager.start_all())
+                logger.info("✓ All bots started in REST polling mode")
             
             # Log memory after starting bots
             await asyncio.sleep(2)  # Give bots time to initialize
@@ -191,10 +259,11 @@ class ORAKLRunner:
             
             # Log bot status with accurate reporting
             status = self.bot_manager.get_bot_status()
-            logger.info(f"Active bots: {status['total_bots']}")
+            logger.info(f"Active bots: {status['total_bots']} ({status.get('flow_bots', 0)} flow, {status.get('state_bots', 0)} state)")
             for bot_info in status['bots']:
                 status_emoji = "✓" if bot_info['running'] else "✗"
-                logger.info(f"  {status_emoji} {bot_info['name']}: Scan interval {bot_info['scan_interval']}s")
+                league = bot_info.get('league', 'Unknown')
+                logger.info(f"  {status_emoji} {bot_info['name']} [{league}]: Scan interval {bot_info['scan_interval']}s")
 
             # Start heartbeat task to prevent Render timeout
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
@@ -359,6 +428,117 @@ class ORAKLRunner:
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
                 await asyncio.sleep(5)
+    
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event-Driven Methods
+    # =========================================================================
+    
+    async def _run_kafka_consumer(self):
+        """Run the Kafka consumer with automatic restart on failure"""
+        retry_count = 0
+        max_retries = 10
+        
+        while self.running and self.kafka_mode_active:
+            try:
+                if self.kafka_listener:
+                    await self.kafka_listener.start()
+                break  # Clean exit
+                
+            except Exception as e:
+                retry_count += 1
+                logger.error(f"Kafka consumer error (attempt {retry_count}/{max_retries}): {e}")
+                
+                if retry_count >= max_retries:
+                    logger.critical("Max Kafka retries exceeded, activating REST fallback")
+                    await self._activate_fallback()
+                    break
+                
+                # Exponential backoff
+                wait_time = min(30 * (2 ** (retry_count - 1)), 300)
+                logger.info(f"Retrying Kafka connection in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+    
+    async def _handle_kafka_event(self, trade_data: dict):
+        """
+        Handle a single trade event from Kafka.
+        
+        Flow:
+        1. Enrich with Polygon snapshot (Greeks, OI, Bid/Ask)
+        2. Dispatch to all flow bots
+        3. Log any alerts generated
+        """
+        try:
+            symbol = trade_data.get('symbol', 'UNKNOWN')
+            premium = trade_data.get('premium', 0)
+            
+            logger.debug(f"Kafka event received: {symbol} ${premium:,.0f}")
+            
+            # Enrich with Polygon data (Just-in-Time fetch)
+            if self.trade_enricher:
+                enriched = await self.trade_enricher.enrich(trade_data)
+                if not enriched:
+                    logger.debug(f"Enrichment failed for {symbol}, using raw data")
+                    enriched = trade_data
+            else:
+                enriched = trade_data
+            
+            # Dispatch to flow bots
+            if self.bot_manager:
+                alerts = await self.bot_manager.process_single_event(enriched)
+                
+                if alerts:
+                    logger.info(f"Generated {len(alerts)} alert(s) from {symbol} event")
+                    
+                    # Bridge: Trigger Gamma update on massive flow
+                    if premium >= 500000:  # $500K+ triggers GEX refresh
+                        asyncio.create_task(
+                            self.bot_manager.trigger_gamma_update(symbol)
+                        )
+                        
+        except Exception as e:
+            logger.error(f"Error handling Kafka event: {e}")
+    
+    async def _on_kafka_disconnect(self):
+        """Called when Kafka connection is lost - activate REST fallback"""
+        if not self.fallback_active:
+            logger.warning("Kafka disconnected, activating REST fallback for flow bots")
+            await self._activate_fallback()
+    
+    async def _on_kafka_reconnect(self):
+        """Called when Kafka connection is restored - deactivate fallback"""
+        if self.fallback_active:
+            logger.info("Kafka reconnected, deactivating REST fallback")
+            await self._deactivate_fallback()
+    
+    async def _activate_fallback(self):
+        """Activate REST polling fallback for flow bots"""
+        if self.fallback_active:
+            return
+        
+        self.fallback_active = True
+        logger.info("Activating REST polling fallback for flow bots...")
+        
+        # Start flow bots in REST polling mode
+        if self.bot_manager:
+            asyncio.create_task(self.bot_manager.start_flow_bots_polling())
+        
+        logger.info("REST fallback activated - flow bots now polling")
+    
+    async def _deactivate_fallback(self):
+        """Deactivate REST polling fallback (Kafka is back)"""
+        if not self.fallback_active:
+            return
+        
+        self.fallback_active = False
+        logger.info("Deactivating REST fallback - Kafka mode resumed")
+        
+        # Stop flow bots REST polling (they will receive events from Kafka)
+        if self.bot_manager:
+            for bot in self.bot_manager.flow_bots:
+                if bot.running:
+                    await bot.stop()
+        
+        logger.info("Flow bots stopped REST polling, now receiving Kafka events")
     
     async def main(self):
         """Main execution"""

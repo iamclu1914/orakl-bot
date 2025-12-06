@@ -96,6 +96,131 @@ class LottoBot(BaseAutoBot):
             f"min_otm={self.min_otm_pct*100:.0f}%"
         )
     
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event Processing
+    # =========================================================================
+    
+    async def process_event(self, enriched_trade: Dict) -> Optional[Dict]:
+        """
+        Process a single enriched trade event from Kafka for Lotto plays.
+        
+        Evaluates if the trade qualifies as a Lotto alert based on:
+        - Price < $0.15 (cheap lottery ticket)
+        - Vol/OI > 50x (explosive interest)
+        - OTM > 10% (speculative moonshot)
+        
+        Args:
+            enriched_trade: Trade data enriched with Greeks, OI, Bid/Ask
+            
+        Returns:
+            Alert payload dict if trade qualifies, None otherwise
+        """
+        try:
+            symbol = enriched_trade.get('symbol', '')
+            
+            # Extract key fields
+            contract_price = float(enriched_trade.get('trade_price', 0))
+            strike = float(enriched_trade.get('strike_price', 0))
+            underlying_price = float(enriched_trade.get('underlying_price', 0))
+            contract_type = enriched_trade.get('contract_type', '').upper()
+            open_interest = int(enriched_trade.get('open_interest', 0))
+            day_volume = int(enriched_trade.get('day_volume', 0))
+            premium = float(enriched_trade.get('premium', 0))
+            
+            # Use mid price if trade_price not available
+            if contract_price <= 0:
+                bid = float(enriched_trade.get('current_bid', 0))
+                ask = float(enriched_trade.get('current_ask', 0))
+                if bid > 0 and ask > 0:
+                    contract_price = (bid + ask) / 2
+                else:
+                    return None
+            
+            # Validate required fields
+            if not all([symbol, strike, underlying_price, contract_type]):
+                return None
+            
+            # Check price threshold (must be cheap)
+            if contract_price > self.max_price:
+                return None  # Too expensive for lotto play
+            
+            # Calculate OTM percentage
+            if underlying_price > 0:
+                if contract_type == 'CALL':
+                    otm_pct = max(0, (strike - underlying_price) / underlying_price)
+                else:
+                    otm_pct = max(0, (underlying_price - strike) / underlying_price)
+            else:
+                return None
+            
+            # Check OTM threshold (must be far OTM)
+            if otm_pct < self.min_otm_pct:
+                return None  # Not far enough OTM
+            
+            # Calculate Vol/OI ratio
+            if open_interest > 0:
+                vol_oi_ratio = day_volume / open_interest
+            else:
+                vol_oi_ratio = float(day_volume)  # No OI = likely new contract
+            
+            # Check Vol/OI ratio (must be explosive)
+            if vol_oi_ratio < self.min_vol_oi_ratio:
+                return None  # Not enough explosive interest
+            
+            # Check minimum volume
+            if day_volume < self.min_volume:
+                return None
+            
+            # Check minimum premium
+            if premium < self.min_premium:
+                return None
+            
+            # Check cooldown
+            cooldown_key = f"{symbol}_{contract_type}_{strike}"
+            if self._cooldown_active(cooldown_key, self.cooldown_seconds):
+                return None
+            
+            # Build candidate
+            candidate = LottoCandidate(
+                symbol=symbol,
+                option_ticker=enriched_trade.get('contract_ticker', ''),
+                strike=strike,
+                expiration=enriched_trade.get('expiration_date', ''),
+                contract_type=contract_type,
+                price=contract_price,
+                volume=day_volume,
+                open_interest=open_interest,
+                vol_oi_ratio=vol_oi_ratio,
+                otm_pct=otm_pct,
+                premium=premium
+            )
+            
+            # Mark cooldown
+            self._mark_cooldown(cooldown_key)
+            
+            # Post the signal
+            await self._post_lotto_alert(candidate, underlying_price)
+            
+            logger.info(
+                f"{self.name} ALERT: {symbol} {contract_type} "
+                f"${contract_price:.2f} vol/OI={vol_oi_ratio:.0f}x OTM={otm_pct*100:.0f}%"
+            )
+            
+            return {
+                'symbol': symbol,
+                'type': contract_type,
+                'strike': strike,
+                'price': contract_price,
+                'vol_oi_ratio': vol_oi_ratio,
+                'otm_pct': otm_pct,
+                'premium': premium,
+                'kafka_event': True
+            }
+            
+        except Exception as e:
+            logger.error(f"{self.name} error processing event: {e}")
+            return None
+    
     async def scan_and_post(self):
         """
         Main scan loop - finds lotto plays across watchlist.

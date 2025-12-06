@@ -89,6 +89,202 @@ class SweepsBot(BaseAutoBot):
         self._golden_bot_last_healthy: Optional[datetime] = None
         self._golden_fallback_threshold_seconds = 600  # 10 minutes without golden = emit fallback
 
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event Processing
+    # =========================================================================
+    
+    async def process_event(self, enriched_trade: Dict) -> Optional[Dict]:
+        """
+        Process a single enriched trade event from Kafka.
+        
+        Evaluates if the trade qualifies as a sweep alert based on:
+        - Premium threshold ($750K - $1M for Sweeps, $1M+ goes to Golden)
+        - Strike distance from spot
+        - Volume/OI ratio
+        - Cooldown check
+        
+        Args:
+            enriched_trade: Trade data enriched with Greeks, OI, Bid/Ask
+            
+        Returns:
+            Alert payload dict if trade qualifies, None otherwise
+        """
+        try:
+            symbol = enriched_trade.get('symbol', '')
+            premium = float(enriched_trade.get('premium', 0))
+            
+            # Skip if below minimum premium
+            if premium < self.MIN_SWEEP_PREMIUM:
+                return None
+            
+            # Skip if above max (should go to Golden Sweeps)
+            if premium >= self.MAX_SWEEP_PREMIUM:
+                logger.debug(f"{self.name} skipping {symbol} - premium ${premium:,.0f} >= Golden threshold")
+                return None
+            
+            # Extract key fields
+            strike = float(enriched_trade.get('strike_price', 0))
+            underlying_price = float(enriched_trade.get('underlying_price', 0))
+            contract_type = enriched_trade.get('contract_type', '').upper()
+            open_interest = int(enriched_trade.get('open_interest', 0))
+            day_volume = int(enriched_trade.get('day_volume', 0))
+            trade_size = int(enriched_trade.get('trade_size', 0))
+            delta = float(enriched_trade.get('delta', 0))
+            dte = int(enriched_trade.get('dte', 0))
+            
+            # Validate required fields
+            if not all([symbol, strike, underlying_price, contract_type]):
+                return None
+            
+            # Calculate strike distance
+            if underlying_price > 0:
+                strike_distance = abs(strike - underlying_price) / underlying_price * 100
+            else:
+                return None
+            
+            # Calculate effective max strike distance
+            max_strike_distance = self.MAX_STRIKE_DISTANCE
+            
+            # Tiered extension based on premium
+            for tier_premium, tier_extension in self.STRIKE_DISTANCE_PREMIUM_TIERS:
+                if premium >= tier_premium:
+                    max_strike_distance = tier_extension
+                    break
+            
+            # Short DTE extension
+            if dte <= self.SHORT_DTE_THRESHOLD:
+                max_strike_distance += self.SHORT_DTE_STRIKE_EXTENSION
+            
+            # Check strike distance
+            if strike_distance > max_strike_distance:
+                self._log_skip(symbol, f"strike distance {strike_distance:.1f}% > max {max_strike_distance:.1f}%")
+                return None
+            
+            # Calculate volume/OI ratio
+            if open_interest > 0:
+                vol_oi_ratio = day_volume / open_interest
+            else:
+                vol_oi_ratio = 1.0
+            
+            # Check volume ratio
+            if vol_oi_ratio < self.MIN_VOLUME_RATIO:
+                # Allow flexibility for massive premiums
+                flex_threshold = self.MIN_VOLUME_RATIO * self.VOLUME_RATIO_FLEX_MULTIPLIER
+                if not (premium >= self.STRIKE_DISTANCE_OVERRIDE_PREMIUM and vol_oi_ratio >= flex_threshold):
+                    self._log_skip(symbol, f"vol/OI ratio {vol_oi_ratio:.2f}x < {self.MIN_VOLUME_RATIO:.2f}x")
+                    return None
+            
+            # Check cooldown
+            cooldown_key = f"{symbol}_{contract_type}_{strike}_{enriched_trade.get('expiration_date', '')}"
+            if self._cooldown_active(cooldown_key, self.symbol_cooldown_seconds):
+                self._log_skip(symbol, "cooldown active")
+                return None
+            
+            # Calculate sweep score
+            score = self._calculate_sweep_score(enriched_trade, vol_oi_ratio, strike_distance)
+            
+            if score < self.MIN_SCORE:
+                self._log_skip(symbol, f"score {score} < min {self.MIN_SCORE}")
+                return None
+            
+            # Build sweep data structure
+            sweep = {
+                'symbol': symbol,
+                'type': contract_type if contract_type in ['CALL', 'PUT'] else 'CALL',
+                'strike': strike,
+                'expiration': enriched_trade.get('expiration_date', ''),
+                'premium': premium,
+                'volume': day_volume,
+                'volume_delta': trade_size,
+                'open_interest': open_interest,
+                'vol_oi_ratio': vol_oi_ratio,
+                'volume_ratio': vol_oi_ratio,
+                'underlying_price': underlying_price,
+                'strike_distance': strike_distance,
+                'delta': delta,
+                'dte': dte,
+                'moneyness': self._classify_moneyness(strike, underlying_price, contract_type),
+                'score': score,
+                'sweep_score': score,
+                'execution_type': 'SWEEP',
+                'contract_price': enriched_trade.get('trade_price', premium / max(trade_size * 100, 1)),
+                'kafka_event': True,
+                'event_timestamp': enriched_trade.get('event_timestamp'),
+            }
+            
+            # Mark cooldown
+            self._mark_cooldown(cooldown_key)
+            
+            # Post the signal
+            await self._post_signal(sweep)
+            
+            logger.info(f"{self.name} ALERT: {symbol} {contract_type} sweep ${premium:,.0f} score={score}")
+            
+            return sweep
+            
+        except Exception as e:
+            logger.error(f"{self.name} error processing event: {e}")
+            return None
+    
+    def _calculate_sweep_score(self, trade: Dict, vol_oi_ratio: float, strike_distance: float) -> int:
+        """Calculate conviction score for a sweep trade."""
+        score = 50  # Base score
+        
+        premium = float(trade.get('premium', 0))
+        delta = abs(float(trade.get('delta', 0)))
+        dte = int(trade.get('dte', 0))
+        
+        # Premium tiers
+        if premium >= 1000000:
+            score += 25
+        elif premium >= 800000:
+            score += 20
+        elif premium >= 750000:
+            score += 15
+        
+        # Volume/OI ratio
+        if vol_oi_ratio >= 3.0:
+            score += 15
+        elif vol_oi_ratio >= 2.0:
+            score += 10
+        elif vol_oi_ratio >= 1.5:
+            score += 5
+        
+        # Strike distance (closer is better)
+        if strike_distance < 2.0:
+            score += 10
+        elif strike_distance < 5.0:
+            score += 5
+        
+        # Delta (ATM range preferred)
+        if 0.35 <= delta <= 0.65:
+            score += 10
+        elif 0.25 <= delta <= 0.75:
+            score += 5
+        
+        # DTE (short-term = higher conviction)
+        if 0 < dte <= 7:
+            score += 10
+        elif 7 < dte <= 14:
+            score += 5
+        
+        return min(score, 100)
+    
+    def _classify_moneyness(self, strike: float, spot: float, option_type: str) -> str:
+        """Classify option as ITM, ATM, or OTM."""
+        if spot <= 0:
+            return 'ATM'
+        
+        distance = abs(strike - spot) / spot
+        
+        if distance < 0.02:
+            return 'ATM'
+        
+        if option_type == 'CALL':
+            return 'ITM' if strike < spot else 'OTM'
+        else:
+            return 'ITM' if strike > spot else 'OTM'
+
     @timed()
     async def scan_and_post(self):
         """

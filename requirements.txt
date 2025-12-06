@@ -12,6 +12,9 @@ pandas>=2.0.0
 numpy>=1.24.0
 polygon-api-client>=1.12.0  # REST API support for real-time options and stock data
 
+# Event-driven architecture (Kafka)
+confluent-kafka>=2.3.0  # Confluent Cloud consumer for processed-flows topic
+
 # Database (for STRAT bot persistence)
 sqlalchemy>=2.0.0  # Database ORM for pattern storage
 

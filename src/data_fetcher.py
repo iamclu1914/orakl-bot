@@ -928,6 +928,56 @@ class DataFetcher:
             logger.debug(f"Error fetching snapshot for {option_ticker}: {e}")
             return None
 
+    async def get_single_option_snapshot(
+        self,
+        underlying: str,
+        contract_ticker: str
+    ) -> Optional[Dict]:
+        """
+        Get snapshot for a single options contract for Kafka enrichment.
+        
+        This method is optimized for the event-driven architecture where
+        we need to quickly enrich a single trade with Greeks, OI, and Bid/Ask.
+        
+        Uses the v3 API endpoint which provides more complete data including
+        underlying asset information.
+        
+        Args:
+            underlying: Underlying symbol (e.g., "AAPL")
+            contract_ticker: Contract ticker without O: prefix (e.g., "AAPL240216C00185000")
+            
+        Returns:
+            Contract snapshot dict with greeks, day data, quotes, and underlying info
+            Returns None if fetch fails
+        """
+        try:
+            # Clean the contract ticker (remove O: prefix if present)
+            clean_ticker = contract_ticker
+            if clean_ticker.startswith('O:'):
+                clean_ticker = clean_ticker[2:]
+            
+            # Try v3 endpoint first (more complete data)
+            endpoint = f"/v3/snapshot/options/{underlying}/{clean_ticker}"
+            data = await self._make_request(endpoint)
+            
+            if data and isinstance(data, dict):
+                results = data.get('results')
+                if isinstance(results, dict):
+                    return results
+            
+            # Fallback to v2 endpoint if v3 fails
+            logger.debug(f"v3 snapshot failed for {contract_ticker}, trying v2")
+            return await self.get_option_contract_snapshot(clean_ticker)
+            
+        except Exception as e:
+            # On any error, try v2 endpoint as fallback
+            logger.debug(f"Error fetching v3 snapshot for {contract_ticker}: {e}")
+            try:
+                return await self.get_option_contract_snapshot(contract_ticker)
+            except Exception as e2:
+                logger.debug(f"Fallback v2 snapshot also failed: {e2}")
+                return None
+
     async def get_gamma_profile(self, underlying: str) -> Optional[Dict]:
         """Compute aggregated gamma exposure profile for an underlying."""
 

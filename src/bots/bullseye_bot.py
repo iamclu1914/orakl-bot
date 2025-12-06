@@ -92,6 +92,218 @@ class BullseyeBot(BaseAutoBot):
         # Skip expensive validation API calls (candles, trend) - use local filtering only
         self.skip_expensive_validation = getattr(Config, 'BULLSEYE_SKIP_EXPENSIVE_VALIDATION', True)
 
+    # =========================================================================
+    # ORAKL v2.0: Kafka Event Processing
+    # =========================================================================
+    
+    async def process_event(self, enriched_trade: Dict) -> Optional[Dict]:
+        """
+        Process a single enriched trade event from Kafka for institutional blocks.
+        
+        Evaluates if the trade qualifies as a Bullseye alert based on:
+        - Premium threshold ($1M+)
+        - Block size (400+ contracts)
+        - DTE range (1-30 days)
+        - OTM distance (<12%)
+        - Vol/OI ratio (fresh positioning)
+        
+        Args:
+            enriched_trade: Trade data enriched with Greeks, OI, Bid/Ask
+            
+        Returns:
+            Alert payload dict if trade qualifies, None otherwise
+        """
+        try:
+            symbol = enriched_trade.get('symbol', '')
+            premium = float(enriched_trade.get('premium', 0))
+            
+            # Skip if below minimum premium
+            if premium < self.min_premium:
+                return None
+            
+            # Extract key fields
+            strike = float(enriched_trade.get('strike_price', 0))
+            underlying_price = float(enriched_trade.get('underlying_price', 0))
+            contract_type = enriched_trade.get('contract_type', '').upper()
+            open_interest = int(enriched_trade.get('open_interest', 0))
+            day_volume = int(enriched_trade.get('day_volume', 0))
+            trade_size = int(enriched_trade.get('trade_size', 0))
+            delta = float(enriched_trade.get('delta', 0))
+            dte = int(enriched_trade.get('dte', 0))
+            contract_price = float(enriched_trade.get('trade_price', 0))
+            bid = float(enriched_trade.get('current_bid', 0))
+            ask = float(enriched_trade.get('current_ask', 0))
+            
+            # Validate required fields
+            if not all([symbol, strike, underlying_price, contract_type]):
+                return None
+            
+            # Check DTE range
+            if dte < self.min_dte or dte > self.max_dte:
+                self._log_skip(symbol, f"DTE {dte} outside range [{self.min_dte}, {self.max_dte}]")
+                return None
+            
+            # Check contract price
+            if contract_price < self.min_price:
+                self._log_skip(symbol, f"contract price ${contract_price:.2f} < ${self.min_price:.2f}")
+                return None
+            
+            # Calculate OTM percentage
+            if underlying_price > 0:
+                if contract_type == 'CALL':
+                    otm_pct = max(0, (strike - underlying_price) / underlying_price)
+                else:
+                    otm_pct = max(0, (underlying_price - strike) / underlying_price)
+            else:
+                return None
+            
+            # Calculate max OTM with extension for massive premium
+            max_otm = self.max_percent_otm
+            if premium >= self.high_conviction_premium:
+                max_otm += self.percent_otm_extension
+            
+            # Check OTM distance
+            if otm_pct > max_otm:
+                self._log_skip(symbol, f"OTM {otm_pct*100:.1f}% > max {max_otm*100:.1f}%")
+                return None
+            
+            # Check block size (volume delta)
+            if trade_size < self.min_block_contracts:
+                self._log_skip(symbol, f"block size {trade_size} < {self.min_block_contracts}")
+                return None
+            
+            # Calculate Vol/OI ratio
+            if open_interest > 0:
+                vol_oi_ratio = day_volume / open_interest
+            else:
+                vol_oi_ratio = day_volume  # No OI = assume fresh
+            
+            # Check Vol/OI ratio (fresh positioning)
+            if vol_oi_ratio < self.min_voi_ratio:
+                self._log_skip(symbol, f"vol/OI {vol_oi_ratio:.2f} < {self.min_voi_ratio:.2f}")
+                return None
+            
+            # Check bid-ask spread
+            if bid > 0 and ask > 0:
+                spread_pct = (ask - bid) / ((ask + bid) / 2) * 100
+                if spread_pct > self.max_spread_pct:
+                    # Allow wider spreads for massive premium
+                    if not (premium >= self.midprint_premium_override and spread_pct <= self.midprint_spread_pct_cap):
+                        self._log_skip(symbol, f"spread {spread_pct:.1f}% > max {self.max_spread_pct:.1f}%")
+                        return None
+            
+            # Check cooldown
+            cooldown_key = f"{symbol}_{contract_type}_{strike}_{enriched_trade.get('expiration_date', '')}"
+            if self._cooldown_active(cooldown_key, self.cooldown_seconds):
+                self._log_skip(symbol, "cooldown active")
+                return None
+            
+            # Calculate score
+            score = self._calculate_bullseye_score(enriched_trade, vol_oi_ratio, otm_pct)
+            
+            min_score = Config.BULLSEYE_MIN_SWEEP_SCORE
+            if score < min_score:
+                self._log_skip(symbol, f"score {score} < min {min_score}")
+                return None
+            
+            # Build alert data
+            alert = {
+                'symbol': symbol,
+                'ticker': symbol,
+                'type': contract_type if contract_type in ['CALL', 'PUT'] else 'CALL',
+                'strike': strike,
+                'expiration': enriched_trade.get('expiration_date', ''),
+                'premium': premium,
+                'volume': day_volume,
+                'volume_delta': trade_size,
+                'open_interest': open_interest,
+                'vol_oi_ratio': vol_oi_ratio,
+                'underlying_price': underlying_price,
+                'current_price': underlying_price,
+                'otm_pct': otm_pct * 100,
+                'delta': delta,
+                'dte': dte,
+                'days_to_expiry': dte,
+                'score': score,
+                'ai_score': score,
+                'contract_price': contract_price,
+                'bid': bid,
+                'ask': ask,
+                'moneyness': 'ITM' if otm_pct == 0 else ('ATM' if otm_pct < 0.02 else 'OTM'),
+                'execution_type': 'BLOCK',
+                'kafka_event': True,
+                'event_timestamp': enriched_trade.get('event_timestamp'),
+            }
+            
+            # Mark cooldown
+            self._mark_cooldown(cooldown_key)
+            
+            # Post the signal
+            await self._post_signal(alert)
+            
+            logger.info(f"{self.name} ALERT: {symbol} {contract_type} block ${premium:,.0f} score={score}")
+            
+            return alert
+            
+        except Exception as e:
+            logger.error(f"{self.name} error processing event: {e}")
+            return None
+    
+    def _calculate_bullseye_score(self, trade: Dict, vol_oi_ratio: float, otm_pct: float) -> int:
+        """Calculate conviction score for an institutional block trade."""
+        score = 50  # Base score
+        
+        premium = float(trade.get('premium', 0))
+        trade_size = int(trade.get('trade_size', 0))
+        delta = abs(float(trade.get('delta', 0)))
+        dte = int(trade.get('dte', 0))
+        
+        # Premium tiers (institutional size)
+        if premium >= 5000000:
+            score += 30
+        elif premium >= 2000000:
+            score += 25
+        elif premium >= 1500000:
+            score += 20
+        elif premium >= 1000000:
+            score += 15
+        
+        # Block size
+        if trade_size >= 1000:
+            score += 15
+        elif trade_size >= 600:
+            score += 10
+        elif trade_size >= 400:
+            score += 5
+        
+        # Vol/OI ratio (fresh positioning)
+        if vol_oi_ratio >= 3.0:
+            score += 10
+        elif vol_oi_ratio >= 2.0:
+            score += 7
+        elif vol_oi_ratio >= 1.5:
+            score += 5
+        
+        # OTM distance (closer is better)
+        if otm_pct < 0.02:
+            score += 10  # ATM
+        elif otm_pct < 0.05:
+            score += 7
+        elif otm_pct < 0.08:
+            score += 5
+        
+        # Delta (sweet spot range)
+        if 0.35 <= delta <= 0.65:
+            score += 5
+        
+        # DTE (short-term = higher conviction)
+        if 1 <= dte <= 7:
+            score += 10
+        elif 7 < dte <= 14:
+            score += 5
+        
+        return min(score, 100)
+
     async def start(self):
         await self._ensure_subscription()
         await super().start()
