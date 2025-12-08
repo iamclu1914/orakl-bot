@@ -62,32 +62,39 @@ class TradeEnricher:
         self.failed_enrichments = 0
         self.timeouts = 0
     
-    def _clean_contract_ticker(self, raw_ticker: str) -> str:
+    def _ensure_o_prefix(self, raw_ticker: str) -> str:
         """
-        Strip O: prefix if present for Polygon API compatibility.
+        Ensure O: prefix is present for Polygon API.
+        
+        The Polygon v3 snapshot API REQUIRES the O: prefix on contract tickers.
         
         Args:
-            raw_ticker: Contract ticker, e.g., "O:AAPL240216C00185000"
+            raw_ticker: Contract ticker, e.g., "AAPL240216C00185000" or "O:AAPL240216C00185000"
             
         Returns:
-            Cleaned ticker, e.g., "AAPL240216C00185000"
+            Ticker with O: prefix, e.g., "O:AAPL240216C00185000"
         """
         if raw_ticker.startswith('O:'):
-            return raw_ticker[2:]
-        return raw_ticker
+            return raw_ticker
+        return f"O:{raw_ticker}"
     
     def _extract_underlying(self, contract_ticker: str) -> str:
         """
         Extract underlying symbol from options contract ticker.
         
+        Handles special cases like:
+        - O: prefix stripping (for parsing only)
+        - SPXW -> SPX mapping (weekly vs standard index options)
+        - VIXW -> VIX mapping
+        
         Args:
-            contract_ticker: e.g., "AAPL240216C00185000"
+            contract_ticker: e.g., "O:AAPL240216C00185000" or "O:SPXW241208C06100000"
             
         Returns:
-            Underlying symbol, e.g., "AAPL"
+            Underlying symbol, e.g., "AAPL" or "SPX"
         """
-        # Clean first
-        ticker = self._clean_contract_ticker(contract_ticker)
+        # Strip O: prefix for parsing (we only need it for API calls)
+        ticker = contract_ticker[2:] if contract_ticker.startswith('O:') else contract_ticker
         
         # Extract alphabetic prefix (underlying symbol)
         underlying = ''
@@ -96,6 +103,12 @@ class TradeEnricher:
                 underlying += char
             else:
                 break
+        
+        # Handle weekly index options (SPXW -> SPX, VIXW -> VIX, NDXW -> NDX)
+        if underlying.endswith('W') and len(underlying) > 1:
+            base = underlying[:-1]
+            if base in ('SPX', 'VIX', 'NDX', 'DJX', 'RUT'):
+                underlying = base
         
         return underlying if underlying else ticker[:4]  # Fallback to first 4 chars
     
@@ -119,19 +132,20 @@ class TradeEnricher:
             self.failed_enrichments += 1
             return None
         
-        # Clean and extract
-        clean_ticker = self._clean_contract_ticker(contract_ticker)
+        # Ensure O: prefix is present (required by Polygon v3 API)
+        api_ticker = self._ensure_o_prefix(contract_ticker)
         underlying = trade_data.get('symbol') or self._extract_underlying(contract_ticker)
         
         try:
             # Fetch single contract snapshot with timeout
+            # Pass full ticker with O: prefix to data fetcher
             snapshot = await asyncio.wait_for(
-                self.fetcher.get_single_option_snapshot(underlying, clean_ticker),
+                self.fetcher.get_single_option_snapshot(underlying, api_ticker),
                 timeout=self.timeout
             )
             
             if not snapshot:
-                logger.debug(f"No snapshot data for {clean_ticker}")
+                logger.debug(f"No snapshot data for {api_ticker}")
                 self.failed_enrichments += 1
                 # Return original data without enrichment
                 return self._build_minimal_enriched(trade_data, underlying)
@@ -148,14 +162,14 @@ class TradeEnricher:
             return enriched
             
         except asyncio.TimeoutError:
-            logger.warning(f"Enrichment timeout for {clean_ticker} ({self.timeout}s)")
+            logger.warning(f"Enrichment timeout for {underlying} ({self.timeout}s)")
             self.timeouts += 1
             self.failed_enrichments += 1
             # Return original data without enrichment (better than nothing)
             return self._build_minimal_enriched(trade_data, underlying)
             
         except Exception as e:
-            logger.error(f"Error enriching {clean_ticker}: {e}")
+            logger.error(f"Error enriching {underlying} ({api_ticker}): {e}")
             self.failed_enrichments += 1
             return self._build_minimal_enriched(trade_data, underlying)
     
