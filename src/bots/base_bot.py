@@ -516,6 +516,11 @@ class BaseAutoBot(ABC):
                 if not self.should_run_now():
                     sleep_time = self._inactive_sleep_duration()
                     logger.debug(f"{self.name} outside active trading window, sleeping {sleep_time}s")
+                    
+                    # Fix: Update last scan time even when skipping to keep health check happy
+                    # This prevents "unhealthy" status during extended market closures
+                    self.metrics.last_scan_time = datetime.now()
+                    
                     await asyncio.sleep(sleep_time)
                     continue
 

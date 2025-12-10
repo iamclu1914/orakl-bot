@@ -74,10 +74,10 @@ class Config:
     REPEAT_SIGNAL_THRESHOLD = int(os.getenv('REPEAT_SIGNAL_THRESHOLD', '3'))
     SUCCESS_RATE_THRESHOLD = float(os.getenv('SUCCESS_RATE_THRESHOLD', '0.80'))
     
-    # Bot-specific Thresholds - OPTIMIZED FOR QUALITY
-    GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # $1M (true institutional size)
-    SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '750000'))  # $750K (raised for conviction)
-    SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('SWEEPS_MIN_VOLUME_RATIO', '1.3'))  # 1.3x (raised)
+    # Bot-specific Thresholds - OPTIMIZED FOR QUALITY (BALANCED PRESET)
+    GOLDEN_MIN_PREMIUM = float(os.getenv('GOLDEN_MIN_PREMIUM', '1000000'))  # Keep Golden high ($1M+)
+    SWEEPS_MIN_PREMIUM = float(os.getenv('SWEEPS_MIN_PREMIUM', '250000'))   # Lowered to $250k (Industry Std)
+    SWEEPS_MIN_VOLUME_RATIO = float(os.getenv('SWEEPS_MIN_VOLUME_RATIO', '1.25'))  # 1.25x (Balanced)
     SWEEPS_MIN_ALIGNMENT_CONFIDENCE = int(os.getenv('SWEEPS_MIN_ALIGNMENT_CONFIDENCE', '20'))
     SWEEPS_MAX_STRIKE_DISTANCE = float(os.getenv('SWEEPS_MAX_STRIKE_DISTANCE', '0.06'))  # 6% max OTM (new)
     SWEEPS_COOLDOWN_SECONDS = int(os.getenv('SWEEPS_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown (new)
@@ -89,7 +89,7 @@ class Config:
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
     
     # Bullseye Bot Thresholds (institutional swing trades - OPTIMIZED FOR QUALITY)
-    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '1000000'))  # $1M minimum (institutional size)
+    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '750000'))  # Lowered to $750k (Balanced)
     BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2000'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
     BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '30.0'))  # 30 days max (tightened)
