@@ -19,8 +19,9 @@ Only 1 Polygon API call per trade that passes the pre-filter.
 
 import asyncio
 import logging
+import re
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 
 from src.config import Config
 from src.data_fetcher import DataFetcher
@@ -62,75 +63,58 @@ class TradeEnricher:
         self.failed_enrichments = 0
         self.timeouts = 0
     
-    def _ensure_o_prefix(self, raw_ticker: str) -> str:
+    def parse_polygon_ticker(self, ticker: str) -> Tuple[Optional[str], str]:
         """
-        Ensure O: prefix is present for Polygon API.
+        Parses a Polygon option ticker and returns the correct underlying + contract ID.
         
-        The Polygon v3 snapshot API REQUIRES the O: prefix on contract tickers.
+        This is the SINGLE SOURCE OF TRUTH for parsing option tickers.
         
         Args:
-            raw_ticker: Contract ticker, e.g., "AAPL240216C00185000" or "O:AAPL240216C00185000"
+            ticker: Raw ticker from Kafka (e.g., "O:SPXW240216C04500000" or "AAPL240216C00150000")
             
         Returns:
-            Ticker with O: prefix, e.g., "O:AAPL240216C00185000"
-        """
-        if raw_ticker.startswith('O:'):
-            return raw_ticker
-        return f"O:{raw_ticker}"
-    
-    # Weekly index options map to their base symbol for API calls
-    WEEKLY_TO_BASE = {
-        'SPXW': 'SPX',
-        'VIXW': 'VIX',
-        'NDXW': 'NDX',
-        'DJXW': 'DJX',
-        'RUTW': 'RUT',
-    }
-    
-    def _normalize_underlying(self, underlying: str) -> str:
-        """
-        Normalize underlying symbol for API calls.
-        
-        Maps weekly variants to base symbols (SPXW -> SPX) since
-        Polygon API only recognizes base index symbols.
-        
-        Args:
-            underlying: Raw underlying symbol (e.g., "SPXW", "AAPL")
+            Tuple of (underlying_asset, contract_id):
+            - underlying_asset: The underlying for Polygon API (e.g., "I:SPX", "AAPL")
+            - contract_id: Full contract ID with O: prefix (e.g., "O:SPXW240216C04500000")
             
-        Returns:
-            Normalized symbol (e.g., "SPX", "AAPL")
+        Examples:
+            "O:SPXW240216C04500000" -> ("I:SPX", "O:SPXW240216C04500000")
+            "O:AAPL240216C00150000" -> ("AAPL", "O:AAPL240216C00150000")
+            "GS241220C00500000"     -> ("GS", "O:GS241220C00500000")
         """
-        upper = underlying.upper()
-        return self.WEEKLY_TO_BASE.get(upper, upper)
-    
-    def _extract_underlying(self, contract_ticker: str) -> str:
-        """
-        Extract underlying symbol from options contract ticker.
+        # 1. Ensure we have the full contract ID (Keep O: prefix)
+        contract_id = ticker if ticker.startswith("O:") else f"O:{ticker}"
         
-        Handles special cases like:
-        - O: prefix stripping (for parsing only)
-        - SPXW -> SPX mapping (weekly vs standard index options)
-        - VIXW -> VIX mapping
+        # 2. Extract the alpha characters for the root (Remove O: prefix and Date/Strike)
+        # Regex: Look after 'O:', take letters until the first digit
+        clean_ticker = contract_id[2:] if contract_id.startswith("O:") else contract_id
+        match = re.match(r"([A-Z]+)", clean_ticker)
         
-        Args:
-            contract_ticker: e.g., "O:AAPL240216C00185000" or "O:SPXW241208C06100000"
-            
-        Returns:
-            Underlying symbol, e.g., "AAPL" or "SPX"
-        """
-        # Strip O: prefix for parsing (we only need it for API calls)
-        ticker = contract_ticker[2:] if contract_ticker.startswith('O:') else contract_ticker
+        if not match:
+            logger.warning(f"Could not parse root symbol from ticker: {ticker}")
+            return None, contract_id
         
-        # Extract alphabetic prefix (underlying symbol)
-        underlying = ''
-        for char in ticker:
-            if char.isalpha():
-                underlying += char
-            else:
-                break
+        root = match.group(1)
         
-        # Normalize (maps SPXW -> SPX, etc.)
-        return self._normalize_underlying(underlying) if underlying else ticker[:4]
+        # 3. Index Mapping (Critical for SPX, VIX, NDX)
+        # SPX and SPXW both belong to underlying "I:SPX"
+        if root in ['SPX', 'SPXW']:
+            return "I:SPX", contract_id
+        if root in ['VIX', 'VIXW']:
+            return "I:VIX", contract_id
+        if root in ['NDX', 'NDXW', 'NQX']:
+            return "I:NDX", contract_id
+        if root in ['DJX', 'DJXW']:
+            return "I:DJX", contract_id
+        if root in ['RUT', 'RUTW']:
+            return "I:RUT", contract_id
+        if root == 'XSP':
+            return "I:XSP", contract_id
+        if root == 'OEX':
+            return "I:OEX", contract_id
+        
+        # 4. Standard Stocks (AAPL, GS, PLAB) -> Just return the root
+        return root, contract_id
     
     async def enrich(self, trade_data: Dict) -> Optional[Dict]:
         """
@@ -145,28 +129,30 @@ class TradeEnricher:
         """
         self.total_enrichments += 1
         
-        # Get contract ticker
-        contract_ticker = trade_data.get('contract_ticker', '')
-        if not contract_ticker:
+        # Get contract ticker from Kafka message
+        raw_ticker = trade_data.get('contract_ticker', '')
+        if not raw_ticker:
             logger.warning("Trade event missing contract_ticker, cannot enrich")
             self.failed_enrichments += 1
             return None
         
-        # Ensure O: prefix is present (required by Polygon v3 API)
-        api_ticker = self._ensure_o_prefix(contract_ticker)
+        # PARSE CORRECTLY using single source of truth
+        underlying, contract_id = self.parse_polygon_ticker(raw_ticker)
         
-        # Get underlying - always extract from contract ticker to handle weekly symbols
-        # Kafka's 'symbol' field may have SPXW, but we need SPX for API
-        raw_underlying = trade_data.get('symbol') or self._extract_underlying(contract_ticker)
-        underlying = self._normalize_underlying(raw_underlying)
+        if not underlying:
+            logger.warning(f"Could not parse underlying from ticker: {raw_ticker}")
+            self.failed_enrichments += 1
+            return self._build_minimal_enriched(trade_data, raw_ticker[:4])
         
-        logger.debug(f"Enriching: underlying={underlying} (raw={raw_underlying}), ticker={api_ticker}")
+        # DEBUG LOG - Critical for diagnosing API issues
+        logger.info(f"Fetching Snapshot -> Underlying: {underlying} | Contract: {contract_id}")
         
         try:
             # Fetch single contract snapshot with timeout
-            # Pass full ticker with O: prefix to data fetcher
+            # underlying is CLEAN (e.g., "AAPL" or "I:SPX")
+            # contract_id has O: prefix (e.g., "O:AAPL240216C00185000")
             snapshot = await asyncio.wait_for(
-                self.fetcher.get_single_option_snapshot(underlying, api_ticker),
+                self.fetcher.get_single_option_snapshot(underlying, contract_id),
                 timeout=self.timeout
             )
             

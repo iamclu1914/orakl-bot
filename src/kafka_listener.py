@@ -191,16 +191,17 @@ class KafkaFlowListener:
                 trade_data['event_timestamp'] = datetime.utcnow().isoformat()
             
             # Handle 'ticker' field - this is the FULL contract ID (O:AAPL240216C00185000)
-            # NOT the underlying symbol
+            # Store it as contract_ticker for the TradeEnricher to parse
             if 'ticker' in raw_data:
                 trade_data['contract_ticker'] = raw_data['ticker']
-                # ALWAYS extract underlying from contract (handles SPXW -> SPX mapping)
-                trade_data['symbol'] = self._extract_underlying(raw_data['ticker'])
+                # Extract root symbol for logging/display only
+                # TradeEnricher.parse_polygon_ticker() handles proper API formatting
+                trade_data['symbol'] = self._extract_root_symbol(raw_data['ticker'])
                 logger.debug(f"Kafka: ticker={raw_data['ticker']} -> symbol={trade_data['symbol']}")
             
-            # Fallback: extract underlying if symbol still not set
+            # Fallback: extract symbol if still not set
             if 'symbol' not in trade_data and 'contract_ticker' in trade_data:
-                trade_data['symbol'] = self._extract_underlying(trade_data['contract_ticker'])
+                trade_data['symbol'] = self._extract_root_symbol(trade_data['contract_ticker'])
             
             return trade_data
             
@@ -211,24 +212,18 @@ class KafkaFlowListener:
             logger.error(f"Unexpected error parsing Kafka message: {e}")
             return None
     
-    # Weekly index options map to their base symbol
-    WEEKLY_TO_BASE = {
-        'SPXW': 'SPX',
-        'VIXW': 'VIX',
-        'NDXW': 'NDX',
-        'DJXW': 'DJX',
-        'RUTW': 'RUT',
-    }
-    
-    def _extract_underlying(self, contract_ticker: str) -> str:
+    def _extract_root_symbol(self, contract_ticker: str) -> str:
         """
-        Extract underlying symbol from options contract ticker.
+        Extract raw root symbol from options contract ticker for logging.
+        
+        NOTE: This is just for logging/display. The TradeEnricher handles
+        proper parsing and index mapping for API calls.
         
         Args:
-            contract_ticker: e.g., "O:AAPL240216C00185000" or "O:SPXW241210C06050000"
+            contract_ticker: e.g., "O:AAPL240216C00185000"
             
         Returns:
-            Underlying symbol, e.g., "AAPL" or "SPX" (not SPXW)
+            Root symbol (e.g., "AAPL", "SPXW") - NOT normalized
         """
         ticker = contract_ticker
         
@@ -236,21 +231,15 @@ class KafkaFlowListener:
         if ticker.startswith('O:'):
             ticker = ticker[2:]
         
-        # Extract letters at the beginning (underlying symbol)
-        # Options tickers are: SYMBOL + DATE + TYPE + STRIKE
-        # e.g., AAPL240216C00185000, SPXW241210C06050000
-        underlying = ''
+        # Extract letters at the beginning
+        root = ''
         for char in ticker:
             if char.isalpha():
-                underlying += char
+                root += char
             else:
                 break
         
-        # Normalize weekly index symbols (SPXW -> SPX)
-        if underlying in self.WEEKLY_TO_BASE:
-            underlying = self.WEEKLY_TO_BASE[underlying]
-        
-        return underlying if underlying else ticker
+        return root if root else ticker[:4]
     
     def _passes_filter(self, trade_data: Dict) -> bool:
         """

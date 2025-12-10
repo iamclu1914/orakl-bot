@@ -928,19 +928,6 @@ class DataFetcher:
             logger.debug(f"Error fetching snapshot for {option_ticker}: {e}")
             return None
 
-    # Index symbols that require I: prefix for Polygon API
-    # NOTE: Only BASE symbols here - weekly variants (SPXW, VIXW) get mapped below
-    INDEX_UNDERLYINGS = {'SPX', 'VIX', 'NDX', 'DJX', 'RUT', 'XSP', 'OEX'}
-    
-    # Weekly variants that map to their base index
-    WEEKLY_TO_BASE = {
-        'SPXW': 'SPX',
-        'VIXW': 'VIX', 
-        'NDXW': 'NDX',
-        'DJXW': 'DJX',
-        'RUTW': 'RUT',
-    }
-    
     async def get_single_option_snapshot(
         self,
         underlying: str,
@@ -952,46 +939,28 @@ class DataFetcher:
         This method is optimized for the event-driven architecture where
         we need to quickly enrich a single trade with Greeks, OI, and Bid/Ask.
         
-        Uses the v3 API endpoint which provides more complete data including
-        underlying asset information.
+        IMPORTANT: The caller (TradeEnricher) must provide CLEAN values:
+        - underlying: Already formatted (e.g., "AAPL" or "I:SPX")
+        - contract_ticker: Already has O: prefix (e.g., "O:AAPL240216C00185000")
         
-        IMPORTANT: Polygon v3 API requires:
-        - O: prefix on contract tickers (e.g., O:AAPL240216C00185000)
-        - I: prefix on index underlyings (e.g., I:SPX for SPX options)
-        - Weekly symbols (SPXW) must use BASE underlying (I:SPX not I:SPXW)
+        This method just plugs them into the URL - no additional parsing.
         
         Args:
-            underlying: Underlying symbol (e.g., "AAPL", "SPX", or "SPXW")
-            contract_ticker: Contract ticker (e.g., "O:AAPL240216C00185000" or "AAPL240216C00185000")
+            underlying: CLEAN underlying (e.g., "AAPL", "I:SPX", "I:VIX")
+            contract_ticker: Contract with O: prefix (e.g., "O:AAPL240216C00185000")
             
         Returns:
             Contract snapshot dict with greeks, day data, quotes, and underlying info
             Returns None if fetch fails
         """
         try:
-            underlying_upper = underlying.upper()
+            # URL: /v3/snapshot/options/{underlying}/{contract_ticker}
+            # Examples:
+            #   /v3/snapshot/options/AAPL/O:AAPL240216C00185000
+            #   /v3/snapshot/options/I:SPX/O:SPXW241210C06050000
+            endpoint = f"/v3/snapshot/options/{underlying}/{contract_ticker}"
             
-            # CRITICAL: Map weekly variants to base index (SPXW -> SPX)
-            # Polygon API only recognizes I:SPX, not I:SPXW
-            if underlying_upper in self.WEEKLY_TO_BASE:
-                underlying_upper = self.WEEKLY_TO_BASE[underlying_upper]
-            
-            # Handle index underlyings - need I: prefix for Polygon API
-            if underlying_upper in self.INDEX_UNDERLYINGS:
-                api_underlying = f"I:{underlying_upper}"
-            else:
-                api_underlying = underlying_upper
-            
-            # Ensure contract ticker has O: prefix (REQUIRED by v3 API)
-            if contract_ticker.startswith('O:'):
-                api_ticker = contract_ticker
-            else:
-                api_ticker = f"O:{contract_ticker}"
-            
-            # v3 endpoint: /v3/snapshot/options/I:SPX/O:SPXW241208C06100000
-            endpoint = f"/v3/snapshot/options/{api_underlying}/{api_ticker}"
-            
-            logger.debug(f"Fetching option snapshot: {endpoint} (original underlying: {underlying})")
+            logger.debug(f"Fetching option snapshot: {endpoint}")
             data = await self._make_request(endpoint)
             
             if data and isinstance(data, dict):
@@ -1001,15 +970,13 @@ class DataFetcher:
             
             # Fallback to v2 endpoint if v3 fails
             logger.debug(f"v3 snapshot failed for {contract_ticker}, trying v2")
-            return await self.get_option_contract_snapshot(api_ticker)
+            return await self.get_option_contract_snapshot(contract_ticker)
             
         except Exception as e:
             # On any error, try v2 endpoint as fallback
             logger.debug(f"Error fetching v3 snapshot for {contract_ticker}: {e}")
             try:
-                # Use ticker with O: prefix for v2 fallback too
-                api_ticker = contract_ticker if contract_ticker.startswith('O:') else f"O:{contract_ticker}"
-                return await self.get_option_contract_snapshot(api_ticker)
+                return await self.get_option_contract_snapshot(contract_ticker)
             except Exception as e2:
                 logger.debug(f"Fallback v2 snapshot also failed: {e2}")
                 return None
