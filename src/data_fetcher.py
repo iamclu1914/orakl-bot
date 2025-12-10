@@ -929,7 +929,17 @@ class DataFetcher:
             return None
 
     # Index symbols that require I: prefix for Polygon API
-    INDEX_UNDERLYINGS = {'SPX', 'SPXW', 'VIX', 'VIXW', 'NDX', 'DJX', 'RUT', 'XSP', 'OEX'}
+    # NOTE: Only BASE symbols here - weekly variants (SPXW, VIXW) get mapped below
+    INDEX_UNDERLYINGS = {'SPX', 'VIX', 'NDX', 'DJX', 'RUT', 'XSP', 'OEX'}
+    
+    # Weekly variants that map to their base index
+    WEEKLY_TO_BASE = {
+        'SPXW': 'SPX',
+        'VIXW': 'VIX', 
+        'NDXW': 'NDX',
+        'DJXW': 'DJX',
+        'RUTW': 'RUT',
+    }
     
     async def get_single_option_snapshot(
         self,
@@ -948,9 +958,10 @@ class DataFetcher:
         IMPORTANT: Polygon v3 API requires:
         - O: prefix on contract tickers (e.g., O:AAPL240216C00185000)
         - I: prefix on index underlyings (e.g., I:SPX for SPX options)
+        - Weekly symbols (SPXW) must use BASE underlying (I:SPX not I:SPXW)
         
         Args:
-            underlying: Underlying symbol (e.g., "AAPL" or "SPX")
+            underlying: Underlying symbol (e.g., "AAPL", "SPX", or "SPXW")
             contract_ticker: Contract ticker (e.g., "O:AAPL240216C00185000" or "AAPL240216C00185000")
             
         Returns:
@@ -958,12 +969,18 @@ class DataFetcher:
             Returns None if fetch fails
         """
         try:
-            # Handle index underlyings - need I: prefix for Polygon API
             underlying_upper = underlying.upper()
+            
+            # CRITICAL: Map weekly variants to base index (SPXW -> SPX)
+            # Polygon API only recognizes I:SPX, not I:SPXW
+            if underlying_upper in self.WEEKLY_TO_BASE:
+                underlying_upper = self.WEEKLY_TO_BASE[underlying_upper]
+            
+            # Handle index underlyings - need I: prefix for Polygon API
             if underlying_upper in self.INDEX_UNDERLYINGS:
                 api_underlying = f"I:{underlying_upper}"
             else:
-                api_underlying = underlying
+                api_underlying = underlying_upper
             
             # Ensure contract ticker has O: prefix (REQUIRED by v3 API)
             if contract_ticker.startswith('O:'):
@@ -973,6 +990,8 @@ class DataFetcher:
             
             # v3 endpoint: /v3/snapshot/options/I:SPX/O:SPXW241208C06100000
             endpoint = f"/v3/snapshot/options/{api_underlying}/{api_ticker}"
+            
+            logger.debug(f"Fetching option snapshot: {endpoint} (original underlying: {underlying})")
             data = await self._make_request(endpoint)
             
             if data and isinstance(data, dict):

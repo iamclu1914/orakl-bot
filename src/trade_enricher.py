@@ -78,6 +78,31 @@ class TradeEnricher:
             return raw_ticker
         return f"O:{raw_ticker}"
     
+    # Weekly index options map to their base symbol for API calls
+    WEEKLY_TO_BASE = {
+        'SPXW': 'SPX',
+        'VIXW': 'VIX',
+        'NDXW': 'NDX',
+        'DJXW': 'DJX',
+        'RUTW': 'RUT',
+    }
+    
+    def _normalize_underlying(self, underlying: str) -> str:
+        """
+        Normalize underlying symbol for API calls.
+        
+        Maps weekly variants to base symbols (SPXW -> SPX) since
+        Polygon API only recognizes base index symbols.
+        
+        Args:
+            underlying: Raw underlying symbol (e.g., "SPXW", "AAPL")
+            
+        Returns:
+            Normalized symbol (e.g., "SPX", "AAPL")
+        """
+        upper = underlying.upper()
+        return self.WEEKLY_TO_BASE.get(upper, upper)
+    
     def _extract_underlying(self, contract_ticker: str) -> str:
         """
         Extract underlying symbol from options contract ticker.
@@ -104,13 +129,8 @@ class TradeEnricher:
             else:
                 break
         
-        # Handle weekly index options (SPXW -> SPX, VIXW -> VIX, NDXW -> NDX)
-        if underlying.endswith('W') and len(underlying) > 1:
-            base = underlying[:-1]
-            if base in ('SPX', 'VIX', 'NDX', 'DJX', 'RUT'):
-                underlying = base
-        
-        return underlying if underlying else ticker[:4]  # Fallback to first 4 chars
+        # Normalize (maps SPXW -> SPX, etc.)
+        return self._normalize_underlying(underlying) if underlying else ticker[:4]
     
     async def enrich(self, trade_data: Dict) -> Optional[Dict]:
         """
@@ -134,7 +154,13 @@ class TradeEnricher:
         
         # Ensure O: prefix is present (required by Polygon v3 API)
         api_ticker = self._ensure_o_prefix(contract_ticker)
-        underlying = trade_data.get('symbol') or self._extract_underlying(contract_ticker)
+        
+        # Get underlying - always extract from contract ticker to handle weekly symbols
+        # Kafka's 'symbol' field may have SPXW, but we need SPX for API
+        raw_underlying = trade_data.get('symbol') or self._extract_underlying(contract_ticker)
+        underlying = self._normalize_underlying(raw_underlying)
+        
+        logger.debug(f"Enriching: underlying={underlying} (raw={raw_underlying}), ticker={api_ticker}")
         
         try:
             # Fetch single contract snapshot with timeout
