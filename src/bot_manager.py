@@ -432,6 +432,11 @@ class BotManager:
             f"dispatching to {len(self.flow_bots)} flow bots"
         )
         
+        # TEMPORARY: Info log to confirm dispatch is working
+        # This will show up in your logs even if no alert is generated
+        if premium > 50000:
+            logger.info(f"🔎 Dispatching {symbol} trade (${premium:,.0f}) to {len(self.flow_bots)} bots...")
+        
         # Dispatch to all flow bots
         for bot in self.flow_bots:
             if not bot.running:

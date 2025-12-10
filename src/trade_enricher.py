@@ -102,7 +102,7 @@ class TradeEnricher:
             return "I:SPX", contract_id
         if root in ['VIX', 'VIXW']:
             return "I:VIX", contract_id
-        if root in ['NDX', 'NDXW', 'NQX']:
+        if root in ['NDX', 'NDXW', 'NQX', 'NDXP']:
             return "I:NDX", contract_id
         if root in ['DJX', 'DJXW']:
             return "I:DJX", contract_id
