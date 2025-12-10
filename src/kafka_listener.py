@@ -24,18 +24,19 @@ from src.config import Config
 logger = logging.getLogger(__name__)
 
 
-# Field mapping from Dashboard JSON to ORAKL internal format
-# NOTE: 'ticker' is the FULL contract ID (O:AAPL240216C00185000), NOT the underlying
-# The underlying (symbol) is extracted separately from the contract ticker
-KAFKA_TO_ORAKL_FIELD_MAP = {
-    # 'ticker' is handled specially - maps to contract_ticker, not symbol
-    'premiumValue': 'premium',
-    'strike': 'strike_price',
-    'exp': 'expiration_date',
-    'type': 'contract_type',
-    'size': 'trade_size',
-    'price': 'trade_price',
-}
+# Dashboard Kafka message format:
+# {
+#     "id": "O:CRDO260618C00140000-1765378610017-236331966",  <- Contract ID (split at '-')
+#     "ticker": "CRDO",                                        <- Underlying symbol
+#     "premiumValue": 150000,
+#     "strike": 140,
+#     "exp": "2026-06-18",
+#     "type": "call",
+#     "size": 100,
+#     "price": 1.50,
+#     "timestamp": "2024-12-10T...",
+#     ...
+# }
 
 
 class KafkaHealthMonitor:
@@ -160,13 +161,20 @@ class KafkaFlowListener:
             'heartbeat.interval.ms': 15000,
         }
     
-    # Possible field names for the FULL options contract ID in Kafka messages
-    # Dashboard might use different field names - we try them in order
-    CONTRACT_ID_FIELDS = ['sym', 'id', 'option_symbol', 'osym', 'contract', 'option_ticker', 'optionSymbol']
-    
     def _parse_message(self, msg_value: bytes) -> Optional[Dict]:
         """
         Parse Kafka message and map to ORAKL format.
+        
+        Dashboard message format:
+        {
+            "id": "O:CRDO260618C00140000-1765378610017-236331966",  <- Contract ID with suffix
+            "ticker": "CRDO",                                        <- Underlying symbol
+            "premiumValue": 150000,
+            "strike": 140,
+            "exp": "2026-06-18",
+            "type": "call",
+            ...
+        }
         
         Args:
             msg_value: Raw message bytes from Kafka
@@ -177,63 +185,48 @@ class KafkaFlowListener:
         try:
             raw_data = json.loads(msg_value.decode('utf-8'))
             
-            # DEBUG: Log full message structure to diagnose field mapping
-            # Remove this after we identify the correct field
-            logger.info(f"KAFKA RAW MESSAGE KEYS: {list(raw_data.keys())}")
-            logger.info(f"KAFKA RAW MESSAGE: {json.dumps(raw_data, default=str)[:500]}")
+            # Extract the FULL contract ID from 'id' field
+            # Format: "O:CRDO260618C00140000-1765378610017-236331966"
+            # We need: "O:CRDO260618C00140000" (before first hyphen)
+            raw_id = raw_data.get('id', '')
+            if '-' in raw_id:
+                option_symbol = raw_id.split('-')[0]
+            else:
+                option_symbol = raw_id
             
-            # Map fields from Dashboard format to ORAKL format
-            trade_data = {}
-            for kafka_key, orakl_key in KAFKA_TO_ORAKL_FIELD_MAP.items():
-                if kafka_key in raw_data:
-                    trade_data[orakl_key] = raw_data[kafka_key]
+            # Validate we have a proper contract ID
+            if not option_symbol or not any(c.isdigit() for c in option_symbol):
+                logger.warning(f"Invalid option symbol extracted from id: '{raw_id}' -> '{option_symbol}'")
+                return None
             
-            # Copy any additional fields that might be useful
+            # Build trade data with CORRECT mappings
+            trade_data = {
+                'contract_ticker': option_symbol,  # FULL contract ID (e.g., "O:CRDO260618C00140000")
+                'symbol': raw_data.get('ticker', ''),  # Underlying stock symbol (e.g., "CRDO")
+                'premium': float(raw_data.get('premiumValue', 0)),
+                'strike_price': float(raw_data.get('strike', 0)),
+                'expiration_date': raw_data.get('exp', ''),
+                'contract_type': raw_data.get('type', ''),
+                'trade_size': raw_data.get('size', 0),
+                'trade_price': raw_data.get('price', 0),
+            }
+            
+            # Copy additional fields
             for key in ['timestamp', 'side', 'is_sweep', 'exchange', 'conditions']:
                 if key in raw_data:
                     trade_data[key] = raw_data[key]
             
-            # Add event timestamp if not present
-            if 'event_timestamp' not in trade_data and 'timestamp' in raw_data:
+            # Add event timestamp
+            if 'timestamp' in raw_data:
                 trade_data['event_timestamp'] = raw_data['timestamp']
-            elif 'event_timestamp' not in trade_data:
+            else:
                 trade_data['event_timestamp'] = datetime.utcnow().isoformat()
             
-            # Find the FULL options contract ID
-            # Try multiple possible field names since Dashboard might use different ones
-            contract_ticker = None
-            
-            # First, try known contract ID field names
-            for field in self.CONTRACT_ID_FIELDS:
-                if field in raw_data and raw_data[field]:
-                    candidate = str(raw_data[field])
-                    # Validate it looks like an options contract (has digits after letters)
-                    if any(c.isdigit() for c in candidate):
-                        contract_ticker = candidate
-                        logger.info(f"Found contract ID in field '{field}': {contract_ticker}")
-                        break
-            
-            # If still not found, check if 'ticker' is actually a full contract ID
-            if not contract_ticker and 'ticker' in raw_data:
-                candidate = str(raw_data['ticker'])
-                if any(c.isdigit() for c in candidate):
-                    # Has digits, probably a contract ID
-                    contract_ticker = candidate
-                    logger.info(f"Using 'ticker' as contract ID: {contract_ticker}")
-                else:
-                    # Just a stock symbol, not a contract ID
-                    trade_data['symbol'] = candidate
-                    logger.warning(f"'ticker' is just stock symbol '{candidate}', not a contract ID!")
-                    logger.warning(f"Available fields: {list(raw_data.keys())}")
-            
-            if contract_ticker:
-                trade_data['contract_ticker'] = contract_ticker
-                trade_data['symbol'] = self._extract_root_symbol(contract_ticker)
-                logger.debug(f"Kafka: contract_ticker={contract_ticker} -> symbol={trade_data['symbol']}")
-            else:
-                # No contract ID found - this message can't be enriched
-                logger.warning(f"NO CONTRACT ID FOUND in Kafka message! Keys: {list(raw_data.keys())}")
-                return None
+            logger.debug(
+                f"Kafka parsed: {trade_data['symbol']} | "
+                f"Contract: {trade_data['contract_ticker']} | "
+                f"Premium: ${trade_data['premium']:,.0f}"
+            )
             
             return trade_data
             
