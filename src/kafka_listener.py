@@ -160,6 +160,10 @@ class KafkaFlowListener:
             'heartbeat.interval.ms': 15000,
         }
     
+    # Possible field names for the FULL options contract ID in Kafka messages
+    # Dashboard might use different field names - we try them in order
+    CONTRACT_ID_FIELDS = ['sym', 'id', 'option_symbol', 'osym', 'contract', 'option_ticker', 'optionSymbol']
+    
     def _parse_message(self, msg_value: bytes) -> Optional[Dict]:
         """
         Parse Kafka message and map to ORAKL format.
@@ -172,6 +176,11 @@ class KafkaFlowListener:
         """
         try:
             raw_data = json.loads(msg_value.decode('utf-8'))
+            
+            # DEBUG: Log full message structure to diagnose field mapping
+            # Remove this after we identify the correct field
+            logger.info(f"KAFKA RAW MESSAGE KEYS: {list(raw_data.keys())}")
+            logger.info(f"KAFKA RAW MESSAGE: {json.dumps(raw_data, default=str)[:500]}")
             
             # Map fields from Dashboard format to ORAKL format
             trade_data = {}
@@ -190,18 +199,41 @@ class KafkaFlowListener:
             elif 'event_timestamp' not in trade_data:
                 trade_data['event_timestamp'] = datetime.utcnow().isoformat()
             
-            # Handle 'ticker' field - this is the FULL contract ID (O:AAPL240216C00185000)
-            # Store it as contract_ticker for the TradeEnricher to parse
-            if 'ticker' in raw_data:
-                trade_data['contract_ticker'] = raw_data['ticker']
-                # Extract root symbol for logging/display only
-                # TradeEnricher.parse_polygon_ticker() handles proper API formatting
-                trade_data['symbol'] = self._extract_root_symbol(raw_data['ticker'])
-                logger.debug(f"Kafka: ticker={raw_data['ticker']} -> symbol={trade_data['symbol']}")
+            # Find the FULL options contract ID
+            # Try multiple possible field names since Dashboard might use different ones
+            contract_ticker = None
             
-            # Fallback: extract symbol if still not set
-            if 'symbol' not in trade_data and 'contract_ticker' in trade_data:
-                trade_data['symbol'] = self._extract_root_symbol(trade_data['contract_ticker'])
+            # First, try known contract ID field names
+            for field in self.CONTRACT_ID_FIELDS:
+                if field in raw_data and raw_data[field]:
+                    candidate = str(raw_data[field])
+                    # Validate it looks like an options contract (has digits after letters)
+                    if any(c.isdigit() for c in candidate):
+                        contract_ticker = candidate
+                        logger.info(f"Found contract ID in field '{field}': {contract_ticker}")
+                        break
+            
+            # If still not found, check if 'ticker' is actually a full contract ID
+            if not contract_ticker and 'ticker' in raw_data:
+                candidate = str(raw_data['ticker'])
+                if any(c.isdigit() for c in candidate):
+                    # Has digits, probably a contract ID
+                    contract_ticker = candidate
+                    logger.info(f"Using 'ticker' as contract ID: {contract_ticker}")
+                else:
+                    # Just a stock symbol, not a contract ID
+                    trade_data['symbol'] = candidate
+                    logger.warning(f"'ticker' is just stock symbol '{candidate}', not a contract ID!")
+                    logger.warning(f"Available fields: {list(raw_data.keys())}")
+            
+            if contract_ticker:
+                trade_data['contract_ticker'] = contract_ticker
+                trade_data['symbol'] = self._extract_root_symbol(contract_ticker)
+                logger.debug(f"Kafka: contract_ticker={contract_ticker} -> symbol={trade_data['symbol']}")
+            else:
+                # No contract ID found - this message can't be enriched
+                logger.warning(f"NO CONTRACT ID FOUND in Kafka message! Keys: {list(raw_data.keys())}")
+                return None
             
             return trade_data
             
