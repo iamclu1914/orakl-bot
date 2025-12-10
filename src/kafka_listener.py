@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 # Field mapping from Dashboard JSON to ORAKL internal format
+# NOTE: 'ticker' is the FULL contract ID (O:AAPL240216C00185000), NOT the underlying
+# The underlying (symbol) is extracted separately from the contract ticker
 KAFKA_TO_ORAKL_FIELD_MAP = {
-    'ticker': 'symbol',
+    # 'ticker' is handled specially - maps to contract_ticker, not symbol
     'premiumValue': 'premium',
     'strike': 'strike_price',
     'exp': 'expiration_date',
@@ -188,12 +190,15 @@ class KafkaFlowListener:
             elif 'event_timestamp' not in trade_data:
                 trade_data['event_timestamp'] = datetime.utcnow().isoformat()
             
-            # Store raw contract ticker for enrichment
+            # Handle 'ticker' field - this is the FULL contract ID (O:AAPL240216C00185000)
+            # NOT the underlying symbol
             if 'ticker' in raw_data:
                 trade_data['contract_ticker'] = raw_data['ticker']
+                # ALWAYS extract underlying from contract (handles SPXW -> SPX mapping)
+                trade_data['symbol'] = self._extract_underlying(raw_data['ticker'])
+                logger.debug(f"Kafka: ticker={raw_data['ticker']} -> symbol={trade_data['symbol']}")
             
-            # Extract underlying symbol from contract ticker if needed
-            # Format: O:AAPL240216C00185000 -> AAPL
+            # Fallback: extract underlying if symbol still not set
             if 'symbol' not in trade_data and 'contract_ticker' in trade_data:
                 trade_data['symbol'] = self._extract_underlying(trade_data['contract_ticker'])
             
@@ -206,15 +211,24 @@ class KafkaFlowListener:
             logger.error(f"Unexpected error parsing Kafka message: {e}")
             return None
     
+    # Weekly index options map to their base symbol
+    WEEKLY_TO_BASE = {
+        'SPXW': 'SPX',
+        'VIXW': 'VIX',
+        'NDXW': 'NDX',
+        'DJXW': 'DJX',
+        'RUTW': 'RUT',
+    }
+    
     def _extract_underlying(self, contract_ticker: str) -> str:
         """
         Extract underlying symbol from options contract ticker.
         
         Args:
-            contract_ticker: e.g., "O:AAPL240216C00185000"
+            contract_ticker: e.g., "O:AAPL240216C00185000" or "O:SPXW241210C06050000"
             
         Returns:
-            Underlying symbol, e.g., "AAPL"
+            Underlying symbol, e.g., "AAPL" or "SPX" (not SPXW)
         """
         ticker = contract_ticker
         
@@ -224,13 +238,17 @@ class KafkaFlowListener:
         
         # Extract letters at the beginning (underlying symbol)
         # Options tickers are: SYMBOL + DATE + TYPE + STRIKE
-        # e.g., AAPL240216C00185000
+        # e.g., AAPL240216C00185000, SPXW241210C06050000
         underlying = ''
         for char in ticker:
             if char.isalpha():
                 underlying += char
             else:
                 break
+        
+        # Normalize weekly index symbols (SPXW -> SPX)
+        if underlying in self.WEEKLY_TO_BASE:
+            underlying = self.WEEKLY_TO_BASE[underlying]
         
         return underlying if underlying else ticker
     
