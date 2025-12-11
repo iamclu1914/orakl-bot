@@ -30,10 +30,22 @@ class Config:
     DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
     
     # Individual Bot Webhooks (Each bot posts to its own dedicated channel)
-    SWEEPS_WEBHOOK = os.getenv('SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
-    GOLDEN_SWEEPS_WEBHOOK = os.getenv('GOLDEN_SWEEPS_WEBHOOK', DISCORD_WEBHOOK_URL)
-    BULLSEYE_WEBHOOK = os.getenv('BULLSEYE_WEBHOOK', DISCORD_WEBHOOK_URL)
-    SPREAD_WEBHOOK = os.getenv('SPREAD_WEBHOOK', DISCORD_WEBHOOK_URL)
+    SWEEPS_WEBHOOK = os.getenv(
+        'SWEEPS_WEBHOOK',
+        'https://discord.com/api/webhooks/1427361658761777287/vloziMHuypGrjwv8vxd72ySfzTblc9Nf1OHkkKAkUI81IqNPRym0FgjPDQGzYfwiNyC8'
+    )
+    GOLDEN_SWEEPS_WEBHOOK = os.getenv(
+        'GOLDEN_SWEEPS_WEBHOOK',
+        'https://discord.com/api/webhooks/1427361801443741788/hXDZQd4hce8-Ph_GKKxFGTzE8EHzSZP0S-xTjxa5lXAc2LoqofGebkk924PbKKXw4FBN'
+    )
+    BULLSEYE_WEBHOOK = os.getenv(
+        'BULLSEYE_WEBHOOK',
+        'https://discord.com/api/webhooks/1427362052753850549/NJBVniyzWQHrc_M6mZ2_19fQjNn_iVEpaMNDjhbYsGuqP6dlElDU58QH-MgfpJ7UE6ip'
+    )
+    SPREAD_WEBHOOK = os.getenv(
+        'SPREAD_WEBHOOK',
+        'https://discord.com/api/webhooks/1437936756644122624/CPQjKuRYQsW6wzU1MtuEJx5QrKGaPhU3anZH886MGNLv-DtsLhu3PKSv_YTRIGckkIGV'
+    )
     INDEX_WHALE_WEBHOOK = os.getenv('INDEX_WHALE_WEBHOOK', DISCORD_WEBHOOK_URL)
     GAMMA_RATIO_WEBHOOK = os.getenv(
         'GAMMA_RATIO_WEBHOOK',
