@@ -232,6 +232,9 @@ def compute_gamma_ratio(
     
     # Filter options
     filtered = filter_options(options_chain, spot, min_open_interest, max_otm_pct)
+    # #region agent log
+    import logging; logging.getLogger(__name__).info(f"[DEBUG_GAMMA] Contract_Filtering | Total={len(options_chain)} | Filtered={len(filtered)} | MinOI={min_open_interest} | MaxOTM={max_otm_pct*100:.0f}% | Spot={spot:.2f}")
+    # #endregion
     
     call_gamma = 0.0
     put_gamma = 0.0

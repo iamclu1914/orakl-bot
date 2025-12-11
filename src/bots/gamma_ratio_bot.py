@@ -69,6 +69,9 @@ class GammaAlertManager:
         # Get previous state for this symbol
         prev_G = self.last_G.get(symbol, 0.5)
         last_alerted = self.last_alerted_G.get(symbol)
+        # #region agent log
+        import logging; logging.getLogger(__name__).info(f"[DEBUG_ALERT] {symbol} | AlertMgr_State | G={G:.4f} | Prev_G={prev_G:.4f} | Last_Alerted={last_alerted if last_alerted else 'None'} | Extreme_Call_Thresh={self.ULTRA_EXTREME_CALL} | Extreme_Put_Thresh={self.ULTRA_EXTREME_PUT}")
+        # #endregion
         
         # Determine current regime
         current_regime, priority = classify_gamma_regime(G)
@@ -280,6 +283,9 @@ class GammaRatioBot(BaseAutoBot):
                 max_contracts=max_contracts,
                 expiration_date_lte=expiry_cutoff
             )
+            # #region agent log
+            logger.info(f"[DEBUG_SCAN] {symbol} | Contracts_Fetched={len(contracts) if contracts else 0} | Has_Data={bool(contracts)}")
+            # #endregion
             if not contracts:
                 logger.debug(f"{self.name} - No options data for {symbol}")
                 return []
@@ -305,6 +311,9 @@ class GammaRatioBot(BaseAutoBot):
             
             # Transform Polygon snapshot to standard format
             standardized = transform_polygon_snapshot(contracts)
+            # #region agent log
+            logger.info(f"[DEBUG_SCAN] {symbol} | Standardized={len(standardized) if standardized else 0} | Raw={len(contracts)}")
+            # #endregion
             
             if not standardized:
                 logger.debug(f"{self.name} - No valid contracts for {symbol}")
@@ -324,6 +333,9 @@ class GammaRatioBot(BaseAutoBot):
             call_gamma = gamma_data.get('call_gamma', 0)
             put_gamma = gamma_data.get('put_gamma', 0)
             total_gamma = call_gamma + put_gamma
+            # #region agent log
+            logger.info(f"[DEBUG_SCAN] {symbol} | G={G:.4f} | CallGamma={call_gamma:.0f} | PutGamma={put_gamma:.0f} | TotalGamma={total_gamma:.0f} | Contracts_Analyzed={gamma_data.get('contracts_analyzed',0)} | Bias={gamma_data.get('bias','')}")
+            # #endregion
             
             logger.debug(
                 f"{self.name} - {symbol}: G={G:.3f}, bias={gamma_data['bias']}, "
@@ -331,12 +343,18 @@ class GammaRatioBot(BaseAutoBot):
             )
             
             # Filter: Minimum total gamma (filter out illiquid/low-volume names)
+            # #region agent log
+            logger.info(f"[DEBUG_SCAN] {symbol} | Gamma_Filter_Check | TotalGamma={total_gamma:.0f} | Min_Required={self.min_total_gamma} | Will_Filter={total_gamma < self.min_total_gamma}")
+            # #endregion
             if total_gamma < self.min_total_gamma:
-                logger.debug(f"{self.name} - {symbol} filtered: total_gamma {total_gamma:.0f} < {self.min_total_gamma}")
+                logger.info(f"[DEBUG_SCAN] {symbol} | **FILTERED** | Reason=Low_TotalGamma | {total_gamma:.0f} < {self.min_total_gamma}")
                 return []
             
             # Check for alerts
             alerts = self.alert_manager.check_alerts(symbol, G, gamma_data)
+            # #region agent log
+            logger.info(f"[DEBUG_SCAN] {symbol} | Alert_Check_Result | G={G:.4f} | Alert_Count={len(alerts)} | Has_Alerts={bool(alerts)}")
+            # #endregion
             
             # Log when we find alertable conditions
             if alerts:
