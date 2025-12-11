@@ -237,15 +237,19 @@ class GammaRatioBot(BaseAutoBot):
             f"{self.name} initialized with {len(watchlist)} symbols, "
             f"interval={scan_interval}s, vol={self.constant_vol}"
         )
+        # #region agent log
+        logger.info(f"[DEBUG_SCAN] >>> {self.name} webhook_url={webhook_url[:50]}... | thresholds={self.thresholds}")
+        # #endregion
     
     @timed()
     async def scan_and_post(self):
         """Scan all watchlist symbols for gamma ratio changes."""
+        logger.info(f"[DEBUG_SCAN] >>> {self.name} scan_and_post() CALLED - watchlist={len(self.watchlist)} symbols")
         logger.info(f"{self.name} starting gamma ratio scan")
         
         # Only scan during market hours
         if not MarketHours.is_market_open(include_extended=False):
-            logger.debug(f"{self.name} - Market closed, skipping scan")
+            logger.info(f"[DEBUG_SCAN] >>> {self.name} SKIPPED - Market closed")
             return
         
         # Skip first 15 minutes after open to avoid opening noise
@@ -257,9 +261,10 @@ class GammaRatioBot(BaseAutoBot):
         market_open_time = now_et.replace(hour=9, minute=45, second=0, microsecond=0)
         
         if now_et < market_open_time:
-            logger.info(f"{self.name} - Skipping first 15 min after open (until 9:45 AM ET)")
+            logger.info(f"[DEBUG_SCAN] >>> {self.name} SKIPPED - Before 9:45 AM ET ({now_et.strftime('%H:%M:%S')})")
             return
         
+        logger.info(f"[DEBUG_SCAN] >>> {self.name} PROCEEDING with scan at {now_et.strftime('%H:%M:%S')} ET")
         # Use base class concurrent implementation
         await super().scan_and_post()
     
@@ -269,6 +274,9 @@ class GammaRatioBot(BaseAutoBot):
         
         Returns list of alert signals to post.
         """
+        # #region agent log - ENTRY POINT
+        logger.info(f"[DEBUG_SCAN] >>> ENTERING _scan_symbol for {symbol}")
+        # #endregion
         try:
             # Get options chain snapshot - OPTIMIZED for gamma calculation:
             # 1. Limit contracts (default 750, ~3 pages) - enough for accurate G ratio
