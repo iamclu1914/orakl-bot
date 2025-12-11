@@ -172,8 +172,8 @@ class Config:
         'XLF,XLE,XLK,XLV,XLY'
     )
     
-    # Tier 2: High-value expansion names (10 symbols) - institutionals, growth, beta
-    _TIER2_UNIVERSE = 'NFLX,CRM,COIN,JPM,WMT,SMCI,MRVL,MU,UBER,GLD'
+    # Tier 2: High-value expansion names (15 symbols) - institutionals, growth, beta, high-activity
+    _TIER2_UNIVERSE = 'NFLX,CRM,COIN,JPM,WMT,SMCI,MRVL,MU,UBER,GLD,PLTR,TSM,BABA,ORCL,COST'
     
     # Parse into lists
     _TIER1_LIST = [t.strip().upper() for t in _TIER1_UNIVERSE.split(',') if t.strip()]
@@ -190,45 +190,45 @@ class Config:
     # Bot-Specific Watchlists (Tier 1 + selective Tier 2 additions)
     # =============================================================================
     
-    # Sweeps Bot: Tier 1 + growth/beta names (26 total)
-    # Add: NFLX, CRM, COIN, SMCI, MRVL, MU, UBER
-    _SWEEPS_TIER2 = ['NFLX', 'CRM', 'COIN', 'SMCI', 'MRVL', 'MU', 'UBER']
+    # Sweeps Bot: Tier 1 + growth/beta names (31 total)
+    # Add: NFLX, CRM, COIN, SMCI, MRVL, MU, UBER, PLTR, TSM, BABA, ORCL, COST
+    _SWEEPS_TIER2 = ['NFLX', 'CRM', 'COIN', 'SMCI', 'MRVL', 'MU', 'UBER', 'PLTR', 'TSM', 'BABA', 'ORCL', 'COST']
     _SWEEPS_DEFAULT = _TIER1_LIST + _SWEEPS_TIER2
     SWEEPS_WATCHLIST = os.getenv(
         'SWEEPS_WATCHLIST',
         ','.join(_SWEEPS_DEFAULT)
     ).split(',')
 
-    # Golden Sweeps Bot: Tier 1 + big-whale magnets (24 total)
-    # Add: NFLX, COIN, JPM, WMT, GLD
-    _GOLDEN_TIER2 = ['NFLX', 'COIN', 'JPM', 'WMT', 'GLD']
+    # Golden Sweeps Bot: Tier 1 + big-whale magnets (29 total)
+    # Add: NFLX, COIN, JPM, WMT, GLD, PLTR, TSM, BABA, ORCL, COST
+    _GOLDEN_TIER2 = ['NFLX', 'COIN', 'JPM', 'WMT', 'GLD', 'PLTR', 'TSM', 'BABA', 'ORCL', 'COST']
     _GOLDEN_DEFAULT = _TIER1_LIST + _GOLDEN_TIER2
     GOLDEN_SWEEPS_WATCHLIST = os.getenv(
         'GOLDEN_SWEEPS_WATCHLIST',
         ','.join(_GOLDEN_DEFAULT)
     ).split(',')
     
-    # Bullseye Bot: Tier 1 + institutionals (23 total)
-    # Add: NFLX, JPM, WMT, GLD
-    _BULLSEYE_TIER2 = ['NFLX', 'JPM', 'WMT', 'GLD']
+    # Bullseye Bot: Tier 1 + institutionals (28 total)
+    # Add: NFLX, JPM, WMT, GLD, PLTR, TSM, BABA, ORCL, COST
+    _BULLSEYE_TIER2 = ['NFLX', 'JPM', 'WMT', 'GLD', 'PLTR', 'TSM', 'BABA', 'ORCL', 'COST']
     _BULLSEYE_DEFAULT = _TIER1_LIST + _BULLSEYE_TIER2
     BULLSEYE_WATCHLIST = os.getenv(
         'BULLSEYE_WATCHLIST',
         ','.join(_BULLSEYE_DEFAULT)
     ).split(',')
     
-    # Rolling Thunder Bot: Tier 1 + roll-prone names (23 total)
-    # Add: NFLX, COIN, WMT, SMCI
-    _ROLLING_TIER2 = ['NFLX', 'COIN', 'WMT', 'SMCI']
+    # Rolling Thunder Bot: Tier 1 + roll-prone names (28 total)
+    # Add: NFLX, COIN, WMT, SMCI, PLTR, TSM, BABA, ORCL, COST
+    _ROLLING_TIER2 = ['NFLX', 'COIN', 'WMT', 'SMCI', 'PLTR', 'TSM', 'BABA', 'ORCL', 'COST']
     _ROLLING_DEFAULT = _TIER1_LIST + _ROLLING_TIER2
     ROLLING_WATCHLIST = os.getenv(
         'ROLLING_WATCHLIST',
         ','.join(_ROLLING_DEFAULT)
     ).split(',')
     
-    # Lotto Bot: Tier 1 + story/beta names (25 total)
-    # Add: NFLX, COIN, UBER, SMCI, MRVL, MU
-    _LOTTO_TIER2 = ['NFLX', 'COIN', 'UBER', 'SMCI', 'MRVL', 'MU']
+    # Lotto Bot: Tier 1 + story/beta names (30 total)
+    # Add: NFLX, COIN, UBER, SMCI, MRVL, MU, PLTR, TSM, BABA, ORCL, COST
+    _LOTTO_TIER2 = ['NFLX', 'COIN', 'UBER', 'SMCI', 'MRVL', 'MU', 'PLTR', 'TSM', 'BABA', 'ORCL', 'COST']
     _LOTTO_DEFAULT = _TIER1_LIST + _LOTTO_TIER2
     LOTTO_WATCHLIST = os.getenv(
         'LOTTO_WATCHLIST',
