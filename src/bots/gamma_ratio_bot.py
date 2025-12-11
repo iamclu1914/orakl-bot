@@ -35,9 +35,9 @@ class GammaAlertManager:
     - ULTRA EXTREME: G > 0.85 (call) or G < 0.15 (put) - escalation alert (bypasses cooldown)
     """
     
-    # Ultra extreme thresholds for escalation alerts
-    ULTRA_EXTREME_CALL = 0.85
-    ULTRA_EXTREME_PUT = 0.15
+    # Ultra extreme thresholds - TEMPORARILY LOOSENED FOR TESTING
+    ULTRA_EXTREME_CALL = 0.55  # Was: 0.85 - now triggers easily
+    ULTRA_EXTREME_PUT = 0.45   # Was: 0.15 - now triggers easily
     
     def __init__(self, cooldown_minutes: int = 30):
         self.cooldown_minutes = cooldown_minutes
@@ -212,20 +212,20 @@ class GammaRatioBot(BaseAutoBot):
         self.risk_free_rate = getattr(Config, 'GAMMA_RATIO_RISK_FREE_RATE', 0.0)
         self.min_open_interest = getattr(Config, 'GAMMA_RATIO_MIN_OI', 100)
         self.max_otm_pct = getattr(Config, 'GAMMA_RATIO_MAX_OTM_PCT', 0.20)
-        # Minimum total gamma to filter out illiquid/low-volume names
-        # 5000 filters out tiny names like CRBU (40), BMBL (159) while keeping AAPL (136K), GOOGL (55K)
-        self.min_total_gamma = getattr(Config, 'GAMMA_RATIO_MIN_TOTAL_GAMMA', 5000)
+        # TEMPORARILY LOOSENED FOR TESTING - set to 0 to disable filter
+        self.min_total_gamma = 0  # Was: getattr(Config, 'GAMMA_RATIO_MIN_TOTAL_GAMMA', 5000)
         
-        # Alert thresholds (can be overridden via config)
+        # Alert thresholds - TEMPORARILY LOOSENED FOR TESTING
+        # Any G > 0.52 = call alert, G < 0.48 = put alert
         self.thresholds = {
-            'extreme_put': getattr(Config, 'GAMMA_RATIO_EXTREME_PUT', 0.25),
-            'put_driven': getattr(Config, 'GAMMA_RATIO_PUT_DRIVEN', 0.35),
-            'call_driven': getattr(Config, 'GAMMA_RATIO_CALL_DRIVEN', 0.65),
-            'extreme_call': getattr(Config, 'GAMMA_RATIO_EXTREME_CALL', 0.75),
+            'extreme_put': 0.48,   # Was: 0.25 - now triggers easily
+            'put_driven': 0.49,    # Was: 0.35
+            'call_driven': 0.51,   # Was: 0.65
+            'extreme_call': 0.52,  # Was: 0.75 - now triggers easily
         }
         
-        # Initialize alert manager
-        cooldown_minutes = getattr(Config, 'GAMMA_RATIO_COOLDOWN_MINUTES', 30)
+        # Initialize alert manager - COOLDOWN DISABLED FOR TESTING
+        cooldown_minutes = 0  # Was: getattr(Config, 'GAMMA_RATIO_COOLDOWN_MINUTES', 30)
         self.alert_manager = GammaAlertManager(cooldown_minutes=cooldown_minutes)
         
         # Scan ALL tickers every cycle - no batching
