@@ -8,7 +8,7 @@ from typing import Dict, Optional, Any, List
 from abc import ABC, abstractmethod
 import time
 from dataclasses import dataclass, field
-from collections import deque
+from collections import deque, defaultdict
 import sqlite3
 from pathlib import Path
 import threading
@@ -71,6 +71,12 @@ class BaseAutoBot(ABC):
         self._max_consecutive_errors = 25  # Increased from 10
         self._cooldowns: Dict[str, datetime] = {}
         self._skip_records: deque = deque(maxlen=200)
+        # Aggregate filter/skip reasons (INFO-level) so we can understand "0 signals" quickly.
+        self._filter_counts: Dict[str, int] = defaultdict(int)
+        self._filter_report_interval_seconds: int = int(
+            getattr(Config, "FILTER_REPORT_INTERVAL_SECONDS", 300)
+        )
+        self._filter_last_report_ts: float = time.time()
         self.concurrency_limit = getattr(Config, 'MAX_CONCURRENT_REQUESTS', 10)
         self.symbol_scan_timeout = getattr(Config, 'SYMBOL_SCAN_TIMEOUT', 20)
         self._state_lock = threading.Lock()
@@ -981,6 +987,37 @@ class BaseAutoBot(ABC):
         }
         self._skip_records.append(entry)
         logger.debug(f"{self.name} skip {symbol}: {reason}")
+
+    def _count_filter(self, reason: str, symbol: Optional[str] = None, sample_record: bool = False) -> None:
+        """
+        Count a filter/skip reason and periodically emit an INFO summary.
+
+        Use this for very frequent early-return filters (e.g., premium too small) where
+        per-event debug logs would be too noisy.
+        """
+        if not reason:
+            reason = "unknown"
+        self._filter_counts[reason] += 1
+
+        # Optionally store a sampled record for deeper inspection.
+        if sample_record and symbol:
+            self._log_skip(symbol, reason)
+
+        self._maybe_report_filter_counts()
+
+    def _maybe_report_filter_counts(self) -> None:
+        """Emit periodic filter summaries at INFO and reset counts."""
+        now = time.time()
+        if (now - self._filter_last_report_ts) < self._filter_report_interval_seconds:
+            return
+
+        if self._filter_counts:
+            top = sorted(self._filter_counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+            summary = ", ".join([f"{k}={v}" for k, v in top])
+            logger.info(f"{self.name} filter summary (last ~{self._filter_report_interval_seconds}s): {summary}")
+
+        self._filter_counts.clear()
+        self._filter_last_report_ts = now
     
     def get_skip_records(self, limit: int = 50) -> List[Dict[str, str]]:
         """

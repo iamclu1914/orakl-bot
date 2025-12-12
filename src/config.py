@@ -137,7 +137,8 @@ class Config:
     GAMMA_RATIO_RISK_FREE_RATE = float(os.getenv('GAMMA_RATIO_RISK_FREE_RATE', '0.0'))
     GAMMA_RATIO_MIN_OI = int(os.getenv('GAMMA_RATIO_MIN_OI', '100'))  # Minimum OI to include
     GAMMA_RATIO_MAX_OTM_PCT = float(os.getenv('GAMMA_RATIO_MAX_OTM_PCT', '0.20'))  # Max distance from spot
-    GAMMA_RATIO_MIN_TOTAL_GAMMA = float(os.getenv('GAMMA_RATIO_MIN_TOTAL_GAMMA', '5000'))  # Min gamma to filter illiquid names
+    # Min gamma to filter illiquid names. Lowered default so Gamma Ratio Bot doesn't filter everything on quiet days.
+    GAMMA_RATIO_MIN_TOTAL_GAMMA = float(os.getenv('GAMMA_RATIO_MIN_TOTAL_GAMMA', '1000'))
     GAMMA_RATIO_MAX_CONTRACTS = int(os.getenv('GAMMA_RATIO_MAX_CONTRACTS', '300'))  # Max contracts to fetch
     GAMMA_RATIO_EXPIRY_DAYS = int(os.getenv('GAMMA_RATIO_EXPIRY_DAYS', '30'))  # Only near-term contracts
     GAMMA_RATIO_EXTREME_PUT = float(os.getenv('GAMMA_RATIO_EXTREME_PUT', '0.25'))  # G < 0.25 = extreme put

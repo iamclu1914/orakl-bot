@@ -119,6 +119,7 @@ class BullseyeBot(BaseAutoBot):
             
             # Skip if below minimum premium
             if premium < self.min_premium:
+                self._count_filter("premium_below_min")
                 return None
             
             # Extract key fields
@@ -136,15 +137,18 @@ class BullseyeBot(BaseAutoBot):
             
             # Validate required fields
             if not all([symbol, strike, underlying_price, contract_type]):
+                self._count_filter("missing_required_fields")
                 return None
             
             # Check DTE range
             if dte < self.min_dte or dte > self.max_dte:
+                self._count_filter("dte_out_of_range", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"DTE {dte} outside range [{self.min_dte}, {self.max_dte}]")
                 return None
             
             # Check contract price
             if contract_price < self.min_price:
+                self._count_filter("contract_price_below_min", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"contract price ${contract_price:.2f} < ${self.min_price:.2f}")
                 return None
             
@@ -164,11 +168,13 @@ class BullseyeBot(BaseAutoBot):
             
             # Check OTM distance
             if otm_pct > max_otm:
+                self._count_filter("otm_too_far", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"OTM {otm_pct*100:.1f}% > max {max_otm*100:.1f}%")
                 return None
             
             # Check block size (volume delta)
             if trade_size < self.min_block_contracts:
+                self._count_filter("block_size_below_min", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"block size {trade_size} < {self.min_block_contracts}")
                 return None
             
@@ -180,6 +186,7 @@ class BullseyeBot(BaseAutoBot):
             
             # Check Vol/OI ratio (fresh positioning)
             if vol_oi_ratio < self.min_voi_ratio:
+                self._count_filter("voi_below_min", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"vol/OI {vol_oi_ratio:.2f} < {self.min_voi_ratio:.2f}")
                 return None
             

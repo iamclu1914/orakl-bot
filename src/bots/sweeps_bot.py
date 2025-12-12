@@ -49,7 +49,8 @@ class SweepsBot(BaseAutoBot):
         self.fetcher = fetcher
         self.analyzer = analyzer
         self.signal_history = {}
-        self.MIN_SWEEP_PREMIUM = max(Config.SWEEPS_MIN_PREMIUM, 750000)  # $750K minimum
+        # IMPORTANT: Respect config/env. Do NOT hard-force $750k; that can suppress alerts all day.
+        self.MIN_SWEEP_PREMIUM = float(Config.SWEEPS_MIN_PREMIUM)
         self.MAX_SWEEP_PREMIUM = Config.GOLDEN_MIN_PREMIUM  # Sweeps >= this go to Golden Sweeps
         # Loosen volume gates so medium-size sweeps can alert.
         self.MIN_VOLUME = max(getattr(Config, "SWEEPS_MIN_VOLUME", 0), 100)
@@ -58,8 +59,8 @@ class SweepsBot(BaseAutoBot):
         self.scan_batch_size = 0  # 0 = full scan
         self.concurrency_limit = 30  # High concurrency for speed
         self.MAX_STRIKE_DISTANCE = getattr(Config, 'SWEEPS_MAX_STRIKE_DISTANCE', 0.06) * 100  # 6% from config
-        # Require a high conviction sweep score before alerting
-        self.MIN_SCORE = max(Config.MIN_SWEEP_SCORE, 85)
+        # Require a high conviction sweep score before alerting (env override supported)
+        self.MIN_SCORE = int(Config.MIN_SWEEP_SCORE)
         self.MIN_VOLUME_RATIO = max(Config.SWEEPS_MIN_VOLUME_RATIO, 1.3)  # 1.3x minimum
         # Disable price-action alignment for standard sweeps (alignment proved too restrictive)
         self.SKIP_ALIGNMENT_CHECK = True
@@ -115,10 +116,12 @@ class SweepsBot(BaseAutoBot):
             
             # Skip if below minimum premium
             if premium < self.MIN_SWEEP_PREMIUM:
+                self._count_filter("premium_below_min")
                 return None
             
             # Skip if above max (should go to Golden Sweeps)
             if premium >= self.MAX_SWEEP_PREMIUM:
+                self._count_filter("premium_routed_to_golden")
                 logger.debug(f"{self.name} skipping {symbol} - premium ${premium:,.0f} >= Golden threshold")
                 return None
             
@@ -134,12 +137,14 @@ class SweepsBot(BaseAutoBot):
             
             # Validate required fields
             if not all([symbol, strike, underlying_price, contract_type]):
+                self._count_filter("missing_required_fields")
                 return None
             
             # Calculate strike distance
             if underlying_price > 0:
                 strike_distance = abs(strike - underlying_price) / underlying_price * 100
             else:
+                self._count_filter("missing_underlying_price")
                 return None
             
             # Calculate effective max strike distance
