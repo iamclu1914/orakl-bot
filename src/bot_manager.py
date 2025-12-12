@@ -238,6 +238,32 @@ class BotManager:
         # Categorize bots into Flow (League A) and State (League B)
         self._categorize_bots()
 
+    async def start_kafka_event_bots(self) -> None:
+        """
+        Kafka Mode: Start ONLY the bots that need to process individual events.
+
+        These bots must have `running=True` and an aiohttp session for webhook posting,
+        but they should NOT start scheduled scan loops (that is REST polling fallback).
+        """
+        # Flow bots (watchlist-based) + stream filter bots (any ticker)
+        event_bots = list(self.flow_bots) + list(self.stream_filter_bots)
+
+        if not event_bots:
+            logger.warning("No Kafka event-driven bots to start")
+            return
+
+        logger.info(f"Starting {len(event_bots)} event-driven bots (Kafka mode)...")
+
+        for bot in event_bots:
+            try:
+                if hasattr(bot, "start_event_mode"):
+                    await bot.start_event_mode()
+                else:
+                    # Fallback: start normally (may run scan loop) if bot doesn't support event mode
+                    await bot.start()
+            except Exception as e:
+                logger.error(f"Failed to start Kafka event bot {getattr(bot, 'name', str(bot))}: {e}")
+
     async def start_all(self):
         """Start all bots with dynamic watchlist"""
         if self.running:

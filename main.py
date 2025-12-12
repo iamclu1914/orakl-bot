@@ -227,6 +227,13 @@ class ORAKLRunner:
                 # Start State Bots (League B) on scheduled polling
                 state_bot_task = asyncio.create_task(self.bot_manager.start_state_bots())
                 logger.info(f"✓ State bots started: {self.bot_manager.get_state_bot_names()}")
+
+                # Start Flow + Stream Filter bots in EVENT mode (Kafka): session + running flag, no scan loop
+                try:
+                    await self.bot_manager.start_kafka_event_bots()
+                    logger.info("✓ Flow/Stream bots started in Kafka event-driven mode")
+                except Exception as e:
+                    logger.error(f"Failed starting Kafka event bots: {e}")
                 
                 # Initialize Kafka listener (Flow bots triggered by events)
                 self.kafka_listener = KafkaFlowListener(

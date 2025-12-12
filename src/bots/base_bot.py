@@ -90,6 +90,24 @@ class BaseAutoBot(ABC):
         
         self._init_state_store()
 
+    async def start_event_mode(self) -> None:
+        """
+        Start bot in event-driven mode (Kafka): create HTTP session + mark running,
+        but DO NOT start the scheduled scan loop.
+        """
+        if self.running:
+            return
+
+        self.running = True
+
+        # Create session (normally created in start()); needed for webhook posting in Kafka mode.
+        if self.session is None or self.session.closed:
+            timeout = aiohttp.ClientTimeout(total=15)
+            connector = aiohttp.TCPConnector(limit=50, ttl_dns_cache=300)
+            self.session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+
+        logger.info(f"{self.name} started in event-driven mode (Kafka) - scan loop disabled")
+
     def _init_state_store(self) -> None:
         """Initialize persistent state storage for cooldowns and outcomes."""
         try:
