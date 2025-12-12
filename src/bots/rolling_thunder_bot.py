@@ -280,9 +280,39 @@ class RollingThunderBot(BaseAutoBot):
             'time_gap_seconds': (buy_leg['timestamp'] - sell_leg['timestamp']) / 1e9,
             'kafka_event': True
         }
-        
-        # Post the alert
-        await self._post_roll_alert(roll)
+
+        # Post the alert using the same formatter as the polling path
+        try:
+            sell_obj = TradeLeg(
+                symbol=sell_leg['symbol'],
+                option_ticker=sell_leg.get('option_ticker', ''),
+                strike=float(sell_leg.get('strike', 0)),
+                expiration=str(sell_leg.get('expiration', '')),
+                contract_type=str(sell_leg.get('contract_type', 'call')),
+                dte=float(sell_leg.get('dte', 0)),
+                price=float(sell_leg.get('price', 0)),
+                size=int(sell_leg.get('size', 0)),
+                premium=float(sell_leg.get('premium', 0)),
+                timestamp_ns=int(sell_leg.get('timestamp', 0)),
+                side='sell',
+            )
+            buy_obj = TradeLeg(
+                symbol=buy_leg['symbol'],
+                option_ticker=buy_leg.get('option_ticker', ''),
+                strike=float(buy_leg.get('strike', 0)),
+                expiration=str(buy_leg.get('expiration', '')),
+                contract_type=str(buy_leg.get('contract_type', 'call')),
+                dte=float(buy_leg.get('dte', 0)),
+                price=float(buy_leg.get('price', 0)),
+                size=int(buy_leg.get('size', 0)),
+                premium=float(buy_leg.get('premium', 0)),
+                timestamp_ns=int(buy_leg.get('timestamp', 0)),
+                side='buy',
+            )
+            time_gap_seconds = float(roll.get('time_gap_seconds', 0.0))
+            await self._fire_roll_alert(sell_obj, buy_obj, time_gap_seconds)
+        except Exception as e:
+            logger.error(f"{self.name} failed posting roll alert (Kafka): {e}")
         
         logger.info(
             f"{self.name} ROLL ALERT: {symbol} "

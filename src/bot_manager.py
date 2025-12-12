@@ -449,6 +449,15 @@ class BotManager:
         """
         self.events_processed += 1
         alerts = []
+
+        # Normalize event schema so bots can share assumptions across Kafka/REST paths.
+        # Kafka-enriched events use `symbol` + `underlying_price`; some bots expect `ticker` + `current_price`.
+        if isinstance(enriched_trade, dict):
+            symbol_for_alias = enriched_trade.get("symbol") or enriched_trade.get("ticker")
+            if symbol_for_alias:
+                enriched_trade.setdefault("ticker", symbol_for_alias)
+            if "current_price" not in enriched_trade:
+                enriched_trade["current_price"] = enriched_trade.get("underlying_price", 0.0)
         
         symbol = enriched_trade.get('symbol', 'UNKNOWN')
         premium = enriched_trade.get('premium', 0)

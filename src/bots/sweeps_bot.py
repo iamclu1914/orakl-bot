@@ -194,6 +194,8 @@ class SweepsBot(BaseAutoBot):
             
             # Build sweep data structure
             sweep = {
+                # Normalized keys expected by embed/posting logic (shared with scan-based path)
+                'ticker': symbol,
                 'symbol': symbol,
                 'type': contract_type if contract_type in ['CALL', 'PUT'] else 'CALL',
                 'strike': strike,
@@ -205,14 +207,18 @@ class SweepsBot(BaseAutoBot):
                 'vol_oi_ratio': vol_oi_ratio,
                 'volume_ratio': vol_oi_ratio,
                 'underlying_price': underlying_price,
+                'current_price': underlying_price,
                 'strike_distance': strike_distance,
                 'delta': delta,
                 'dte': dte,
+                'days_to_expiry': dte,
                 'moneyness': self._classify_moneyness(strike, underlying_price, contract_type),
                 'score': score,
                 'sweep_score': score,
                 'execution_type': 'SWEEP',
                 'contract_price': enriched_trade.get('trade_price', premium / max(trade_size * 100, 1)),
+                'num_fills': 1,
+                'contract': enriched_trade.get('contract_ticker') or enriched_trade.get('contract') or enriched_trade.get('option_symbol'),
                 'kafka_event': True,
                 'event_timestamp': enriched_trade.get('event_timestamp'),
             }
