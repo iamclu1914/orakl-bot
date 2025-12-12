@@ -138,6 +138,8 @@ class KafkaFlowListener:
         self.running = False
         self.health = KafkaHealthMonitor(Config.KAFKA_FALLBACK_TIMEOUT)
         self._fallback_triggered = False
+        self._last_stats_log_ts: float = time.time()
+        self._stats_log_interval_seconds: int = int(getattr(Config, "KAFKA_STATS_LOG_INTERVAL_SECONDS", 60))
         
     def _get_kafka_config(self) -> Dict[str, str]:
         """
@@ -329,6 +331,7 @@ class KafkaFlowListener:
                 
                 # Record successful message receipt
                 self.health.record_message()
+                self._maybe_log_stats()
                 
                 # Check for reconnection after fallback
                 if self._fallback_triggered:
@@ -360,6 +363,22 @@ class KafkaFlowListener:
             raise
         finally:
             await self.stop()
+
+    def _maybe_log_stats(self) -> None:
+        """Periodically emit Kafka throughput + filter stats at INFO."""
+        now = time.time()
+        if (now - self._last_stats_log_ts) < self._stats_log_interval_seconds:
+            return
+        stats = self.health.get_stats()
+        logger.info(
+            "Kafka stats: total=%d filtered=%d pass_rate=%.1f%% last_msg_age=%ss errors=%d",
+            stats.get("total_messages", 0),
+            stats.get("filtered_messages", 0),
+            float(stats.get("pass_rate", 0.0)) * 100.0,
+            f"{stats.get('last_message_age'):.1f}" if stats.get("last_message_age") is not None else "n/a",
+            stats.get("errors", 0),
+        )
+        self._last_stats_log_ts = now
     
     async def _safe_dispatch(self, trade_data: Dict):
         """

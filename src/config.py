@@ -448,7 +448,12 @@ class Config:
     KAFKA_API_SECRET = os.getenv('KAFKA_API_SECRET', '')  # SASL password
     KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'processed-flows')  # Dashboard's processed flow topic
     KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'orakl-bot-v2-logic-engine')  # MUST be unique
-    KAFKA_MIN_PREMIUM_FILTER = float(os.getenv('KAFKA_MIN_PREMIUM_FILTER', '100000'))  # Pre-filter threshold
+    # Kafka pre-filter threshold (saves CPU + Polygon calls). If this is too high,
+    # flow bots may appear "silent" because they never receive events.
+    KAFKA_MIN_PREMIUM_FILTER = float(os.getenv('KAFKA_MIN_PREMIUM_FILTER', '50000'))
+
+    # Periodic filter telemetry interval (seconds) for bots (see BaseAutoBot).
+    FILTER_REPORT_INTERVAL_SECONDS = int(os.getenv('FILTER_REPORT_INTERVAL_SECONDS', '60'))
     KAFKA_FALLBACK_TIMEOUT = int(os.getenv('KAFKA_FALLBACK_TIMEOUT', '120'))  # 2 min before REST fallback
     KAFKA_ENRICHMENT_TIMEOUT = float(os.getenv('KAFKA_ENRICHMENT_TIMEOUT', '5.0'))  # Polygon fetch timeout
     
