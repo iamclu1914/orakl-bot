@@ -185,8 +185,8 @@ class SweepsBot(BaseAutoBot):
                 self._log_skip(symbol, "cooldown active")
                 return None
             
-            # Calculate sweep score
-            score = self._calculate_sweep_score(enriched_trade, vol_oi_ratio, strike_distance)
+            # Calculate sweep score (Kafka/event mode)
+            score = self._calculate_sweep_score_event(enriched_trade, vol_oi_ratio, strike_distance)
             
             if score < self.MIN_SCORE:
                 self._log_skip(symbol, f"score {score} < min {self.MIN_SCORE}")
@@ -231,8 +231,8 @@ class SweepsBot(BaseAutoBot):
             logger.error(f"{self.name} error processing event: {e}")
             return None
     
-    def _calculate_sweep_score(self, trade: Dict, vol_oi_ratio: float, strike_distance: float) -> int:
-        """Calculate conviction score for a sweep trade."""
+    def _calculate_sweep_score_event(self, trade: Dict, vol_oi_ratio: float, strike_distance: float) -> int:
+        """Calculate conviction score for a sweep trade (Kafka/event mode)."""
         score = 50  # Base score
         
         premium = float(trade.get('premium', 0))
