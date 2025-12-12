@@ -192,6 +192,19 @@ class SweepsBot(BaseAutoBot):
                 self._log_skip(symbol, f"score {score} < min {self.MIN_SCORE}")
                 return None
             
+            # Derive an average/print price for display (prefer actual trade price).
+            # premium ≈ price * contracts * 100
+            derived_price = 0.0
+            try:
+                derived_price = float(enriched_trade.get('trade_price') or 0.0)
+            except (TypeError, ValueError):
+                derived_price = 0.0
+            if derived_price <= 0:
+                try:
+                    derived_price = float(premium) / max(float(trade_size) * 100.0, 1.0)
+                except Exception:
+                    derived_price = 0.0
+
             # Build sweep data structure
             sweep = {
                 # Normalized keys expected by embed/posting logic (shared with scan-based path)
@@ -201,7 +214,9 @@ class SweepsBot(BaseAutoBot):
                 'strike': strike,
                 'expiration': enriched_trade.get('expiration_date', ''),
                 'premium': premium,
-                'volume': day_volume,
+                # In Kafka mode, "size" should represent the trade size (contracts), not day volume.
+                'volume': trade_size,
+                'day_volume': day_volume,
                 'volume_delta': trade_size,
                 'open_interest': open_interest,
                 'vol_oi_ratio': vol_oi_ratio,
@@ -216,7 +231,10 @@ class SweepsBot(BaseAutoBot):
                 'score': score,
                 'sweep_score': score,
                 'execution_type': 'SWEEP',
-                'contract_price': enriched_trade.get('trade_price', premium / max(trade_size * 100, 1)),
+                # Display helpers used by GoldenSweepsBot embed
+                'avg_price': derived_price,
+                'details': f"{trade_size}@{derived_price:.2f}" if derived_price > 0 else f"{trade_size}@?",
+                'contract_price': derived_price,
                 'num_fills': 1,
                 'contract': enriched_trade.get('contract_ticker') or enriched_trade.get('contract') or enriched_trade.get('option_symbol'),
                 'kafka_event': True,
