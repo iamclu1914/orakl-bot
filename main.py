@@ -566,7 +566,15 @@ class ORAKLRunner:
             for bot in self.bot_manager.flow_bots:
                 if bot.running:
                     await bot.stop()
-        
+
+            # IMPORTANT: When Kafka is back, ensure flow + stream-filter bots are running in
+            # event-driven mode (running=True + session) so `process_single_event()` doesn't
+            # skip them. (Otherwise we silently stop alerting after a reconnect.)
+            try:
+                await self.bot_manager.start_kafka_event_bots()
+            except Exception as exc:
+                logger.error(f"Failed to restart Kafka event-driven bots after fallback: {exc}")
+
         logger.info("Flow bots stopped REST polling, now receiving Kafka events")
     
     async def main(self):
