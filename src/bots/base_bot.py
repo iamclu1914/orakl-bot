@@ -83,6 +83,14 @@ class BaseAutoBot(ABC):
         self._state_db: Optional[sqlite3.Connection] = None
         self._state_db_path: Optional[Path] = None
         self._low_performers: set[str] = set()
+
+        # Webhook posting can be very bursty in Kafka/event-driven mode. Use a per-bot
+        # lock + pacing to avoid Discord 429 storms and to prevent concurrent POSTs.
+        self._webhook_post_lock: Optional[asyncio.Lock] = None
+        self._last_webhook_post_ts: float = 0.0
+        self._webhook_min_interval_seconds: float = float(
+            getattr(Config, "DISCORD_WEBHOOK_MIN_INTERVAL_SECONDS", 0.25)
+        )
         
         # ORAKL v3.0 Brain modules
         self.hedge_hunter = hedge_hunter
@@ -796,50 +804,63 @@ class BaseAutoBot(ABC):
                 "embeds": [embed],
                 "username": f"ORAKL {self.name}"
             }
-            
-            async with self.session.post(self.webhook_url, json=payload) as response:
-                if response.status == 204:
-                    logger.debug(f"{self.name} posted successfully")
-                    self.metrics.webhook_success_count += 1
-                    self.metrics.last_signal_time = datetime.now()
-                    self.metrics.signal_count += 1
-                    return True
-                else:
-                    error_text = await response.text()
-                    logger.error(f"{self.name} webhook error {response.status}: {error_text}")
-                    self.metrics.webhook_failure_count += 1
-                    
-                    if response.status == 429:  # Rate limited
-                        # Discord returns fractional seconds in either header or body
-                        retry_after_header = response.headers.get('X-RateLimit-Reset-After')
-                        retry_after = None
-                        if retry_after_header:
-                            try:
-                                retry_after = float(retry_after_header)
-                            except ValueError:
-                                retry_after = None
-                        if retry_after is None:
-                            try:
-                                error_json = json.loads(error_text)
-                                retry_after = float(error_json.get('retry_after', 1.0))
-                            except (ValueError, TypeError, json.JSONDecodeError):
-                                retry_after = 1.0
-                        retry_after = max(retry_after, 0.1)
-                        logger.warning(
-                            "%s rate limited by Discord; sleeping for %.2fs before retry",
-                            self.name,
-                            retry_after
-                        )
-                        await asyncio.sleep(retry_after + 0.05)  # small safety buffer
-                        raise WebhookException(
-                            f"Discord rate limit hit, retry after {retry_after:.2f}s",
-                            status_code=429
-                        )
-                    
-                    return False
-                    
-        except WebhookException:
-            raise  # Let retry decorator handle it
+
+            # Lazily create lock (safe in both scan + event-driven modes).
+            if self._webhook_post_lock is None:
+                self._webhook_post_lock = asyncio.Lock()
+
+            # Single-file posts per bot + pacing prevents 429 storms when many events trigger at once.
+            async with self._webhook_post_lock:
+                max_attempts = 5
+                for attempt in range(1, max_attempts + 1):
+                    # Enforce a minimum spacing between posts to this webhook.
+                    now = time.monotonic()
+                    sleep_for = (self._last_webhook_post_ts + self._webhook_min_interval_seconds) - now
+                    if sleep_for > 0:
+                        await asyncio.sleep(sleep_for)
+
+                    async with self.session.post(self.webhook_url, json=payload) as response:
+                        if response.status == 204:
+                            self._last_webhook_post_ts = time.monotonic()
+                            logger.debug(f"{self.name} posted successfully")
+                            self.metrics.webhook_success_count += 1
+                            self.metrics.last_signal_time = datetime.now()
+                            self.metrics.signal_count += 1
+                            return True
+
+                        error_text = await response.text()
+                        logger.error(f"{self.name} webhook error {response.status}: {error_text}")
+                        self.metrics.webhook_failure_count += 1
+
+                        if response.status == 429:  # Rate limited
+                            # Discord returns fractional seconds in either header or body
+                            retry_after_header = response.headers.get('X-RateLimit-Reset-After')
+                            retry_after = None
+                            if retry_after_header:
+                                try:
+                                    retry_after = float(retry_after_header)
+                                except ValueError:
+                                    retry_after = None
+                            if retry_after is None:
+                                try:
+                                    error_json = json.loads(error_text)
+                                    retry_after = float(error_json.get('retry_after', 1.0))
+                                except (ValueError, TypeError, json.JSONDecodeError):
+                                    retry_after = 1.0
+                            retry_after = max(retry_after, 0.1)
+                            logger.warning(
+                                "%s rate limited by Discord; sleeping for %.2fs before retry (attempt %d/%d)",
+                                self.name,
+                                retry_after,
+                                attempt,
+                                max_attempts,
+                            )
+                            await asyncio.sleep(retry_after + 0.10)  # small safety buffer
+                            continue
+
+                        return False
+
+                return False
         except Exception as e:
             logger.error(f"{self.name} post error: {e}")
             self.metrics.webhook_failure_count += 1

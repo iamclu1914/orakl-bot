@@ -25,6 +25,7 @@ from typing import Dict, Optional, Any, Tuple
 
 from src.config import Config
 from src.data_fetcher import DataFetcher
+from src.utils.ticker_translation import translate_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class TradeEnricher:
             logger.warning(f"Could not parse root symbol from ticker: {ticker}")
             return None, contract_id
         
-        root = match.group(1)
+        root = translate_ticker(match.group(1))
         
         # 3. Index Mapping (Critical for SPX, VIX, NDX)
         # SPX and SPXW both belong to underlying "I:SPX"
