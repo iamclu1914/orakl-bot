@@ -160,7 +160,9 @@ class TradeEnricher:
                 logger.debug(f"No snapshot data for {api_ticker}")
                 self.failed_enrichments += 1
                 # Return original data without enrichment
-                return self._build_minimal_enriched(trade_data, underlying)
+                minimal = self._build_minimal_enriched(trade_data, underlying)
+                await self._maybe_fill_underlying_price(minimal, underlying, trade_data)
+                return minimal
             
             # Merge trade data with snapshot
             enriched = self._merge_data(trade_data, snapshot, underlying)
@@ -178,12 +180,51 @@ class TradeEnricher:
             self.timeouts += 1
             self.failed_enrichments += 1
             # Return original data without enrichment (better than nothing)
-            return self._build_minimal_enriched(trade_data, underlying)
+            minimal = self._build_minimal_enriched(trade_data, underlying)
+            await self._maybe_fill_underlying_price(minimal, underlying, trade_data)
+            return minimal
             
         except Exception as e:
             logger.error(f"Error enriching {underlying} ({api_ticker}): {e}")
             self.failed_enrichments += 1
-            return self._build_minimal_enriched(trade_data, underlying)
+            minimal = self._build_minimal_enriched(trade_data, underlying)
+            await self._maybe_fill_underlying_price(minimal, underlying, trade_data)
+            return minimal
+
+    async def _maybe_fill_underlying_price(self, enriched: Dict, underlying: str, trade_data: Dict) -> None:
+        """
+        When contract snapshot enrichment fails, attempt to fetch ONLY the underlying price
+        so downstream bots can still compute strike distance / moneyness.
+        """
+        try:
+            # If we already have a price, do nothing.
+            current = float(enriched.get("underlying_price") or 0.0)
+            if current > 0:
+                return
+        except (TypeError, ValueError):
+            pass
+
+        # Only attempt a fallback price fetch for larger trades to avoid extra API load.
+        premium = 0.0
+        try:
+            premium = float(trade_data.get("premium") or 0.0)
+        except (TypeError, ValueError):
+            premium = 0.0
+
+        if premium < getattr(Config, "SWEEPS_MIN_PREMIUM", 250000):
+            return
+
+        # Avoid index underlyings here (I:SPX, I:NDX, etc.) unless you explicitly want to pay for it.
+        if isinstance(underlying, str) and underlying.startswith("I:"):
+            return
+
+        try:
+            # Cached in DataFetcher (TTL 30s). Keep timeout small.
+            price = await asyncio.wait_for(self.fetcher.get_stock_price(underlying), timeout=1.5)
+            if price and float(price) > 0:
+                enriched["underlying_price"] = float(price)
+        except Exception:
+            return
     
     def _merge_data(self, trade_data: Dict, snapshot: Dict, underlying: str) -> Dict:
         """

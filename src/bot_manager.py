@@ -13,6 +13,7 @@ When KAFKA_ENABLED=false (fallback):
 """
 import asyncio
 import logging
+import time
 from typing import List, Dict, Optional, Any
 from src.data_fetcher import DataFetcher
 from src.options_analyzer import OptionsAnalyzer
@@ -95,6 +96,8 @@ class BotManager:
         self.events_processed = 0
         self.events_dispatched = 0
         self.events_alerted = 0
+        self._premium_bucket_counts: Dict[str, int] = {}
+        self._last_premium_bucket_log_ts: float = 0.0
 
         # Initialize watchlist manager
         self.watchlist_manager = SmartWatchlistManager(fetcher)
@@ -461,6 +464,35 @@ class BotManager:
         
         symbol = enriched_trade.get('symbol', 'UNKNOWN')
         premium = enriched_trade.get('premium', 0)
+
+        # Premium bucket rollup (INFO) so we can see if the day actually had enough big prints to trigger bots.
+        try:
+            premium_val = float(premium or 0.0)
+        except (TypeError, ValueError):
+            premium_val = 0.0
+        self._premium_bucket_counts.setdefault(">=50k", 0)
+        self._premium_bucket_counts.setdefault(">=100k", 0)
+        self._premium_bucket_counts.setdefault(">=250k", 0)
+        self._premium_bucket_counts.setdefault(">=750k", 0)
+        self._premium_bucket_counts.setdefault(">=1m", 0)
+        if premium_val >= 50_000:
+            self._premium_bucket_counts[">=50k"] += 1
+        if premium_val >= 100_000:
+            self._premium_bucket_counts[">=100k"] += 1
+        if premium_val >= 250_000:
+            self._premium_bucket_counts[">=250k"] += 1
+        if premium_val >= 750_000:
+            self._premium_bucket_counts[">=750k"] += 1
+        if premium_val >= 1_000_000:
+            self._premium_bucket_counts[">=1m"] += 1
+
+        now_ts = time.time()
+        if (now_ts - self._last_premium_bucket_log_ts) >= 300:
+            logger.info(
+                "Flow premium buckets (last ~5m since restart): %s",
+                ", ".join(f"{k}={v}" for k, v in self._premium_bucket_counts.items()),
+            )
+            self._last_premium_bucket_log_ts = now_ts
         
         logger.debug(
             f"Processing event: {symbol} premium=${premium:,.0f} "
