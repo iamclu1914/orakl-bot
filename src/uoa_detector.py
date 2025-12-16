@@ -32,8 +32,6 @@ class UOASignal:
     """Represents an unusual options activity detection result"""
     symbol: str
     side: str  # 'call' or 'put'
-    contract_ticker: str = ""
-    expiration_date: str = ""
     premium: float
     size: int
     dte: int
@@ -45,6 +43,9 @@ class UOASignal:
     underlying_price: float
     contract_price: float
     is_unusual: bool
+    # Optional metadata (defaults must come AFTER all non-default fields for Python 3.13+ dataclasses)
+    contract_ticker: str = ""
+    expiration_date: str = ""
     reasons: List[str] = field(default_factory=list)
     severity: str = 'normal'  # 'normal', 'notable', 'significant', 'whale'
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
