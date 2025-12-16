@@ -18,6 +18,7 @@ from src.utils.flow_metrics import OptionTradeMetrics, build_metrics_from_flow
 from src.utils.market_hours import MarketHours
 from src.utils.enhanced_analysis import EnhancedAnalyzer, should_take_signal
 from src.utils.event_bus import event_bus
+from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -1349,15 +1350,25 @@ class BullseyeBot(BaseAutoBot):
         except Exception:
             current_price_line = "n/a"
 
+        contract_pretty = format_option_contract_pretty(
+            metrics.underlying,
+            expiration_fmt,
+            metrics.strike,
+            metrics.option_type,
+        )
+        contract_id = normalize_option_ticker(getattr(metrics, "ticker", "") or "")
+
         description = (
             f"Current Price: **{current_price_line}**\n\n"
             "**Contract Details**\n\n"
-            f"${metrics.strike:.2f} {metrics.option_type.upper()} expiring {expiration_fmt} ({dte_days} days)"
+            f"{contract_pretty} ({dte_days} days)"
         )
 
         title = f"{metrics.underlying} ${metrics.strike:.1f} {option_type_short} - Bullseye Signal"
 
         fields = [
+            {"name": "Contract", "value": contract_pretty, "inline": False},
+            {"name": "Contract ID", "value": f"`{contract_id}`" if contract_id else "Unavailable", "inline": False},
             {"name": "Premium", "value": premium_fmt, "inline": True},
             {"name": "Volume", "value": f"{total_volume:,}", "inline": True},
             {"name": "Open Interest", "value": f"{oi_value:,}", "inline": True},

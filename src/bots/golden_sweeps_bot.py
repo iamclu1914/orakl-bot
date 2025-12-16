@@ -15,6 +15,7 @@ from src.config import Config
 from src.utils.monitoring import timed
 from src.utils.event_bus import event_bus
 from src.utils.market_hours import MarketHours
+from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -178,12 +179,14 @@ class GoldenSweepsBot(SweepsBot):
         # Get enhanced score
         final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep.get('sweep_score', 0)))
 
-        # Build contract string even when ticker is missing
-        contract_symbol = (
-            sweep.get('contract')
-            or sweep.get('option_symbol')
-            or sweep.get('contract_symbol')
-            or f"{sweep['symbol']} {sweep['strike']:.0f} {sweep['type']} {sweep['expiration']}"
+        contract_pretty = format_option_contract_pretty(
+            sweep.get("symbol", ""),
+            sweep.get("expiration", ""),
+            sweep.get("strike"),
+            sweep.get("type", ""),
+        )
+        contract_id = normalize_option_ticker(
+            sweep.get("contract") or sweep.get("option_symbol") or sweep.get("contract_symbol")
         )
 
         sector = sweep.get('sector')
@@ -216,7 +219,8 @@ class GoldenSweepsBot(SweepsBot):
             {"name": "Date", "value": date_str, "inline": True},
             {"name": "Time", "value": time_str, "inline": True},
             {"name": "Ticker", "value": sweep['symbol'], "inline": True},
-            {"name": "Contract", "value": contract_symbol, "inline": False},
+            {"name": "Contract", "value": contract_pretty, "inline": False},
+            {"name": "Contract ID", "value": f"`{contract_id}`" if contract_id else "Unavailable", "inline": False},
             {"name": "Premium", "value": f"${sweep['premium']:,.2f}", "inline": True},
             {"name": "Size", "value": size_display, "inline": True},
             {"name": "Avg Price", "value": avg_price_display, "inline": True},

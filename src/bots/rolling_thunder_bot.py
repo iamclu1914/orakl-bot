@@ -31,6 +31,7 @@ from .base_bot import BaseAutoBot
 from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.market_hours import MarketHours
+from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -590,13 +591,28 @@ class RollingThunderBot(BaseAutoBot):
         
         type_emoji = "📈" if buy_leg.contract_type == 'call' else "📉"
         
+        sell_contract_pretty = format_option_contract_pretty(
+            sell_leg.symbol,
+            sell_leg.expiration,
+            sell_leg.strike,
+            sell_leg.contract_type,
+        )
+        buy_contract_pretty = format_option_contract_pretty(
+            buy_leg.symbol,
+            buy_leg.expiration,
+            buy_leg.strike,
+            buy_leg.contract_type,
+        )
+        sell_contract_id = normalize_option_ticker(sell_leg.option_ticker)
+        buy_contract_id = normalize_option_ticker(buy_leg.option_ticker)
+
         description = (
             f"**Strategy:** {action}\n\n"
-            f"🔴 **CLOSED:** ${sell_leg.strike:.0f} {sell_leg.contract_type.upper()} "
-            f"exp {sell_leg.expiration} ({sell_leg.dte}d)\n"
+            f"🔴 **CLOSED:** {sell_contract_pretty} ({sell_leg.dte}d)\n"
+            f"Contract ID: `{sell_contract_id}`\n"
             f"💰 Premium: {sell_premium_fmt} ({sell_leg.size} contracts)\n\n"
-            f"🟢 **OPENED:** ${buy_leg.strike:.0f} {buy_leg.contract_type.upper()} "
-            f"exp {buy_leg.expiration} ({buy_leg.dte}d)\n"
+            f"🟢 **OPENED:** {buy_contract_pretty} ({buy_leg.dte}d)\n"
+            f"Contract ID: `{buy_contract_id}`\n"
             f"💰 Premium: {buy_premium_fmt} ({buy_leg.size} contracts)\n\n"
             f"⏱️ **Time Gap:** {time_gap:.1f}s\n"
             f"💵 **Net Flow:** {'+' if net_flow > 0 else '-'}{net_fmt}"

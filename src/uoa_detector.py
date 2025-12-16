@@ -32,6 +32,8 @@ class UOASignal:
     """Represents an unusual options activity detection result"""
     symbol: str
     side: str  # 'call' or 'put'
+    contract_ticker: str = ""
+    expiration_date: str = ""
     premium: float
     size: int
     dte: int
@@ -52,6 +54,8 @@ class UOASignal:
         return {
             'symbol': self.symbol,
             'side': self.side,
+            'contract_ticker': self.contract_ticker,
+            'expiration_date': self.expiration_date,
             'premium': self.premium,
             'size': self.size,
             'dte': self.dte,
@@ -145,6 +149,14 @@ class UnusualActivityDetector:
         
         strike = float(enriched_trade.get('strike_price', 0))
         underlying_price = float(enriched_trade.get('underlying_price', 0))
+        contract_ticker = str(
+            enriched_trade.get('contract_ticker')
+            or enriched_trade.get('option_ticker')
+            or enriched_trade.get('option_symbol')
+            or enriched_trade.get('contract')
+            or ""
+        )
+        expiration_date = str(enriched_trade.get('expiration_date') or "")
         dte = int(enriched_trade.get('dte', 0))
         vol = int(enriched_trade.get('day_volume', 0))
         oi = int(enriched_trade.get('open_interest', 0))
@@ -170,6 +182,8 @@ class UnusualActivityDetector:
         signal = UOASignal(
             symbol=symbol,
             side=side,
+            contract_ticker=contract_ticker,
+            expiration_date=expiration_date,
             premium=premium,
             size=trade_size,
             dte=dte,

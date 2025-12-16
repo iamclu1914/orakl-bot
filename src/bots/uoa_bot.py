@@ -21,6 +21,7 @@ from collections import defaultdict
 
 from src.config import Config
 from src.uoa_detector import UnusualActivityDetector, UOASignal
+from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,14 @@ class UOABot:
         """Post UOA alert to Discord webhook."""
         try:
             import aiohttp
+
+            contract_pretty = format_option_contract_pretty(
+                signal.symbol,
+                getattr(signal, "expiration_date", ""),
+                signal.strike,
+                signal.side,
+            )
+            contract_id = normalize_option_ticker(getattr(signal, "contract_ticker", ""))
             
             # Determine color based on severity
             if signal.severity == 'whale':
@@ -165,6 +174,16 @@ class UOABot:
                 "description": f"**{side_emoji} {side_text}** @ ${signal.strike:.2f}",
                 "color": color,
                 "fields": [
+                    {
+                        "name": "Contract",
+                        "value": contract_pretty,
+                        "inline": False
+                    },
+                    {
+                        "name": "Contract ID",
+                        "value": f"`{contract_id}`" if contract_id else "Unavailable",
+                        "inline": False
+                    },
                     {
                         "name": "Premium",
                         "value": f"${signal.premium:,.0f}",

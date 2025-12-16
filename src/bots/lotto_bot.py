@@ -26,6 +26,7 @@ from .base_bot import BaseAutoBot
 from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.market_hours import MarketHours
+from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -402,9 +403,17 @@ class LottoBot(BaseAutoBot):
         else:
             conviction = "🔥 HIGH"
         
+        contract_pretty = format_option_contract_pretty(
+            lotto.symbol,
+            lotto.expiration,
+            lotto.strike,
+            lotto.contract_type,
+        )
+        contract_id = normalize_option_ticker(getattr(lotto, "option_ticker", "") or "")
+
         description = (
-            f"**Contract:** ${lotto.strike:.2f} {lotto.contract_type.upper()} "
-            f"exp {lotto.expiration} ({dte}d)\n"
+            f"**Contract:** {contract_pretty} ({dte}d)\n"
+            f"**Contract ID:** `{contract_id}`\n"
             f"**Price:** ${lotto.price:.2f}\n"
             f"**Volume:** {lotto.volume:,}\n"
             f"**Open Interest:** {lotto.open_interest:,}\n"
