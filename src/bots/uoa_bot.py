@@ -89,6 +89,24 @@ class UOABot:
             return None
         
         self.events_processed += 1
+
+        # Global rule: do not alert on index underlyings (SPX/SPXW/VIX/VIXW/NDX/etc).
+        # Even though we block these upstream, enforce here as a final safety net.
+        if getattr(Config, "BLOCK_INDEX_SYMBOLS", True):
+            try:
+                symbol = str(enriched_trade.get("symbol") or enriched_trade.get("ticker") or "").strip().upper()
+                underlying = str(enriched_trade.get("underlying") or "").strip().upper()
+                contract_ticker = str(enriched_trade.get("contract_ticker") or enriched_trade.get("contract") or "").strip().upper()
+                blocked = set(getattr(Config, "INDEX_SYMBOLS_BLOCKLIST", []))
+                if (
+                    symbol in blocked
+                    or underlying.startswith("I:")
+                    or underlying.replace("I:", "") in blocked
+                    or any(contract_ticker.startswith(f"O:{root}") for root in blocked if root)
+                ):
+                    return None
+            except Exception:
+                pass
         
         # Analyze for unusual activity
         signal = self.detector.analyze(enriched_trade)
