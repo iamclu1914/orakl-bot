@@ -50,10 +50,14 @@ class UOABot:
         
         # Cooldown tracking (per-symbol)
         self.cooldowns: Dict[str, float] = {}  # symbol -> last_alert_time
+        self.contract_cooldowns: Dict[str, float] = {}  # contract_key -> last_alert_time
         self.alert_counts: Dict[str, List[float]] = defaultdict(list)  # symbol -> [timestamps]
+        self.global_alert_timestamps: List[float] = []
         
         # Config
         self.cooldown_seconds = Config.UOA_COOLDOWN_SECONDS
+        self.contract_cooldown_seconds = int(getattr(Config, "UOA_CONTRACT_COOLDOWN_SECONDS", 900))
+        self.max_alerts_per_minute = int(getattr(Config, "UOA_MAX_ALERTS_PER_MINUTE", 20))
         self.max_alerts_per_symbol = Config.UOA_MAX_ALERTS_PER_SYMBOL
         self.alert_window = Config.UOA_ALERT_WINDOW_SECONDS
         
@@ -93,7 +97,7 @@ class UOABot:
             return None
         
         # Check cooldown
-        if not self._can_alert(signal.symbol):
+        if not self._can_alert(signal):
             self.alerts_suppressed += 1
             logger.debug(f"UOA suppressed for {signal.symbol} (cooldown/rate limit)")
             return None
@@ -102,17 +106,39 @@ class UOABot:
         success = await self._post_alert(signal)
         
         if success:
-            self._mark_alert(signal.symbol)
+            self._mark_alert(signal)
             self.alerts_sent += 1
             return signal.to_dict()
         
         return None
     
-    def _can_alert(self, symbol: str) -> bool:
-        """Check if we can send an alert for this symbol."""
+    def _build_contract_key(self, signal: UOASignal) -> str:
+        exp = (getattr(signal, "expiration_date", "") or "").strip()
+        try:
+            strike = float(getattr(signal, "strike", 0) or 0)
+        except Exception:
+            strike = 0.0
+        side = (getattr(signal, "side", "") or "").strip().lower()
+        return f"{signal.symbol}_{side}_{strike:.4f}_{exp}"
+
+    def _can_alert(self, signal: UOASignal) -> bool:
+        """Check if we can send an alert (global + per-symbol + per-contract)."""
         now = time.time()
         
+        # Global throttle (protect Discord + reduce channel spam)
+        cutoff_global = now - 60.0
+        self.global_alert_timestamps = [t for t in self.global_alert_timestamps if t > cutoff_global]
+        if len(self.global_alert_timestamps) >= self.max_alerts_per_minute:
+            return False
+
+        # Per-contract cooldown (dedupe repeated prints of same strike/exp)
+        contract_key = self._build_contract_key(signal)
+        last_contract = self.contract_cooldowns.get(contract_key, 0)
+        if now - last_contract < self.contract_cooldown_seconds:
+            return False
+
         # Check cooldown
+        symbol = signal.symbol
         last_alert = self.cooldowns.get(symbol, 0)
         if now - last_alert < self.cooldown_seconds:
             return False
@@ -130,11 +156,14 @@ class UOABot:
         
         return True
     
-    def _mark_alert(self, symbol: str):
-        """Mark that an alert was sent for this symbol."""
+    def _mark_alert(self, signal: UOASignal):
+        """Mark that an alert was sent (global + symbol + contract)."""
         now = time.time()
+        symbol = signal.symbol
         self.cooldowns[symbol] = now
         self.alert_counts[symbol].append(now)
+        self.contract_cooldowns[self._build_contract_key(signal)] = now
+        self.global_alert_timestamps.append(now)
     
     async def _post_alert(self, signal: UOASignal) -> bool:
         """Post UOA alert to Discord webhook."""
@@ -209,12 +238,12 @@ class UOABot:
                     },
                     {
                         "name": "Spot Price",
-                        "value": f"${signal.underlying_price:.2f}",
+                        "value": f"${signal.underlying_price:.2f}" if float(signal.underlying_price or 0) > 0 else "Unavailable",
                         "inline": True
                     },
                     {
                         "name": "OTM %",
-                        "value": f"{signal.otm_pct*100:.1f}%",
+                        "value": f"{signal.otm_pct*100:.1f}%" if float(signal.underlying_price or 0) > 0 else "Unavailable",
                         "inline": True
                     },
                     {

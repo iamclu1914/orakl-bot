@@ -252,6 +252,18 @@ class UnusualActivityDetector:
         # Determine if unusual (need minimum reasons)
         signal.reasons = reasons
         signal.is_unusual = len(reasons) >= self.min_reasons
+
+        # Anti-spam: "notable" should not fire on premium + short DTE alone.
+        # Require at least one *structural* unusual signal for notable tier.
+        # (High Vol/OI, big print, or brand-new contract). Significant/whale always allowed.
+        if signal.is_unusual and signal.severity == 'notable':
+            has_structural = (
+                vol_oi_ratio >= self.min_vol_oi
+                or trade_size >= 250
+                or (oi == 0 and vol > self.min_volume)
+            )
+            if not has_structural:
+                signal.is_unusual = False
         
         if signal.is_unusual:
             self.total_unusual += 1

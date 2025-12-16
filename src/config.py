@@ -493,12 +493,16 @@ class Config:
     UOA_MAX_OTM_PCT = float(os.getenv('UOA_MAX_OTM_PCT', '0.30'))  # 30% max OTM
     
     # Spam prevention
-    UOA_COOLDOWN_SECONDS = int(os.getenv('UOA_COOLDOWN_SECONDS', '300'))  # 5 min per symbol
-    UOA_MAX_ALERTS_PER_SYMBOL = int(os.getenv('UOA_MAX_ALERTS_PER_SYMBOL', '3'))  # Max 3 per symbol per hour
+    UOA_COOLDOWN_SECONDS = int(os.getenv('UOA_COOLDOWN_SECONDS', '600'))  # 10 min per symbol
+    # Contract-level dedupe prevents floods when the same strike/exp prints repeatedly.
+    UOA_CONTRACT_COOLDOWN_SECONDS = int(os.getenv('UOA_CONTRACT_COOLDOWN_SECONDS', '900'))  # 15 min per contract
+    # Global throttle (protect Discord + sanity)
+    UOA_MAX_ALERTS_PER_MINUTE = int(os.getenv('UOA_MAX_ALERTS_PER_MINUTE', '20'))
+    UOA_MAX_ALERTS_PER_SYMBOL = int(os.getenv('UOA_MAX_ALERTS_PER_SYMBOL', '2'))  # Max 2 per symbol per hour
     UOA_ALERT_WINDOW_SECONDS = int(os.getenv('UOA_ALERT_WINDOW_SECONDS', '3600'))  # 1 hour window
     
     # Minimum reasons required to trigger (prevents weak signals)
-    UOA_MIN_REASONS = int(os.getenv('UOA_MIN_REASONS', '2'))  # Need at least 2 unusual factors
+    UOA_MIN_REASONS = int(os.getenv('UOA_MIN_REASONS', '3'))  # Need at least 3 unusual factors
     
     @classmethod
     def validate(cls):
