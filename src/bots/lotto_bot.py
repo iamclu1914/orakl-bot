@@ -121,11 +121,12 @@ class LottoBot(BaseAutoBot):
             
             # Extract key fields
             contract_price = float(enriched_trade.get('trade_price', 0))
-            strike = float(enriched_trade.get('strike_price', 0))
-            underlying_price = float(enriched_trade.get('underlying_price', 0))
-            contract_type = enriched_trade.get('contract_type', '').upper()
+            strike = float(enriched_trade.get('strike_price') or enriched_trade.get('strike') or 0)
+            underlying_price = float(enriched_trade.get('underlying_price') or enriched_trade.get('current_price') or 0)
+            contract_type = str(enriched_trade.get('contract_type') or enriched_trade.get('type') or '').upper()
             open_interest = int(enriched_trade.get('open_interest', 0))
             day_volume = int(enriched_trade.get('day_volume', 0))
+            trade_size = int(enriched_trade.get('trade_size', 0))
             premium = float(enriched_trade.get('premium', 0))
             
             # Use mid price if trade_price not available
@@ -135,14 +136,26 @@ class LottoBot(BaseAutoBot):
                 if bid > 0 and ask > 0:
                     contract_price = (bid + ask) / 2
                 else:
+                    self._count_filter("missing_contract_price")
                     return None
             
             # Validate required fields
-            if not all([symbol, strike, underlying_price, contract_type]):
+            if not symbol:
+                self._count_filter("missing_symbol")
+                return None
+            if strike <= 0:
+                self._count_filter("missing_strike")
+                return None
+            if underlying_price <= 0:
+                self._count_filter("missing_underlying_price")
+                return None
+            if not contract_type:
+                self._count_filter("missing_contract_type")
                 return None
             
             # Check price threshold (must be cheap)
             if contract_price > self.max_price:
+                self._count_filter("price_above_max")
                 return None  # Too expensive for lotto play
             
             # Calculate OTM percentage
@@ -156,29 +169,35 @@ class LottoBot(BaseAutoBot):
             
             # Check OTM threshold (must be far OTM)
             if otm_pct < self.min_otm_pct:
+                self._count_filter("otm_below_min")
                 return None  # Not far enough OTM
             
             # Calculate Vol/OI ratio
+            effective_volume = trade_size if trade_size > 0 else day_volume
             if open_interest > 0:
-                vol_oi_ratio = day_volume / open_interest
+                vol_oi_ratio = effective_volume / open_interest
             else:
-                vol_oi_ratio = float(day_volume)  # No OI = likely new contract
+                vol_oi_ratio = float(effective_volume)  # No OI = likely new contract
             
             # Check Vol/OI ratio (must be explosive)
             if vol_oi_ratio < self.min_vol_oi_ratio:
+                self._count_filter("voi_below_min")
                 return None  # Not enough explosive interest
             
             # Check minimum volume
-            if day_volume < self.min_volume:
+            if effective_volume < self.min_volume:
+                self._count_filter("volume_below_min")
                 return None
             
             # Check minimum premium
             if premium < self.min_premium:
+                self._count_filter("premium_below_min")
                 return None
             
             # Check cooldown
             cooldown_key = f"{symbol}_{contract_type}_{strike}"
             if self._cooldown_active(cooldown_key, self.cooldown_seconds):
+                self._count_filter("cooldown_active")
                 return None
             
             # Build candidate
@@ -189,7 +208,7 @@ class LottoBot(BaseAutoBot):
                 expiration=enriched_trade.get('expiration_date', ''),
                 contract_type=contract_type,
                 price=contract_price,
-                volume=day_volume,
+                volume=effective_volume,
                 open_interest=open_interest,
                 vol_oi_ratio=vol_oi_ratio,
                 otm_pct=otm_pct,

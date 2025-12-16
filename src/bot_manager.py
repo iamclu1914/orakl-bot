@@ -459,8 +459,24 @@ class BotManager:
             symbol_for_alias = enriched_trade.get("symbol") or enriched_trade.get("ticker")
             if symbol_for_alias:
                 enriched_trade.setdefault("ticker", symbol_for_alias)
+                enriched_trade.setdefault("symbol", symbol_for_alias)
             if "current_price" not in enriched_trade:
                 enriched_trade["current_price"] = enriched_trade.get("underlying_price", 0.0)
+            if "underlying_price" not in enriched_trade or not enriched_trade.get("underlying_price"):
+                enriched_trade["underlying_price"] = enriched_trade.get("current_price", 0.0)
+
+            # Normalize common option metadata keys across producers/enrichers.
+            if "strike_price" not in enriched_trade or not enriched_trade.get("strike_price"):
+                enriched_trade["strike_price"] = enriched_trade.get("strike", 0.0)
+            if "expiration_date" not in enriched_trade or not enriched_trade.get("expiration_date"):
+                enriched_trade["expiration_date"] = enriched_trade.get("expiration", "")
+            if "contract_type" not in enriched_trade or not enriched_trade.get("contract_type"):
+                enriched_trade["contract_type"] = (
+                    enriched_trade.get("type")
+                    or enriched_trade.get("side")
+                    or enriched_trade.get("cp")
+                    or ""
+                )
 
             # Normalize trade sizing fields used by flow bots/embeds.
             def _coerce_int(value, default: int = 0) -> int:
@@ -531,6 +547,11 @@ class BotManager:
                 enriched_trade["trade_size"] = trade_size
             if _coerce_int(enriched_trade.get("size"), 0) <= 0:
                 enriched_trade["size"] = trade_size
+
+            # Some bots key off day_volume even in Kafka mode; if it's missing/0, fall back
+            # to trade_size so event-based filters can function early in the session.
+            if _coerce_int(enriched_trade.get("day_volume"), 0) <= 0 and trade_size > 0:
+                enriched_trade["day_volume"] = trade_size
         
         symbol = enriched_trade.get('symbol', 'UNKNOWN')
         premium = enriched_trade.get('premium', 0)

@@ -124,9 +124,9 @@ class BullseyeBot(BaseAutoBot):
                 return None
             
             # Extract key fields
-            strike = float(enriched_trade.get('strike_price', 0))
-            underlying_price = float(enriched_trade.get('underlying_price', 0))
-            contract_type = enriched_trade.get('contract_type', '').upper()
+            strike = float(enriched_trade.get('strike_price') or enriched_trade.get('strike') or 0)
+            underlying_price = float(enriched_trade.get('underlying_price') or enriched_trade.get('current_price') or 0)
+            contract_type = str(enriched_trade.get('contract_type') or enriched_trade.get('type') or '').upper()
             open_interest = int(enriched_trade.get('open_interest', 0))
             day_volume = int(enriched_trade.get('day_volume', 0))
             trade_size = int(enriched_trade.get('trade_size', 0))
@@ -136,9 +136,18 @@ class BullseyeBot(BaseAutoBot):
             bid = float(enriched_trade.get('current_bid', 0))
             ask = float(enriched_trade.get('current_ask', 0))
             
-            # Validate required fields
-            if not all([symbol, strike, underlying_price, contract_type]):
-                self._count_filter("missing_required_fields")
+            # Validate required fields (count granular reasons so we can fix schema quickly)
+            if not symbol:
+                self._count_filter("missing_symbol")
+                return None
+            if strike <= 0:
+                self._count_filter("missing_strike")
+                return None
+            if underlying_price <= 0:
+                self._count_filter("missing_underlying_price")
+                return None
+            if not contract_type:
+                self._count_filter("missing_contract_type")
                 return None
             
             # Check DTE range
@@ -180,10 +189,11 @@ class BullseyeBot(BaseAutoBot):
                 return None
             
             # Calculate Vol/OI ratio
+            effective_volume = trade_size if trade_size > 0 else day_volume
             if open_interest > 0:
-                vol_oi_ratio = day_volume / open_interest
+                vol_oi_ratio = effective_volume / open_interest
             else:
-                vol_oi_ratio = day_volume  # No OI = assume fresh
+                vol_oi_ratio = effective_volume  # No OI = assume fresh
             
             # Check Vol/OI ratio (fresh positioning)
             if vol_oi_ratio < self.min_voi_ratio:
