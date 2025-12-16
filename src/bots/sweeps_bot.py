@@ -135,17 +135,25 @@ class SweepsBot(BaseAutoBot):
             delta = float(enriched_trade.get('delta', 0))
             dte = int(enriched_trade.get('dte', 0))
             
-            # Validate required fields
-            if not all([symbol, strike, underlying_price, contract_type]):
-                self._count_filter("missing_required_fields")
+            # Validate required fields (count specific missing reasons so we can debug quickly)
+            if not symbol:
+                self._count_filter("missing_symbol")
+                return None
+            if strike <= 0:
+                self._count_filter("missing_strike")
+                return None
+            if not contract_type:
+                self._count_filter("missing_contract_type")
+                return None
+            if not enriched_trade.get('expiration_date'):
+                self._count_filter("missing_expiration_date")
                 return None
             
-            # Calculate strike distance
-            if underlying_price > 0:
-                strike_distance = abs(strike - underlying_price) / underlying_price * 100
-            else:
+            # Calculate strike distance (underlying price is required for all strike/moneyness logic)
+            if underlying_price <= 0:
                 self._count_filter("missing_underlying_price")
                 return None
+            strike_distance = abs(strike - underlying_price) / underlying_price * 100
             
             # Calculate effective max strike distance
             max_strike_distance = self.MAX_STRIKE_DISTANCE

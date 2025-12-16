@@ -45,6 +45,30 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def _get_running_commit() -> str:
+    """
+    Best-effort commit identifier for diagnostics (helps confirm redeploys on Render).
+    """
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "COMMIT_SHA"):
+        val = os.getenv(key)
+        if val:
+            return val[:12]
+    # Fallback: try reading .git metadata if available in the container.
+    try:
+        repo_root = Path(__file__).parent
+        head_path = repo_root / ".git" / "HEAD"
+        if head_path.exists():
+            head = head_path.read_text().strip()
+            if head.startswith("ref:"):
+                ref = head.split("ref:", 1)[1].strip()
+                ref_path = repo_root / ".git" / ref
+                if ref_path.exists():
+                    return ref_path.read_text().strip()[:12]
+            return head[:12]
+    except Exception:
+        pass
+    return "unknown"
+
 # Kafka event-driven architecture imports (ORAKL v2.0)
 if Config.KAFKA_ENABLED:
     try:
@@ -389,6 +413,7 @@ class ORAKLRunner:
         print(banner)
         logger.info("=" * 60)
         logger.info("ORAKL Enhanced Bot Starting...")
+        logger.info("Running commit: %s", _get_running_commit())
         logger.info("=" * 60)
         logger.info(f"System: {sys.platform}")
         logger.info(f"Python: {sys.version.split()[0]}")
