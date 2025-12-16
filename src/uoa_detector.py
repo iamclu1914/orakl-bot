@@ -30,22 +30,25 @@ logger = logging.getLogger(__name__)
 @dataclass
 class UOASignal:
     """Represents an unusual options activity detection result"""
-    symbol: str
-    side: str  # 'call' or 'put'
-    premium: float
-    size: int
-    dte: int
-    strike: float
-    otm_pct: float
-    vol: int
-    oi: int
-    vol_oi_ratio: float
-    underlying_price: float
-    contract_price: float
-    is_unusual: bool
-    # Optional metadata (defaults must come AFTER all non-default fields for Python 3.13+ dataclasses)
+    # NOTE: Python 3.13 dataclasses are strict about field ordering:
+    # non-default fields may not follow default fields. To make this dataclass
+    # order-proof (and avoid startup crashes on deploy), we provide defaults
+    # for all fields. Call sites set explicit values anyway.
+    symbol: str = ""
+    side: str = ""  # 'call' or 'put'
     contract_ticker: str = ""
     expiration_date: str = ""
+    premium: float = 0.0
+    size: int = 0
+    dte: int = 0
+    strike: float = 0.0
+    otm_pct: float = 0.0
+    vol: int = 0
+    oi: int = 0
+    vol_oi_ratio: float = 0.0
+    underlying_price: float = 0.0
+    contract_price: float = 0.0
+    is_unusual: bool = False
     reasons: List[str] = field(default_factory=list)
     severity: str = 'normal'  # 'normal', 'notable', 'significant', 'whale'
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
