@@ -281,6 +281,16 @@ class Config:
         'ABC,ATVI,BRK-A,BRK-B,SPX,DFS'
     ).split(',')
 
+    # =============================================================================
+    # Index / cash-settled underlyings (SPX/VIX/NDX/etc) — block posting across ALL bots
+    # =============================================================================
+    BLOCK_INDEX_SYMBOLS = os.getenv('BLOCK_INDEX_SYMBOLS', 'true').lower() == 'true'
+    INDEX_SYMBOLS_BLOCKLIST = os.getenv(
+        'INDEX_SYMBOLS_BLOCKLIST',
+        # Common index roots + weeklies/families we see in options flow
+        'SPX,SPXW,VIX,VIXW,NDX,NDXW,NDXP,NQX,RUT,RUTW,DJX,DJXW,XSP,OEX'
+    ).split(',')
+
     # Initialize WATCHLIST (will be populated dynamically by WatchlistManager)
     # Normalize all watchlists to uppercase
     WATCHLIST = [ticker.strip().upper() for ticker in STATIC_WATCHLIST if ticker.strip()]
@@ -315,6 +325,7 @@ class Config:
             GOLDEN_SWEEPS_WATCHLIST.insert(0, _core_symbol)
 
     SKIP_TICKERS = [ticker.strip().upper() for ticker in SKIP_TICKERS if ticker.strip()]
+    INDEX_SYMBOLS_BLOCKLIST = [ticker.strip().upper() for ticker in INDEX_SYMBOLS_BLOCKLIST if ticker.strip()]
     
     # Auto-start Settings
     AUTO_START = os.getenv('AUTO_START', 'true').lower() == 'true'

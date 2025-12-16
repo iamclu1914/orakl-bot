@@ -139,6 +139,20 @@ class TradeEnricher:
         
         # PARSE CORRECTLY using single source of truth
         underlying, contract_id = self.parse_polygon_ticker(raw_ticker)
+
+        # Global rule: do not process/post index underlyings (SPX/VIX/NDX/etc).
+        # This drops them at the source so NO bot can alert on them.
+        if getattr(Config, "BLOCK_INDEX_SYMBOLS", True):
+            try:
+                if (isinstance(underlying, str) and underlying.startswith("I:")):
+                    return None
+                # Also block if Kafka root symbol is an index family (SPXW/VIXW/etc)
+                root_symbol = (trade_data.get("symbol") or trade_data.get("ticker") or "").strip().upper()
+                if root_symbol and root_symbol in set(getattr(Config, "INDEX_SYMBOLS_BLOCKLIST", [])):
+                    return None
+            except Exception:
+                # Fail open if something weird happens; better to keep the pipeline alive.
+                pass
         
         if not underlying:
             logger.warning(f"Could not parse underlying from ticker: {raw_ticker}")

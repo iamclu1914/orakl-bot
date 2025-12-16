@@ -554,6 +554,30 @@ class BotManager:
                 enriched_trade["day_volume"] = trade_size
         
         symbol = enriched_trade.get('symbol', 'UNKNOWN')
+
+        # Global rule: never alert on index underlyings (SPX/SPXW/VIX/NDX/etc) for ANY bot.
+        if getattr(Config, "BLOCK_INDEX_SYMBOLS", True):
+            try:
+                sym_upper = str(symbol or "").strip().upper()
+                underlying_upper = str(enriched_trade.get("underlying") or "").strip().upper()
+                contract_ticker = str(
+                    enriched_trade.get("contract_ticker")
+                    or enriched_trade.get("contract")
+                    or enriched_trade.get("option_ticker")
+                    or ""
+                ).strip().upper()
+
+                blocked = set(getattr(Config, "INDEX_SYMBOLS_BLOCKLIST", []))
+                if (
+                    sym_upper in blocked
+                    or (underlying_upper.startswith("I:"))
+                    or (underlying_upper.replace("I:", "") in blocked)
+                    or any(contract_ticker.startswith(f"O:{root}") for root in blocked if root)
+                ):
+                    return []
+            except Exception:
+                # If something weird happens, don't kill the whole pipeline.
+                pass
         premium = enriched_trade.get('premium', 0)
 
         # Premium bucket rollup (INFO) so we can see if the day actually had enough big prints to trigger bots.
