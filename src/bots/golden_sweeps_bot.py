@@ -16,8 +16,7 @@ from src.utils.monitoring import timed
 from src.utils.event_bus import event_bus
 from src.utils.market_hours import MarketHours
 from src.utils.option_contract_format import (
-    format_option_contract_sentence,
-    normalize_option_ticker,
+    format_option_contract_golden,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,10 +167,26 @@ class GoldenSweepsBot(SweepsBot):
         """Post enhanced golden sweep signal to Discord"""
         color = 0x00FF00 if sweep['type'] == 'CALL' else 0xFF0000
 
-        # Format time
-        now = datetime.now()
-        time_str = now.strftime('%I:%M %p')
-        date_str = now.strftime('%m/%d/%y')
+        # Prefer the actual event timestamp if present (Kafka mode), otherwise fallback to now.
+        event_dt = None
+        raw_ts = sweep.get("event_timestamp") or sweep.get("timestamp") or sweep.get("trade_timestamp")
+        try:
+            if isinstance(raw_ts, (int, float)):
+                # Heuristic: ms vs seconds
+                ts = float(raw_ts)
+                event_dt = datetime.fromtimestamp(ts / 1000.0) if ts > 2_000_000_000 else datetime.fromtimestamp(ts)
+            elif isinstance(raw_ts, str) and raw_ts.strip():
+                # Try ISO-8601
+                event_dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+        except Exception:
+            event_dt = None
+
+        if event_dt is None:
+            event_dt = datetime.now()
+
+        # Match desired display: Date=12/02/25, Time=12:15 PM
+        time_str = event_dt.strftime('%I:%M %p').lstrip('0')
+        date_str = event_dt.strftime('%m/%d/%y')
 
         # Format expiration
         exp_str = sweep['expiration']
@@ -182,15 +197,11 @@ class GoldenSweepsBot(SweepsBot):
         # Get enhanced score
         final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep.get('sweep_score', 0)))
 
-        dte_value = sweep.get("days_to_expiry", sweep.get("dte"))
-        contract_pretty = format_option_contract_sentence(
+        contract_pretty = format_option_contract_golden(
+            sweep.get("symbol") or sweep.get("ticker") or "",
             sweep.get("strike"),
             sweep.get("type", ""),
             sweep.get("expiration", ""),
-            int(dte_value) if dte_value is not None else None,
-        )
-        contract_id = normalize_option_ticker(
-            sweep.get("contract") or sweep.get("option_symbol") or sweep.get("contract_symbol")
         )
 
         sector = sweep.get('sector')
@@ -222,34 +233,35 @@ class GoldenSweepsBot(SweepsBot):
         fields = [
             {"name": "Date", "value": date_str, "inline": True},
             {"name": "Time", "value": time_str, "inline": True},
-            {"name": "Ticker", "value": sweep['symbol'], "inline": True},
+            {"name": "Ticker", "value": sweep.get('symbol') or sweep.get('ticker') or "UNKNOWN", "inline": True},
             {"name": "Contract", "value": contract_pretty, "inline": False},
-            {"name": "Contract ID", "value": f"`{contract_id}`" if contract_id else "Unavailable", "inline": False},
             {"name": "Premium", "value": f"${sweep['premium']:,.2f}", "inline": True},
             {"name": "Size", "value": size_display, "inline": True},
             {"name": "Avg Price", "value": avg_price_display, "inline": True},
             {"name": "Exp", "value": exp_str, "inline": True},
             {"name": "Strike", "value": f"${sweep['strike']:.2f}", "inline": True},
             {"name": "C/P", "value": sweep['type'] + "S", "inline": True},
-            {"name": "Spot", "value": f"${sweep['current_price']:.2f}", "inline": True},
+            {"name": "Spot", "value": f"${float(sweep.get('current_price') or sweep.get('underlying_price') or 0):.2f}", "inline": True},
             {"name": "Type", "value": "SWEEP", "inline": True},
             {"name": "Prem (M)", "value": f"${premium_millions:.1f}M", "inline": True},
             {"name": "Algo Score", "value": str(int(final_score)), "inline": True}
         ]
 
-        if sector:
-            fields.append({"name": "Sector", "value": sector, "inline": True})
-
-        if isinstance(details_raw, str) and details_raw.strip():
-            fields.append({"name": "Details", "value": details_raw.strip(), "inline": True})
+        # Keep optional extras out of the default embed to match the desired clean layout.
 
         embed = self.create_signal_embed_with_disclaimer(
-            title=f"🏆 {sweep['ticker']} - Golden Sweep Detected",
+            title=f"{(sweep.get('ticker') or sweep.get('symbol') or 'UNKNOWN')} - Golden Sweep Detected",
             description="",
             color=color,
             fields=fields,
-            footer="ORAKL Bot - Golden Sweeps"
+            footer=f"ORAKL Bot - Golden Sweeps•{event_dt.month}/{event_dt.day}/{event_dt.year} {time_str}"
         )
+
+        # Set the embed timestamp to the event time for correct Discord "sent at" display.
+        try:
+            embed["timestamp"] = event_dt.astimezone().isoformat()
+        except Exception:
+            embed["timestamp"] = datetime.utcnow().isoformat()
 
         # Persist final score info on sweep for downstream consumers
         sweep['final_score'] = final_score

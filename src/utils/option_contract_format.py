@@ -86,6 +86,44 @@ def format_option_contract_sentence(
     dte_txt = f"{dte_int} days" if dte_int is not None else "n/a"
     return f"{_format_strike_currency(strike)} {cp_word} expiring {exp} ({dte_txt})"
 
+def _format_strike_plain(strike: Optional[float]) -> str:
+    """Plain strike formatting (no $) for dashboard-style embeds."""
+    try:
+        if strike is None:
+            return "?"
+        val = float(strike)
+        if val <= 0:
+            return "?"
+        if abs(val - round(val)) < 1e-9:
+            return f"{val:.0f}"
+        if abs(val * 10 - round(val * 10)) < 1e-9:
+            return f"{val:.1f}"
+        return f"{val:.2f}"
+    except Exception:
+        return "?"
+
+
+def format_option_contract_golden(
+    symbol: str,
+    strike: Optional[float],
+    contract_type: Optional[str],
+    expiration_date: Optional[str],
+) -> str:
+    """
+    Golden Sweeps contract line.
+    Example: "APP 830 PUT 2025-12-19"
+    """
+    sym = (symbol or "").strip().upper() or "UNKNOWN"
+    cp = (contract_type or "").strip().upper()
+    if cp.startswith("P"):
+        cp_word = "PUT"
+    elif cp.startswith("C"):
+        cp_word = "CALL"
+    else:
+        cp_word = "UNKNOWN"
+    exp = (expiration_date or "").strip() or "unknown"
+    return f"{sym} {_format_strike_plain(strike)} {cp_word} {exp}"
+
 
 def normalize_option_ticker(raw: Optional[str]) -> str:
     """
