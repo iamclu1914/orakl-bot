@@ -16,7 +16,7 @@ from src.utils.monitoring import signals_generated, timed
 from src.utils.exceptions import DataException, handle_exception
 from src.utils.enhanced_analysis import EnhancedAnalyzer, SmartDeduplicator
 from src.utils.market_hours import MarketHours
-from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
+from src.utils.option_contract_format import format_option_contract_pretty
 # Removed FlowCache - each bot scans independently now
 
 logger = logging.getLogger(__name__)
@@ -828,11 +828,9 @@ class SweepsBot(BaseAutoBot):
             sweep.get("strike"),
             sweep.get("type", ""),
         )
-        contract_id = normalize_option_ticker(sweep.get("contract"))
 
         fields = [
             {"name": "Contract", "value": contract_pretty, "inline": False},
-            {"name": "Contract ID", "value": f"`{contract_id}`" if contract_id else "Unavailable", "inline": False},
             {"name": "Strike", "value": f"${sweep['strike']:.2f}", "inline": True},
             {"name": "Expiration", "value": sweep['expiration'], "inline": True},
             {"name": "DTE", "value": str(sweep['days_to_expiry']), "inline": True},
