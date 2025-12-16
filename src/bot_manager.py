@@ -461,6 +461,74 @@ class BotManager:
                 enriched_trade.setdefault("ticker", symbol_for_alias)
             if "current_price" not in enriched_trade:
                 enriched_trade["current_price"] = enriched_trade.get("underlying_price", 0.0)
+
+            # Normalize trade sizing fields used by flow bots/embeds.
+            def _coerce_int(value, default: int = 0) -> int:
+                try:
+                    if value is None:
+                        return default
+                    if isinstance(value, bool):
+                        return default
+                    if isinstance(value, (int, float)):
+                        return int(value)
+                    s = str(value).strip()
+                    if not s:
+                        return default
+                    return int(float(s))
+                except Exception:
+                    return default
+
+            def _coerce_float(value, default: float = 0.0) -> float:
+                try:
+                    if value is None:
+                        return default
+                    if isinstance(value, bool):
+                        return default
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                    s = str(value).strip()
+                    if not s:
+                        return default
+                    return float(s)
+                except Exception:
+                    return default
+
+            trade_price = _coerce_float(
+                enriched_trade.get("trade_price")
+                if enriched_trade.get("trade_price") not in (None, "")
+                else enriched_trade.get("price", enriched_trade.get("avg_price", 0.0)),
+                0.0,
+            )
+            if trade_price > 0 and "trade_price" not in enriched_trade:
+                enriched_trade["trade_price"] = trade_price
+
+            raw_size = (
+                enriched_trade.get("trade_size")
+                if enriched_trade.get("trade_size") not in (None, "", 0, "0")
+                else None
+            )
+            if raw_size is None:
+                raw_size = enriched_trade.get("size")
+            if raw_size is None:
+                raw_size = enriched_trade.get("contracts")
+            if raw_size is None:
+                raw_size = enriched_trade.get("quantity")
+            if raw_size is None:
+                raw_size = enriched_trade.get("qty")
+            trade_size = _coerce_int(raw_size, 0)
+
+            # If the producer didn't send size, infer contracts from premium and print price.
+            if trade_size <= 0:
+                try:
+                    prem_val = float(enriched_trade.get("premium") or 0.0)
+                except (TypeError, ValueError):
+                    prem_val = 0.0
+                if prem_val > 0 and trade_price > 0:
+                    trade_size = max(1, int(round(prem_val / (trade_price * 100.0))))
+
+            enriched_trade.setdefault("trade_size", trade_size)
+            # Keep a generic alias some embed code uses.
+            enriched_trade.setdefault("size", trade_size)
         
         symbol = enriched_trade.get('symbol', 'UNKNOWN')
         premium = enriched_trade.get('premium', 0)

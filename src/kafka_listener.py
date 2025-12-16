@@ -186,6 +186,36 @@ class KafkaFlowListener:
         """
         try:
             raw_data = json.loads(msg_value.decode('utf-8'))
+
+            def _coerce_int(value: Any, default: int = 0) -> int:
+                try:
+                    if value is None:
+                        return default
+                    if isinstance(value, bool):
+                        return default
+                    if isinstance(value, (int, float)):
+                        return int(value)
+                    s = str(value).strip()
+                    if not s:
+                        return default
+                    return int(float(s))
+                except Exception:
+                    return default
+
+            def _coerce_float(value: Any, default: float = 0.0) -> float:
+                try:
+                    if value is None:
+                        return default
+                    if isinstance(value, bool):
+                        return default
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                    s = str(value).strip()
+                    if not s:
+                        return default
+                    return float(s)
+                except Exception:
+                    return default
             
             # Extract the FULL contract ID from 'id' field
             # Format: "O:CRDO260618C00140000-1765378610017-236331966"
@@ -202,15 +232,47 @@ class KafkaFlowListener:
                 return None
             
             # Build trade data with CORRECT mappings
+            # Kafka producers can use different field names; normalize aggressively.
+            symbol_value = raw_data.get('ticker') or raw_data.get('symbol') or raw_data.get('underlying') or ''
+            premium_value = _coerce_float(raw_data.get('premiumValue', 0.0), 0.0)
+            strike_value = _coerce_float(raw_data.get('strike', 0.0), 0.0)
+            trade_type_value = (raw_data.get('type', '') or '').lower()
+
+            # Contract quantity may arrive under different keys depending on producer/version.
+            raw_size = (
+                raw_data.get('size')
+                if raw_data.get('size') not in (None, "", 0, "0")
+                else None
+            )
+            if raw_size is None:
+                raw_size = raw_data.get('contracts')
+            if raw_size is None:
+                raw_size = raw_data.get('quantity')
+            if raw_size is None:
+                raw_size = raw_data.get('qty')
+            if raw_size is None:
+                raw_size = raw_data.get('trade_size')
+            if raw_size is None:
+                raw_size = raw_data.get('tradeSize')
+            trade_size_value = _coerce_int(raw_size, 0)
+
+            # Per-contract print price may also vary.
+            trade_price_value = _coerce_float(
+                raw_data.get('price')
+                if raw_data.get('price') not in (None, "")
+                else raw_data.get('tradePrice', raw_data.get('avgPrice', 0.0)),
+                0.0,
+            )
+
             trade_data = {
                 'contract_ticker': option_symbol,  # FULL contract ID (e.g., "O:CRDO260618C00140000")
-                'symbol': raw_data.get('ticker', ''),  # Underlying stock symbol (e.g., "CRDO")
-                'premium': float(raw_data.get('premiumValue', 0)),
-                'strike_price': float(raw_data.get('strike', 0)),
+                'symbol': symbol_value,  # Underlying stock symbol (e.g., "CRDO")
+                'premium': premium_value,
+                'strike_price': strike_value,
                 'expiration_date': raw_data.get('exp', ''),
-                'contract_type': raw_data.get('type', ''),
-                'trade_size': raw_data.get('size', 0),
-                'trade_price': raw_data.get('price', 0),
+                'contract_type': trade_type_value,
+                'trade_size': trade_size_value,
+                'trade_price': trade_price_value,
             }
             
             # Copy additional fields
