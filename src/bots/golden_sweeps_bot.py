@@ -15,7 +15,10 @@ from src.config import Config
 from src.utils.monitoring import timed
 from src.utils.event_bus import event_bus
 from src.utils.market_hours import MarketHours
-from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
+from src.utils.option_contract_format import (
+    format_option_contract_sentence,
+    normalize_option_ticker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,11 +182,12 @@ class GoldenSweepsBot(SweepsBot):
         # Get enhanced score
         final_score = sweep.get('enhanced_score', sweep.get('final_score', sweep.get('sweep_score', 0)))
 
-        contract_pretty = format_option_contract_pretty(
-            sweep.get("symbol", ""),
-            sweep.get("expiration", ""),
+        dte_value = sweep.get("days_to_expiry", sweep.get("dte"))
+        contract_pretty = format_option_contract_sentence(
             sweep.get("strike"),
             sweep.get("type", ""),
+            sweep.get("expiration", ""),
+            int(dte_value) if dte_value is not None else None,
         )
         contract_id = normalize_option_ticker(
             sweep.get("contract") or sweep.get("option_symbol") or sweep.get("contract_symbol")

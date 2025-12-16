@@ -21,7 +21,10 @@ from collections import defaultdict
 
 from src.config import Config
 from src.uoa_detector import UnusualActivityDetector, UOASignal
-from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
+from src.utils.option_contract_format import (
+    format_option_contract_sentence,
+    normalize_option_ticker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +142,11 @@ class UOABot:
         try:
             import aiohttp
 
-            contract_pretty = format_option_contract_pretty(
-                signal.symbol,
-                getattr(signal, "expiration_date", ""),
+            contract_sentence = format_option_contract_sentence(
                 signal.strike,
                 signal.side,
+                getattr(signal, "expiration_date", ""),
+                signal.dte,
             )
             contract_id = normalize_option_ticker(getattr(signal, "contract_ticker", ""))
             
@@ -171,12 +174,12 @@ class UOABot:
             # Build embed
             embed = {
                 "title": f"{emoji} {signal.symbol} - {title_suffix}",
-                "description": f"**{side_emoji} {side_text}** @ ${signal.strike:.2f}",
+                "description": f"{side_emoji} **{contract_sentence}**",
                 "color": color,
                 "fields": [
                     {
                         "name": "Contract",
-                        "value": contract_pretty,
+                        "value": contract_sentence,
                         "inline": False
                     },
                     {
