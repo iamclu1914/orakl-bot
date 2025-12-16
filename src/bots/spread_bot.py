@@ -128,8 +128,20 @@ class SpreadBot(BaseAutoBot):
                 self._count_filter("missing_strike")
                 return None
             if underlying_price <= 0:
-                self._count_filter("missing_underlying_price")
-                return None
+                # Snapshot enrichment occasionally times out; try a fast cached spot fetch
+                # for non-index symbols so we can still compute OTM/distance.
+                try:
+                    if isinstance(symbol, str) and not symbol.startswith("I:"):
+                        underlying_price = await asyncio.wait_for(
+                            self.fetcher.get_stock_price(symbol),
+                            timeout=0.75,
+                        ) or 0.0
+                except Exception:
+                    underlying_price = 0.0
+
+                if underlying_price <= 0:
+                    self._count_filter("missing_underlying_price")
+                    return None
             if not contract_type:
                 self._count_filter("missing_contract_type")
                 return None
