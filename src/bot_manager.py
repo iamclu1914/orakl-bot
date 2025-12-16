@@ -526,9 +526,11 @@ class BotManager:
                 if prem_val > 0 and trade_price > 0:
                     trade_size = max(1, int(round(prem_val / (trade_price * 100.0))))
 
-            enriched_trade.setdefault("trade_size", trade_size)
-            # Keep a generic alias some embed code uses.
-            enriched_trade.setdefault("size", trade_size)
+            # If a producer explicitly set 0, we still want to overwrite it with the inferred value.
+            if _coerce_int(enriched_trade.get("trade_size"), 0) <= 0:
+                enriched_trade["trade_size"] = trade_size
+            if _coerce_int(enriched_trade.get("size"), 0) <= 0:
+                enriched_trade["size"] = trade_size
         
         symbol = enriched_trade.get('symbol', 'UNKNOWN')
         premium = enriched_trade.get('premium', 0)
