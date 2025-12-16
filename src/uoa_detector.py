@@ -120,6 +120,9 @@ class UnusualActivityDetector:
         
         # Minimum reasons to trigger
         self.min_reasons = Config.UOA_MIN_REASONS
+
+        # Optional hard gate: require fresh positioning (Vol > OI)
+        self.require_vol_gt_oi = bool(getattr(Config, "UOA_REQUIRE_VOL_GT_OI", True))
         
         # Stats
         self.total_analyzed = 0
@@ -302,6 +305,18 @@ class UnusualActivityDetector:
         # Minimum trade size
         if signal.size < self.min_trade_size:
             return False
+
+        # Optional: require Volume > Open Interest (fresh positioning).
+        # If OI is 0, treat as "new contract" and allow through.
+        if self.require_vol_gt_oi:
+            try:
+                oi = int(signal.oi or 0)
+                vol = int(signal.vol or 0)
+            except Exception:
+                oi = 0
+                vol = 0
+            if oi > 0 and vol <= oi:
+                return False
         
         return True
     

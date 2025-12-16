@@ -493,6 +493,9 @@ class Config:
     UOA_MIN_VOL_OI_RATIO = float(os.getenv('UOA_MIN_VOL_OI_RATIO', '2.0'))  # Vol >= 2x OI
     UOA_HIGH_VOL_OI_RATIO = float(os.getenv('UOA_HIGH_VOL_OI_RATIO', '5.0'))  # Vol >= 5x OI = very unusual
     UOA_EXTREME_VOL_OI_RATIO = float(os.getenv('UOA_EXTREME_VOL_OI_RATIO', '10.0'))  # Vol >= 10x OI = extreme
+    # Optional: require Volume > Open Interest (fresh positioning) to alert at all.
+    # This dramatically reduces spam from liquid chains where OI dwarfs daily volume.
+    UOA_REQUIRE_VOL_GT_OI = os.getenv('UOA_REQUIRE_VOL_GT_OI', 'true').lower() == 'true'
     
     # Volume thresholds
     UOA_MIN_VOLUME = int(os.getenv('UOA_MIN_VOLUME', '500'))  # Min 500 contracts
