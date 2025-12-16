@@ -118,16 +118,17 @@ class Config:
     BULLSEYE_COOLDOWN_SECONDS = int(os.getenv('BULLSEYE_COOLDOWN_SECONDS', '2700'))  # 45 minutes (raised)
     BULLSEYE_MAX_ALERTS_PER_SCAN = int(os.getenv('BULLSEYE_MAX_ALERTS_PER_SCAN', '2'))  # Max 2 per scan (quality)
     BULLSEYE_MIN_SWEEP_SCORE = int(os.getenv('BULLSEYE_MIN_SWEEP_SCORE', '90'))  # Score 90+ (raised)
-    # 99 Cent Store Bot Thresholds (sub-$1 swing trades - OPTIMIZED FOR QUALITY)
-    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '400000'))  # $400K+ (raised for conviction)
-    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '1000'))  # 1000 contracts for liquidity
-    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '500'))  # Strong new flow
+    # 99 Cent Store Bot Thresholds (sub-$1 swing trades)
+    # Defaults tuned to actually fire during normal sessions; env vars can tighten for "ultra quality".
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '250000'))  # $250K+ whale-y but attainable
+    SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '500'))  # Lower default to avoid starving alerts
+    SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '250'))
     SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.00'))  # Hard cap: sub-$1.00 contracts only
     SPREAD_MIN_PRICE = float(os.getenv('SPREAD_MIN_PRICE', '0.05'))  # Avoid illiquid penny options
-    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '2.5'))  # 2.5x VOI (raised for quality)
+    SPREAD_MIN_VOI_RATIO = float(os.getenv('SPREAD_MIN_VOI_RATIO', '2.0'))  # 2.0x VOI (still "fresh")
     SPREAD_MIN_DTE = float(os.getenv('SPREAD_MIN_DTE', '2.0'))  # 2 days minimum for swing trades
     SPREAD_MAX_DTE = float(os.getenv('SPREAD_MAX_DTE', '30.0'))  # Up to 4 weeks for swing trades
-    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.10'))  # 10% OTM max (tightened)
+    SPREAD_MAX_PERCENT_OTM = float(os.getenv('SPREAD_MAX_PERCENT_OTM', '0.12'))  # Slightly wider net
     SPREAD_COOLDOWN_SECONDS = int(os.getenv('SPREAD_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown (new)
     SPREAD_MAX_ALERTS_PER_SCAN = int(os.getenv('SPREAD_MAX_ALERTS_PER_SCAN', '2'))  # Max 2 per scan (new)
 
@@ -427,9 +428,12 @@ class Config:
         'https://discord.com/api/webhooks/1446398286570459146/_I5D1A3zRou2EfXP1a5ObwkilJB9PdcovGyvZOThg7FP9mW3012TXMDSXtYjCVDAip4g'
     )
     LOTTO_BOT_INTERVAL = int(os.getenv('LOTTO_BOT_INTERVAL', '300'))  # 5 minutes
-    LOTTO_MAX_PRICE = float(os.getenv('LOTTO_MAX_PRICE', '0.15'))  # Max $0.15 per contract
-    LOTTO_MIN_VOL_OI_RATIO = float(os.getenv('LOTTO_MIN_VOL_OI_RATIO', '50.0'))  # 50x volume/OI
-    LOTTO_MIN_OTM_PCT = float(os.getenv('LOTTO_MIN_OTM_PCT', '0.10'))  # 10% OTM minimum
+    # Lotto Bot defaults: still "lotto-y", but not so strict that it never fires.
+    LOTTO_MAX_PRICE = float(os.getenv('LOTTO_MAX_PRICE', '0.35'))  # Max $0.35 per contract
+    LOTTO_MIN_VOL_OI_RATIO = float(os.getenv('LOTTO_MIN_VOL_OI_RATIO', '15.0'))  # 15x volume/OI
+    LOTTO_MIN_OTM_PCT = float(os.getenv('LOTTO_MIN_OTM_PCT', '0.07'))  # 7% OTM minimum
+    LOTTO_MIN_VOLUME = int(os.getenv('LOTTO_MIN_VOLUME', '200'))  # Min 200 contracts
+    LOTTO_MIN_PREMIUM = float(os.getenv('LOTTO_MIN_PREMIUM', '5000'))  # Min $5K total
     LOTTO_MIN_VOLUME = int(os.getenv('LOTTO_MIN_VOLUME', '500'))  # Min 500 contracts
     LOTTO_MIN_PREMIUM = float(os.getenv('LOTTO_MIN_PREMIUM', '10000'))  # Min $10K total
     LOTTO_COOLDOWN_SECONDS = int(os.getenv('LOTTO_COOLDOWN_SECONDS', '1800'))  # 30 min cooldown

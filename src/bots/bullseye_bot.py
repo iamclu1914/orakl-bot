@@ -221,6 +221,7 @@ class BullseyeBot(BaseAutoBot):
             
             min_score = Config.BULLSEYE_MIN_SWEEP_SCORE
             if score < min_score:
+                self._count_filter("score_below_min", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"score {score} < min {min_score}")
                 return None
             
@@ -285,6 +286,10 @@ class BullseyeBot(BaseAutoBot):
             score += 20
         elif premium >= 1000000:
             score += 15
+        elif premium >= 750000:
+            score += 10
+        elif premium >= 500000:
+            score += 5
         
         # Block size
         if trade_size >= 1000:
