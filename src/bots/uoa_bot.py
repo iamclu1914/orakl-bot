@@ -23,7 +23,6 @@ from src.config import Config
 from src.uoa_detector import UnusualActivityDetector, UOASignal
 from src.utils.option_contract_format import (
     format_option_contract_sentence,
-    normalize_option_ticker,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,7 +147,8 @@ class UOABot:
                 getattr(signal, "expiration_date", ""),
                 signal.dte,
             )
-            contract_id = normalize_option_ticker(getattr(signal, "contract_ticker", ""))
+            # Contract ID is intentionally hidden from Discord embeds (too noisy for UOA).
+            # Keep formatting util import available for future optional toggles.
             
             # Determine color based on severity
             if signal.severity == 'whale':
@@ -177,16 +177,6 @@ class UOABot:
                 "description": f"{side_emoji} **{contract_sentence}**",
                 "color": color,
                 "fields": [
-                    {
-                        "name": "Contract",
-                        "value": contract_sentence,
-                        "inline": False
-                    },
-                    {
-                        "name": "Contract ID",
-                        "value": f"`{contract_id}`" if contract_id else "Unavailable",
-                        "inline": False
-                    },
                     {
                         "name": "Premium",
                         "value": f"${signal.premium:,.0f}",
