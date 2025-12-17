@@ -192,10 +192,10 @@ class BullseyeBot(BaseAutoBot):
             else:
                 return None
 
-            # Enforce OTM-only alerts (exclude ATM/ITM)
-            if otm_pct <= 0:
-                self._count_filter("atm_or_itm", symbol=symbol, sample_record=True)
-                self._log_skip(symbol, "ATM/ITM trade excluded (OTM only policy)")
+            # Allow ATM and OTM; still exclude ITM (negative OTM)
+            if otm_pct < 0:
+                self._count_filter("itm_excluded", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, "ITM trade excluded (ATM/OTM only policy)")
                 return None
             
             # Calculate max OTM with extension for massive premium
