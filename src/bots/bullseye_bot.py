@@ -135,6 +135,7 @@ class BullseyeBot(BaseAutoBot):
             contract_price = float(enriched_trade.get('trade_price', 0))
             bid = float(enriched_trade.get('current_bid', 0))
             ask = float(enriched_trade.get('current_ask', 0))
+            effective_volume = trade_size if trade_size > 0 else day_volume
             
             # Build metrics early so downstream code never sees a missing 'metrics' key
             metrics_payload = {
@@ -144,7 +145,7 @@ class BullseyeBot(BaseAutoBot):
                 "strike": strike,
                 "expiration": enriched_trade.get("expiration_date"),
                 "volume_delta": trade_size or day_volume,
-                "total_volume": day_volume,
+                "total_volume": effective_volume,
                 "open_interest": open_interest,
                 "last_price": contract_price,
                 "bid": bid,
@@ -209,7 +210,6 @@ class BullseyeBot(BaseAutoBot):
                 return None
             
             # Calculate Vol/OI ratio
-            effective_volume = trade_size if trade_size > 0 else day_volume
             if open_interest > 0:
                 vol_oi_ratio = effective_volume / open_interest
             else:
@@ -220,6 +220,19 @@ class BullseyeBot(BaseAutoBot):
                 self._count_filter("voi_below_min", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"vol/OI {vol_oi_ratio:.2f} < {self.min_voi_ratio:.2f}")
                 return None
+
+            # Require volume > OI when OI is present (fresh positioning)
+            if open_interest > 0 and effective_volume <= open_interest:
+                self._count_filter("vol_not_gt_oi", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, f"volume {effective_volume} <= OI {open_interest}")
+                return None
+            if effective_volume <= 0:
+                self._count_filter("missing_volume", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, "missing or zero volume")
+                return None
+
+            # Normalize vol/OI back onto the flow payload for downstream display
+            enriched_trade["vol_oi_ratio"] = vol_oi_ratio
             
             # Require volume > OI for fresh positioning signal
             if effective_volume <= open_interest and open_interest > 0:
@@ -259,7 +272,7 @@ class BullseyeBot(BaseAutoBot):
                 'strike': strike,
                 'expiration': enriched_trade.get('expiration_date', ''),
                 'premium': premium,
-                'volume': day_volume,
+                'volume': effective_volume,
                 'volume_delta': trade_size,
                 'open_interest': open_interest,
                 'vol_oi_ratio': vol_oi_ratio,
@@ -285,6 +298,11 @@ class BullseyeBot(BaseAutoBot):
             
             # Post the signal
             if metrics:
+                # Ensure embed uses the computed vol/OI ratio
+                try:
+                    metrics.volume_over_oi = vol_oi_ratio
+                except Exception:
+                    pass
                 alert["metrics"] = metrics
             else:
                 # Fall back gracefully to avoid KeyError and still attempt to post
@@ -1330,12 +1348,11 @@ class BullseyeBot(BaseAutoBot):
             if isinstance(metrics.expiration, datetime)
             else str(metrics.expiration)
         )
-
-        total_volume = int(flow.get("total_volume") or 0)
+        total_volume = int(flow.get("total_volume") or metrics.size or 0)
         oi_value = int(flow.get("open_interest") or 0)
-        voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
         execution_type = (flow.get("execution_type") or "SWEEP").upper()
         spot_price = flow.get("underlying_price") or metrics.underlying_price or 0.0
+        voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
 
         premium_fmt = (
             f"${metrics.premium / 1_000_000:.1f}M"
