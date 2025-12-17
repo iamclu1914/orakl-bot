@@ -120,7 +120,7 @@ class Config:
     BULLSEYE_MIN_SWEEP_SCORE = int(os.getenv('BULLSEYE_MIN_SWEEP_SCORE', '90'))  # Score 90+ (raised)
     # 99 Cent Store Bot Thresholds (sub-$1 swing trades)
     # Defaults tuned to actually fire during normal sessions; env vars can tighten for "ultra quality".
-    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '150000'))  # Lowered to $150K to increase 99c hits
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '100000'))  # Lowered to $100K to increase 99c hits
     SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '500'))  # Lower default to avoid starving alerts
     SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '250'))
     SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.00'))  # Hard cap: sub-$1.00 contracts only
@@ -260,10 +260,10 @@ class Config:
         'SPY,QQQ,IWM'
     ).split(',')
     
-    # 99 Cent Store: Capped at Tier 1 only (19 total) - widest scanner, no expansion
+    # 99 Cent Store: expand to Tier1 + Tier2 by default for wider coverage
     SPREAD_WATCHLIST = os.getenv(
         'SPREAD_WATCHLIST',
-        ','.join(_TIER1_LIST)
+        ','.join(_TIER1_LIST + _TIER2_LIST)
     ).split(',')
     SPREAD_EXTRA_TICKERS = os.getenv(
         'SPREAD_EXTRA_TICKERS',
