@@ -1350,6 +1350,11 @@ class BullseyeBot(BaseAutoBot):
         )
         total_volume = int(flow.get("total_volume") or metrics.size or 0)
         oi_value = int(flow.get("open_interest") or 0)
+        if oi_value == 0:
+            try:
+                oi_value = int(getattr(metrics, "open_interest", 0) or 0)
+            except Exception:
+                oi_value = 0
         execution_type = (flow.get("execution_type") or "SWEEP").upper()
         spot_price = flow.get("underlying_price") or metrics.underlying_price or 0.0
         voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
