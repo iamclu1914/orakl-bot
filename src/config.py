@@ -101,7 +101,7 @@ class Config:
     MIN_ABSOLUTE_VOLUME = int(os.getenv('MIN_ABSOLUTE_VOLUME', '1000000'))  # 1M shares minimum
     
     # Bullseye Bot Thresholds (institutional swing trades - OPTIMIZED FOR QUALITY)
-    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '750000'))  # Lowered to $750k (Balanced)
+    BULLSEYE_MIN_PREMIUM = float(os.getenv('BULLSEYE_MIN_PREMIUM', '500000'))  # Lowered to $500k to surface more blocks
     BULLSEYE_MIN_VOLUME = int(os.getenv('BULLSEYE_MIN_VOLUME', '2000'))  # Day volume floor for liquidity
     BULLSEYE_MIN_DTE = float(os.getenv('BULLSEYE_MIN_DTE', '1.0'))
     BULLSEYE_MAX_DTE = float(os.getenv('BULLSEYE_MAX_DTE', '30.0'))  # 30 days max (tightened)
@@ -120,7 +120,7 @@ class Config:
     BULLSEYE_MIN_SWEEP_SCORE = int(os.getenv('BULLSEYE_MIN_SWEEP_SCORE', '90'))  # Score 90+ (raised)
     # 99 Cent Store Bot Thresholds (sub-$1 swing trades)
     # Defaults tuned to actually fire during normal sessions; env vars can tighten for "ultra quality".
-    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '250000'))  # $250K+ whale-y but attainable
+    SPREAD_MIN_PREMIUM = float(os.getenv('SPREAD_MIN_PREMIUM', '150000'))  # Lowered to $150K to increase 99c hits
     SPREAD_MIN_VOLUME = int(os.getenv('SPREAD_MIN_VOLUME', '500'))  # Lower default to avoid starving alerts
     SPREAD_MIN_VOLUME_DELTA = int(os.getenv('SPREAD_MIN_VOLUME_DELTA', '250'))
     SPREAD_MAX_PRICE = float(os.getenv('SPREAD_MAX_PRICE', '1.00'))  # Hard cap: sub-$1.00 contracts only
@@ -440,7 +440,7 @@ class Config:
     )
     LOTTO_BOT_INTERVAL = int(os.getenv('LOTTO_BOT_INTERVAL', '300'))  # 5 minutes
     # Lotto Bot defaults: still "lotto-y", but not so strict that it never fires.
-    LOTTO_MAX_PRICE = float(os.getenv('LOTTO_MAX_PRICE', '0.35'))  # Max $0.35 per contract
+    LOTTO_MAX_PRICE = float(os.getenv('LOTTO_MAX_PRICE', '0.75'))  # Raised to $0.75 per contract for more lotto candidates
     LOTTO_MIN_VOL_OI_RATIO = float(os.getenv('LOTTO_MIN_VOL_OI_RATIO', '15.0'))  # 15x volume/OI
     LOTTO_MIN_OTM_PCT = float(os.getenv('LOTTO_MIN_OTM_PCT', '0.07'))  # 7% OTM minimum
     LOTTO_MIN_VOLUME = int(os.getenv('LOTTO_MIN_VOLUME', '200'))  # Min 200 contracts
