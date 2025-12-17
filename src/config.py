@@ -485,8 +485,8 @@ class Config:
     )
     
     # Premium thresholds (tiered)
-    UOA_MIN_PREMIUM = float(os.getenv('UOA_MIN_PREMIUM', '100000'))  # $100K floor
-    UOA_SIGNIFICANT_PREMIUM = float(os.getenv('UOA_SIGNIFICANT_PREMIUM', '250000'))  # $250K = notable
+    UOA_MIN_PREMIUM = float(os.getenv('UOA_MIN_PREMIUM', '250000'))  # $250K floor
+    UOA_SIGNIFICANT_PREMIUM = float(os.getenv('UOA_SIGNIFICANT_PREMIUM', '400000'))  # $400K = notable
     UOA_WHALE_PREMIUM = float(os.getenv('UOA_WHALE_PREMIUM', '500000'))  # $500K = whale
     
     # Volume vs Open Interest (core UOA signal)
@@ -499,7 +499,7 @@ class Config:
     
     # Volume thresholds
     UOA_MIN_VOLUME = int(os.getenv('UOA_MIN_VOLUME', '500'))  # Min 500 contracts
-    UOA_MIN_TRADE_SIZE = int(os.getenv('UOA_MIN_TRADE_SIZE', '100'))  # Min single print size
+    UOA_MIN_TRADE_SIZE = int(os.getenv('UOA_MIN_TRADE_SIZE', '250'))  # Min single print size
     
     # DTE and OTM filters
     UOA_MAX_DTE = int(os.getenv('UOA_MAX_DTE', '45'))  # Max 45 DTE (focus on near-term)
