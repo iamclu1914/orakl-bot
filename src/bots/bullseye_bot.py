@@ -18,7 +18,7 @@ from src.utils.flow_metrics import OptionTradeMetrics, build_metrics_from_flow
 from src.utils.market_hours import MarketHours
 from src.utils.enhanced_analysis import EnhancedAnalyzer, should_take_signal
 from src.utils.event_bus import event_bus
-from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
+from src.utils.option_contract_format import format_option_contract_pretty
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,12 @@ class BullseyeBot(BaseAutoBot):
             if vol_oi_ratio < self.min_voi_ratio:
                 self._count_filter("voi_below_min", symbol=symbol, sample_record=True)
                 self._log_skip(symbol, f"vol/OI {vol_oi_ratio:.2f} < {self.min_voi_ratio:.2f}")
+                return None
+            
+            # Require volume > OI for fresh positioning signal
+            if effective_volume <= open_interest and open_interest > 0:
+                self._count_filter("vol_not_gt_oi", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, f"volume {effective_volume} <= OI {open_interest}")
                 return None
             
             # Check bid-ask spread
@@ -1324,15 +1330,10 @@ class BullseyeBot(BaseAutoBot):
             if isinstance(metrics.expiration, datetime)
             else str(metrics.expiration)
         )
-        option_type_short = "C" if metrics.option_type.upper() == "CALL" else "P"
 
-        volume_delta = int(flow.get("volume_delta") or 0)
         total_volume = int(flow.get("total_volume") or 0)
         oi_value = int(flow.get("open_interest") or 0)
         voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
-        bid_price = float(flow.get("bid") or 0.0)
-        ask_price = float(flow.get("ask") or 0.0)
-        flow_intensity = (flow.get("flow_intensity") or "NORMAL").upper()
         execution_type = (flow.get("execution_type") or "SWEEP").upper()
         spot_price = flow.get("underlying_price") or metrics.underlying_price or 0.0
 
@@ -1341,45 +1342,6 @@ class BullseyeBot(BaseAutoBot):
             if metrics.premium >= 1_000_000
             else f"${metrics.premium / 1_000:.0f}K"
         )
-
-        spread_text = (
-            f"${bid_price:.2f} / ${ask_price:.2f}"
-            if bid_price > 0 and ask_price > 0
-            else "n/a"
-        )
-        spread_label = f"{spread_pct:.2f}%" if spread_pct is not None else "n/a"
-
-        last_trade = flow.get("last_trade_timestamp")
-        if isinstance(last_trade, datetime):
-            reference = datetime.now(last_trade.tzinfo or timezone.utc)
-            minutes_ago = max((reference - last_trade).total_seconds() / 60, 0.0)
-            recency_text = f"{minutes_ago:.0f} min ago"
-        else:
-            recency_text = "recent"
-
-        prob_itm = flow.get("probability_itm")
-        if prob_itm is None:
-            try:
-                # Rough approximation from percent OTM
-                pct_otm = metrics.percent_otm * 100.0
-                prob_itm = max(0.0, min(100.0, 100.0 - abs(pct_otm)))
-            except Exception:
-                prob_itm = None
-        if isinstance(prob_itm, float) and prob_itm <= 1.0:
-            prob_itm *= 100.0
-
-        momentum_direction = "BULLISH" if metrics.option_type.upper() == "CALL" else "BEARISH"
-        momentum_value = voi_ratio if isinstance(voi_ratio, (int, float)) else 0.0
-
-        liquidity_label = "Moderate"
-        if spread_pct is None:
-            liquidity_label = "n/a"
-        elif spread_pct <= 2.0:
-            liquidity_label = "Excellent"
-        elif spread_pct <= 4.0:
-            liquidity_label = "Good"
-        elif spread_pct <= 7.0:
-            liquidity_label = "Fair"
 
         expected_move = (
             flow.get("expected_move_5d")
@@ -1400,136 +1362,46 @@ class BullseyeBot(BaseAutoBot):
             metrics.strike,
             metrics.option_type,
         )
-        contract_id = normalize_option_ticker(getattr(metrics, "ticker", "") or "")
+
+        # Calculate strike distance from spot
+        strike_distance_pct = 0.0
+        if spot_price and spot_price > 0:
+            strike_distance_pct = abs(metrics.strike - spot_price) / spot_price * 100
+
+        # Determine direction label
+        direction_label = "BULLISH 🟢" if metrics.option_type.upper() == "CALL" else "BEARISH 🔴"
 
         description = (
-            f"Current Price: **{current_price_line}**\n\n"
-            "**Contract Details**\n\n"
-            f"{contract_pretty} ({dte_days} days)"
+            f"**{contract_pretty}** ({dte_days} days)\n"
+            f"Spot: **{current_price_line}** → Strike: **${metrics.strike:.2f}** ({strike_distance_pct:.1f}% away)"
         )
 
-        title = f"{metrics.underlying} ${metrics.strike:.1f} {option_type_short} - Bullseye Signal"
+        title = f"{metrics.underlying} - Bullseye Signal"
+
+        # Calculate expected move if not provided
+        expected_move_text = "n/a"
+        if isinstance(expected_move, (int, float)) and expected_move > 0:
+            expected_move_text = f"±${expected_move:.2f}"
+        elif spot_price and spot_price > 0:
+            # Rough 5-day expected move estimate (simplified)
+            implied_move_pct = 0.03  # 3% baseline
+            expected_move_text = f"±${spot_price * implied_move_pct:.2f} (~3%)"
 
         fields = [
-            {"name": "Contract", "value": contract_pretty, "inline": False},
-            {"name": "Contract ID", "value": f"`{contract_id}`" if contract_id else "Unavailable", "inline": False},
             {"name": "Premium", "value": premium_fmt, "inline": True},
+            {"name": "Direction", "value": direction_label, "inline": True},
+            {"name": "Score", "value": f"**{score}**/100", "inline": True},
             {"name": "Volume", "value": f"{total_volume:,}", "inline": True},
             {"name": "Open Interest", "value": f"{oi_value:,}", "inline": True},
-            {
-                "name": "ITM Probability",
-                "value": f"{prob_itm:.1f}%" if isinstance(prob_itm, (int, float)) else "n/a",
-                "inline": True,
-            },
-            {
-                "name": "Momentum",
-                "value": f"{momentum_value:.2f} {momentum_direction}"
-                if isinstance(momentum_value, (int, float))
-                else momentum_direction,
-                "inline": True,
-            },
-            {"name": "Liquidity", "value": liquidity_label, "inline": True},
-            {
-                "name": "Expected Move (5d)",
-                "value": (
-                    f"${expected_move:.2f}"
-                    if isinstance(expected_move, (int, float))
-                    else "n/a"
-                ),
-                "inline": True,
-            },
-            {"name": "Flow Intensity", "value": f"{flow_intensity} ({recency_text})", "inline": True},
-            {"name": "Bullseye Score", "value": f"{score}/100", "inline": True},
+            {"name": "Vol/OI", "value": f"{voi_ratio:.1f}x", "inline": True},
+            {"name": "Contract Price", "value": f"${contract_price:.2f}", "inline": True},
+            {"name": "DTE", "value": f"{dte_days} days", "inline": True},
+            {"name": "Expected Move (5d)", "value": expected_move_text, "inline": True},
         ]
 
-        if trend_data:
-            tf_priority = {"1h": 0, "4h": 1, "1d": 2}
-            ordered = sorted(trend_data.items(), key=lambda kv: tf_priority.get(kv[0], 99))
-            trends_only = {tf: info.get("trend", "UNKNOWN") for tf, info in ordered}
-            unique = set(trends_only.values())
-            if len(unique) == 1:
-                summary = f"{unique.pop()} ({'/'.join(trends_only.keys())})"
-            else:
-                summary = " | ".join(f"{tf}:{trend}" for tf, trend in trends_only.items())
-            fields.append({"name": "Trend Alignment", "value": summary, "inline": True})
-
-        # Four Axes Market Context
-        if market_context:
-            P = market_context.get("P", 0)
-            V = market_context.get("V", 0)
-            G = market_context.get("G", 0.5)
-            regime = market_context.get("regime", "NEUTRAL")
-            mult = market_context.get("conviction_multiplier", 1.0)
-            
-            # Format regime with emoji
-            regime_emojis = {
-                "BULLISH_CALL_DRIVEN": "🟢📈",
-                "BEARISH_PUT_DRIVEN": "🔴📉",
-                "BULLISH_PUT_HEDGED": "🟡⚠️",
-                "BEARISH_CALL_HEDGED": "🟡🔄",
-                "VOLATILITY_EXPANSION": "📊⬆️",
-                "VOLATILITY_CONTRACTION": "📊⬇️",
-                "NEUTRAL": "⚪",
-            }
-            regime_emoji = regime_emojis.get(regime, "⚪")
-            regime_display = regime.replace("_", " ").title()
-            
-            context_value = f"{regime_emoji} {regime_display}\nP={P:+.2f} V={V:+.3f} G={G:.2f}"
-            if mult != 1.0:
-                context_value += f"\nConviction: {mult:.0%}"
-            
-            fields.append({"name": "Market Context", "value": context_value, "inline": True})
-
-        # ORAKL v3.0 Brain Validation Status
-        if brain_metadata and brain_metadata.get("brain_validated"):
-            hedge_status = brain_metadata.get("hedge_status", "SKIPPED")
-            gex_regime = brain_metadata.get("regime", "NEUTRAL")
-            net_gex = brain_metadata.get("net_gex", 0)
-            flip_level = brain_metadata.get("flip_level", 0)
-            
-            # Format GEX regime with emoji
-            gex_emojis = {
-                "POSITIVE_GAMMA": "🟢",  # Stabilizing market
-                "NEGATIVE_GAMMA": "🔴",  # Volatile market
-                "NEUTRAL": "⚪"
-            }
-            gex_emoji = gex_emojis.get(gex_regime, "⚪")
-            
-            # Hedge status
-            if "VERIFIED" in hedge_status:
-                inventory_text = "✅ Verified Unhedged"
-            elif hedge_status == "SKIPPED":
-                inventory_text = "⏭️ Not Checked"
-            else:
-                inventory_text = f"⚠️ {hedge_status}"
-            
-            fields.append({"name": "Inventory Check", "value": inventory_text, "inline": True})
-            
-            # GEX Context
-            if gex_regime != "NEUTRAL" and flip_level > 0:
-                gex_value = f"{gex_emoji} {gex_regime.replace('_', ' ').title()}"
-                if net_gex != 0:
-                    gex_fmt = f"${abs(net_gex)/1e9:.1f}B" if abs(net_gex) >= 1e9 else f"${abs(net_gex)/1e6:.0f}M"
-                    gex_value += f"\nNet GEX: {'+' if net_gex > 0 else '-'}{gex_fmt}"
-                if flip_level > 0:
-                    gex_value += f"\nFlip: ${flip_level:.0f}"
-                fields.append({"name": "GEX Regime", "value": gex_value, "inline": True})
-
-        if execution_type == "BLOCK":
-            fields.append(
-                {
-                    "name": "Execution",
-                    "value": "Block contract (single print)",
-                    "inline": False,
-                }
-            )
-            fields.append(
-                {"name": "Spread", "value": f"{spread_text} ({spread_label})", "inline": True}
-            )
-        else:
-            fields.append(
-                {"name": "Execution", "value": "Sweep accumulation", "inline": False}
-            )
+        # Execution type
+        exec_text = "Block (single print)" if execution_type == "BLOCK" else "Sweep accumulation"
+        fields.append({"name": "Execution", "value": exec_text, "inline": True})
 
         embed = self.create_signal_embed_with_disclaimer(
             title=title,
