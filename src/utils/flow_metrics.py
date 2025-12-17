@@ -26,6 +26,7 @@ class OptionTradeMetrics:
     dte: float
     percent_otm: float
     premium: float
+    underlying_price: float
     volume_over_oi: float
     iv_change: Optional[float]
     is_ask_side: bool
@@ -224,6 +225,7 @@ def calculate_option_trade_metrics(
         dte=dte,
         percent_otm=_percent_otm(option_type, strike, underlying_price),
         premium=premium,
+        underlying_price=float(underlying_price or 0.0),
         volume_over_oi=_volume_over_oi(volume, open_interest),
         iv_change=iv_change,
         is_ask_side=_is_ask_side(price, ask_price, bid_price=bid_price, midpoint=midpoint),
@@ -303,6 +305,7 @@ def build_metrics_from_flow(flow: Dict[str, Any]) -> Optional[OptionTradeMetrics
         dte=dte,
         percent_otm=percent_otm,
         premium=float(premium),
+        underlying_price=float(underlying_price or 0.0),
         volume_over_oi=_volume_over_oi(total_volume, open_interest),
         iv_change=None,
         is_ask_side=_is_ask_side(price, ask_price, bid_price=bid_price, midpoint=midpoint),
