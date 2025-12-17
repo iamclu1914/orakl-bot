@@ -191,6 +191,12 @@ class BullseyeBot(BaseAutoBot):
                     otm_pct = max(0, (underlying_price - strike) / underlying_price)
             else:
                 return None
+
+            # Enforce OTM-only alerts (exclude ATM/ITM)
+            if otm_pct <= 0:
+                self._count_filter("atm_or_itm", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, "ATM/ITM trade excluded (OTM only policy)")
+                return None
             
             # Calculate max OTM with extension for massive premium
             max_otm = self.max_percent_otm
