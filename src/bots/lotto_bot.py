@@ -26,7 +26,11 @@ from .base_bot import BaseAutoBot
 from src.config import Config
 from src.data_fetcher import DataFetcher
 from src.utils.market_hours import MarketHours
-from src.utils.option_contract_format import format_option_contract_pretty, normalize_option_ticker
+from src.utils.option_contract_format import (
+    format_option_contract_pretty,
+    format_option_contract_sentence,
+    normalize_option_ticker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +256,37 @@ class LottoBot(BaseAutoBot):
         except Exception as e:
             logger.error(f"{self.name} error processing event: {e}")
             return None
+    
+    async def _post_lotto_alert(self, candidate: LottoCandidate, underlying_price: float) -> None:
+        """Send a Lotto alert to Discord (restores missing method to stop crashes)."""
+        # Format contract and fields
+        contract_line = format_option_contract_sentence(
+            strike=candidate.strike,
+            contract_type=candidate.contract_type,
+            expiration_date=candidate.expiration,
+            dte=None,
+        )
+        
+        fields = [
+            {"name": "Contract", "value": contract_line, "inline": False},
+            {"name": "Price", "value": f"${candidate.price:.2f}", "inline": True},
+            {"name": "Premium", "value": f"${candidate.premium:,.0f}", "inline": True},
+            {"name": "Volume", "value": f"{candidate.volume:,}", "inline": True},
+            {"name": "Open Interest", "value": f"{candidate.open_interest:,}", "inline": True},
+            {"name": "Vol/OI", "value": f"{candidate.vol_oi_ratio:.1f}x", "inline": True},
+            {"name": "OTM %", "value": f"{candidate.otm_pct*100:.1f}%", "inline": True},
+            {"name": "Spot", "value": f"${underlying_price:.2f}", "inline": True},
+        ]
+        
+        footer = f"ORAKL Bot - Lotto • {datetime.utcnow().strftime('%-m/%-d/%Y %-I:%M %p')} UTC"
+        embed = self.create_signal_embed_with_disclaimer(
+            title=f"{candidate.symbol} - Lotto Flow",
+            description=contract_line,
+            color=0x7B68EE,  # soft purple
+            fields=fields,
+            footer=footer,
+        )
+        await self.post_to_discord(embed)
     
     async def scan_and_post(self):
         """

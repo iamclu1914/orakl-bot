@@ -136,6 +136,26 @@ class BullseyeBot(BaseAutoBot):
             bid = float(enriched_trade.get('current_bid', 0))
             ask = float(enriched_trade.get('current_ask', 0))
             
+            # Build metrics early so downstream code never sees a missing 'metrics' key
+            metrics_payload = {
+                "ticker": enriched_trade.get("contract_ticker") or enriched_trade.get("ticker") or enriched_trade.get("symbol"),
+                "underlying": symbol,
+                "type": contract_type,
+                "strike": strike,
+                "expiration": enriched_trade.get("expiration_date"),
+                "volume_delta": trade_size or day_volume,
+                "total_volume": day_volume,
+                "open_interest": open_interest,
+                "last_price": contract_price,
+                "bid": bid,
+                "ask": ask,
+                "premium": premium,
+                "underlying_price": underlying_price,
+                "vol_oi_ratio": enriched_trade.get("vol_oi_ratio"),
+                "timestamp": enriched_trade.get("event_timestamp") or datetime.now(timezone.utc),
+            }
+            metrics = build_metrics_from_flow(metrics_payload)
+            
             # Validate required fields (count granular reasons so we can fix schema quickly)
             if not symbol:
                 self._count_filter("missing_symbol")
@@ -258,6 +278,11 @@ class BullseyeBot(BaseAutoBot):
             self._mark_cooldown(cooldown_key)
             
             # Post the signal
+            if metrics:
+                alert["metrics"] = metrics
+            else:
+                # Fall back gracefully to avoid KeyError and still attempt to post
+                self._log_skip(symbol, "metrics_missing_for_alert")
             await self._post_signal(alert)
             
             logger.info(f"{self.name} ALERT: {symbol} {contract_type} block ${premium:,.0f} score={score}")
@@ -1220,10 +1245,14 @@ class BullseyeBot(BaseAutoBot):
         return min(score, 100)
 
     async def _post_signal(self, payload: Dict[str, Any]) -> bool:
-        metrics: OptionTradeMetrics = payload["metrics"]
-        flow: Dict[str, Any] = payload["flow"]
-        contract_price: float = payload["contract_price"]
-        score: int = payload["score"]
+        metrics: Optional[OptionTradeMetrics] = payload.get("metrics")
+        flow: Dict[str, Any] = payload.get("flow", {})
+        contract_price: float = payload.get("contract_price", 0.0)
+        score: int = int(payload.get("score", 0))
+        
+        if not metrics:
+            logger.debug("%s skip post: missing metrics in payload", self.name)
+            return False
         
         # ORAKL v3.0 Brain Validation - Check if signal is hedged or against market regime
         brain_metadata = {}

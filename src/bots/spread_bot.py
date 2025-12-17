@@ -195,7 +195,7 @@ class SpreadBot(BaseAutoBot):
                 return None
             
             # Calculate score
-            score = self._calculate_spread_score(enriched_trade, vol_oi_ratio, otm_pct, contract_price)
+            score = self._calculate_spread_score_event(enriched_trade, vol_oi_ratio, otm_pct, contract_price)
             
             # Build alert data
             alert = {
@@ -238,7 +238,7 @@ class SpreadBot(BaseAutoBot):
             logger.error(f"{self.name} error processing event: {e}")
             return None
     
-    def _calculate_spread_score(
+    def _calculate_spread_score_event(
         self, 
         trade: Dict, 
         vol_oi_ratio: float, 
