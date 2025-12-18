@@ -136,6 +136,12 @@ class BullseyeBot(BaseAutoBot):
             bid = float(enriched_trade.get('current_bid', 0))
             ask = float(enriched_trade.get('current_ask', 0))
             effective_volume = trade_size if trade_size > 0 else day_volume
+
+            # Require Open Interest to be present to avoid 0 OI spam
+            if open_interest <= 0:
+                self._count_filter("missing_open_interest", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, "Open Interest missing/zero")
+                return None
             
             # Build metrics early so downstream code never sees a missing 'metrics' key
             metrics_payload = {
