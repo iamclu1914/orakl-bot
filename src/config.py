@@ -503,7 +503,7 @@ class Config:
     
     # DTE and OTM filters
     UOA_MAX_DTE = int(os.getenv('UOA_MAX_DTE', '45'))  # Max 45 DTE (focus on near-term)
-    UOA_MIN_OTM_PCT = float(os.getenv('UOA_MIN_OTM_PCT', '0.0'))  # 0% = include ATM/ITM
+    UOA_MIN_OTM_PCT = float(os.getenv('UOA_MIN_OTM_PCT', '0.01'))  # Require OTM (>=1%) to cut ATM/ITM noise
     UOA_MAX_OTM_PCT = float(os.getenv('UOA_MAX_OTM_PCT', '0.30'))  # 30% max OTM
     
     # Spam prevention

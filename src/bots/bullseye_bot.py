@@ -183,20 +183,22 @@ class BullseyeBot(BaseAutoBot):
                 self._log_skip(symbol, f"contract price ${contract_price:.2f} < ${self.min_price:.2f}")
                 return None
             
-            # Calculate OTM percentage
+            # Calculate OTM percentage with ITM/ATM detection
             if underlying_price > 0:
                 if contract_type == 'CALL':
-                    otm_pct = max(0, (strike - underlying_price) / underlying_price)
+                    otm_raw = (strike - underlying_price) / underlying_price
                 else:
-                    otm_pct = max(0, (underlying_price - strike) / underlying_price)
+                    otm_raw = (underlying_price - strike) / underlying_price
             else:
                 return None
 
-            # Allow ATM and OTM; still exclude ITM (negative OTM)
-            if otm_pct < 0:
-                self._count_filter("itm_excluded", symbol=symbol, sample_record=True)
-                self._log_skip(symbol, "ITM trade excluded (ATM/OTM only policy)")
+            # Exclude ITM and ATM: require strictly positive OTM
+            if otm_raw <= 0:
+                self._count_filter("itm_or_atm_excluded", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, f"ITM/ATM excluded (otm_raw={otm_raw:.4f})")
                 return None
+
+            otm_pct = otm_raw  # positive by construction here
             
             # Calculate max OTM with extension for massive premium
             max_otm = self.max_percent_otm
