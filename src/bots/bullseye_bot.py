@@ -137,6 +137,12 @@ class BullseyeBot(BaseAutoBot):
             ask = float(enriched_trade.get('current_ask', 0))
             effective_volume = trade_size if trade_size > 0 else day_volume
 
+            # Require spot to compute moneyness; drop if missing
+            if underlying_price <= 0:
+                self._count_filter("missing_underlying_price", symbol=symbol, sample_record=True)
+                self._log_skip(symbol, "missing underlying price for moneyness")
+                return None
+
             # Require Open Interest to be present to avoid 0 OI spam
             if open_interest <= 0:
                 self._count_filter("missing_open_interest", symbol=symbol, sample_record=True)
@@ -1375,6 +1381,9 @@ class BullseyeBot(BaseAutoBot):
                 oi_value = int(flow.get("metrics", {}).get("open_interest", 0) or 0)
             except Exception:
                 oi_value = 0
+
+        # If still zero, explicitly display "n/a" to avoid misleading 0
+        oi_display = f"{oi_value:,}" if oi_value > 0 else "n/a"
         execution_type = (flow.get("execution_type") or "SWEEP").upper()
         spot_price = flow.get("underlying_price") or metrics.underlying_price or 0.0
         voi_ratio = flow.get("vol_oi_ratio") or metrics.volume_over_oi or 0.0
